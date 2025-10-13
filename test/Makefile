@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MPL-2.0
 
-OSDK_TARGET_ARCH ?= x86_64
+OSDK_TARGET_ARCH ?= aarch64
 SMP ?= 1
 VERBOSE ?= 1
 SYSCALL_TEST_SUITE ?= ltp

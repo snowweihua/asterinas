@@ -3,6 +3,15 @@
 version = 4
 
 [[package]]
+name = "aarch64-cpu"
+version = "10.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6a21cd0131c25c438e19cd6a774adf7e3f64f7f4d723022882facc2dee0f8bc9"
+dependencies = [
+ "tock-registers",
+]
+
+[[package]]
 name = "acpi"
 version = "5.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1300,6 +1309,7 @@ dependencies = [
 name = "ostd"
 version = "0.16.0"
 dependencies = [
+ "aarch64-cpu",
  "acpi",
  "align_ext",
  "bit_field",
@@ -1792,6 +1802,12 @@ name = "time-core"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c9e9a38711f559d9e3ce1cdb06dd7c5b8ea546bc90052da6d06bb76da74bb07c"
+
+[[package]]
+name = "tock-registers"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2b9e2fdb3a1e862c0661768b7ed25390811df1947a8acbfbefe09b47078d93c4"
 
 [[package]]
 name = "toml"

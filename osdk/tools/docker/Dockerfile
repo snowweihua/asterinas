@@ -41,7 +41,7 @@ RUN wget -O qemu.tar.xz https://download.qemu.org/qemu-10.1.0-rc2.tar.xz \
     && tar xf qemu.tar.xz --strip-components=1 -C /root/qemu \
     && rm qemu.tar.xz
 WORKDIR /root/qemu
-RUN ./configure --target-list=x86_64-softmmu,riscv64-softmmu,loongarch64-softmmu --prefix=/usr/local/qemu --enable-slirp \
+RUN ./configure --target-list=x86_64-softmmu,riscv64-softmmu,loongarch64-softmmu,aarch64-softmmu --prefix=/usr/local/qemu --enable-slirp \
     && make -j \
     && make install
 WORKDIR /root
@@ -108,7 +108,7 @@ WORKDIR /root/grub
 RUN echo depends bli part_gpt > grub-core/extra_deps.lst \
     && ./bootstrap \
     && ./configure \
-        --target=x86_64 \
+        --target=aarch64 \
         --disable-efiemu \
         --with-platform=efi \
         --enable-grub-mkfont \
@@ -161,7 +161,7 @@ RUN cargo install \
 # Install QEMU built from the previous stages
 COPY --from=qemu /usr/local/qemu /usr/local/qemu
 ENV PATH="/usr/local/qemu/bin:${PATH}"
-ENV LD_LIBRARY_PATH="/usr/local/qemu/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH}"
+ENV LD_LIBRARY_PATH="/usr/local/qemu/lib/aarch64-linux-gnu:${LD_LIBRARY_PATH}"
 
 # Install OVMF built from the previous stages
 COPY --from=ovmf /root/edk2/Build/OvmfX64/DEBUG_GCC5/FV/ /root/ovmf/debug

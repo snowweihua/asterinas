@@ -3,7 +3,7 @@
 # =========================== Makefile options. ===============================
 
 # Global build options.
-OSDK_TARGET_ARCH ?= x86_64
+OSDK_TARGET_ARCH ?= aarch64
 BENCHMARK ?= none
 BOOT_METHOD ?= grub-rescue-iso
 BOOT_PROTOCOL ?= multiboot2
@@ -116,6 +116,8 @@ ifeq ($(OSDK_TARGET_ARCH), riscv64)
 SCHEME = riscv
 else ifeq ($(OSDK_TARGET_ARCH), loongarch64)
 SCHEME = loongarch
+else ifeq ($(OSDK_TARGET_ARCH), aarch64)
+SCHEME = aarch64
 endif
 
 ifneq ($(SCHEME), "")

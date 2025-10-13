@@ -36,6 +36,9 @@ pub mod arch;
 #[cfg(target_arch = "loongarch64")]
 #[path = "arch/loongarch/mod.rs"]
 pub mod arch;
+#[cfg(target_arch = "aarch64")]
+#[path = "arch/aarch64/mod.rs"]
+pub mod arch;
 pub mod boot;
 pub mod bus;
 pub mod console;
