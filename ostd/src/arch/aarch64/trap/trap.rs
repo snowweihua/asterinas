@@ -20,31 +20,7 @@ use core::arch::{asm, global_asm};
 
 use crate::arch::cpu::context::GeneralRegs;
 
-#[cfg(target_arch = "riscv32")]
-global_asm!(
-    r"
-    .equ XLENB, 4
-    .macro LOAD_SP a1, a2
-        lw \a1, \a2*XLENB(sp)
-    .endm
-    .macro STORE_SP a1, a2
-        sw \a1, \a2*XLENB(sp)
-    .endm
-"
-);
-#[cfg(target_arch = "riscv64")]
-global_asm!(
-    r"
-    .equ XLENB, 8
-    .macro LOAD_SP a1, a2
-        ld \a1, \a2*XLENB(sp)
-    .endm
-    .macro STORE_SP a1, a2
-        sd \a1, \a2*XLENB(sp)
-    .endm
-"
-);
-
+#[cfg(target_arch = "aarch64")]
 global_asm!(include_str!("trap.S"));
 
 /// Initialize interrupt handling for the current HART.
@@ -58,11 +34,16 @@ global_asm!(include_str!("trap.S"));
 /// You **MUST NOT** modify these registers later.
 pub unsafe fn init() {
     unsafe {
-        // Set sscratch register to 0, indicating to exception vector that we are
-        // presently executing in the kernel
-        asm!("csrw sscratch, zero");
-        // Set the exception vector address
-        asm!("csrw stvec, {}", in(reg) trap_entry as usize);
+        asm!(
+            "adr x9, vector_table_el1",
+            "msr vbar_el1, x9",
+            "adr x9, vector_table_el2",
+            "msr vbar_el2, x9",
+            "adr x9, vector_table_el3",
+            "msr vbar_el3, x9",
+            options(nomem, nostack),
+            out("x9") _,
+        );
     }
 }
 
@@ -83,10 +64,12 @@ pub unsafe fn init() {
 pub struct TrapFrame {
     /// General registers
     pub general: GeneralRegs,
-    /// Supervisor Status
-    pub sstatus: usize,
-    /// Supervisor Exception Program Counter
-    pub sepc: usize,
+    /// #31 for 16byte align, maybe no need
+    pub x31: usize,
+    /// 
+    pub elr: usize,
+    /// 
+    pub spsr: usize,
 }
 
 /// Saved registers on a trap.

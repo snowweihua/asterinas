@@ -7,7 +7,8 @@ mod trap;
 
 use core::sync::atomic::Ordering;
 
-use riscv::register::scause::Interrupt;
+use arm_gic::gicv3::{GicCpuInterface, GicV3, registers::*};
+
 use spin::Once;
 pub(super) use trap::RawUserContext;
 pub use trap::TrapFrame;
@@ -23,36 +24,45 @@ pub(crate) unsafe fn init() {
 }
 
 /// Handle traps (only from kernel).
-#[no_mangle]
-extern "C" fn trap_handler(f: &mut TrapFrame) {
-    use aarch64::register::scause::Trap;
 
-    match riscv::register::scause::read().cause() {
-        Trap::Interrupt(interrupt) => match interrupt {
-            Interrupt::SupervisorTimer => {
-                call_irq_callback_functions(
-                    f,
-                    TIMER_IRQ_NUM.load(Ordering::Relaxed) as usize,
-                    PrivilegeLevel::Kernel,
-                );
-            }
-            Interrupt::SupervisorExternal => todo!(),
-            Interrupt::SupervisorSoft => todo!(),
-            _ => {
-                panic!(
-                        "cannot handle unknown supervisor interrupt: {interrupt:?}. trapframe: {f:#x?}.",
-                    );
-            }
-        },
-        Trap::Exception(e) => {
-            let stval = riscv::register::stval::read();
-            panic!(
-                "Cannot handle kernel cpu exception: {e:?}. stval: {stval:#x}, trapframe: {f:#x?}.",
-            );
-        }
-    }
+#[no_mangle]
+extern "C" fn sync_exception_current(f: &mut TrapFrame) {
+
 }
 
+// An instance of GicV3 created during system setup.
+static mut GIC: Option<GicV3> = None;
+extern "C" fn irq_current(f: &mut TrapFrame) {
+    let gic_cpu_iface = unsafe {
+        // Assume GIC instance is initialized and accessible
+        GIC.as_mut().unwrap().cpu_interface()
+    };
+
+    // Read the IAR to get the IRQ ID
+    let irq = gic_cpu_iface.read_iar1();
+    call_irq_callback_functions(f, irq as _, PrivilegeLevel::Kernel);
+
+    // Write to the EOI register
+    gic_cpu_iface.write_eoir1(irq);
+}
+extern "C" fn fiq_current(f: &mut TrapFrame) {
+
+}
+extern "C" fn serr_current(f: &mut TrapFrame) {
+
+}
+extern "C" fn sync_lower(f: &mut TrapFrame) {
+    panic!("Unexpected sync_lower");
+}
+extern "C" fn irq_lower(f: &mut TrapFrame) {
+    panic!("Unexpected irq_lower");
+}
+extern "C" fn fiq_lower(f: &mut TrapFrame) {
+    panic!("Unexpected fiq_lower");
+}
+extern "C" fn serr_lower(f: &mut TrapFrame) {
+    panic!("Unexpected serr_lower");
+}
 #[expect(clippy::type_complexity)]
 static USER_PAGE_FAULT_HANDLER: Once<fn(&CpuExceptionInfo) -> core::result::Result<(), ()>> =
     Once::new();

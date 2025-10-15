@@ -20,157 +20,191 @@
 #   LOAD
 #   STORE
 
-    .section .text
-    .global trap_entry
-    .balign 4
-trap_entry:
-    # If coming from userspace, preserve the user stack pointer and load
-    # the kernel stack pointer. If we came from the kernel, sscratch
-    # will contain 0, and we should continue on the current stack.
-    csrrw sp, sscratch, sp
-    bnez sp, trap_from_user
-trap_from_kernel:
-    csrr sp, sscratch
-    addi sp, sp, -34 * XLENB
-    # sscratch = previous-sp, sp = kernel-sp
-trap_from_user:
-    # save general registers except sp(x2)
-    STORE_SP x1, 1
-    STORE_SP x3, 3
-    STORE_SP x4, 4
-    STORE_SP x5, 5
-    STORE_SP x6, 6
-    STORE_SP x7, 7
-    STORE_SP x8, 8
-    STORE_SP x9, 9
-    STORE_SP x10, 10
-    STORE_SP x11, 11
-    STORE_SP x12, 12
-    STORE_SP x13, 13
-    STORE_SP x14, 14
-    STORE_SP x15, 15
-    STORE_SP x16, 16
-    STORE_SP x17, 17
-    STORE_SP x18, 18
-    STORE_SP x19, 19
-    STORE_SP x20, 20
-    STORE_SP x21, 21
-    STORE_SP x22, 22
-    STORE_SP x23, 23
-    STORE_SP x24, 24
-    STORE_SP x25, 25
-    STORE_SP x26, 26
-    STORE_SP x27, 27
-    STORE_SP x28, 28
-    STORE_SP x29, 29
-    STORE_SP x30, 30
-    STORE_SP x31, 31
+/**
+ * Saves the volatile registers onto the stack. This currently takes 14
+ * instructions, so it can be used in exception handlers with 18 instructions
+ * left.
+ *
+ * On return, x0 and x1 are initialised to elr_elX and spsr_elX respectively,
+ * which can be used as the first and second arguments of a subsequent call.
+ *
+ *  same struct as TrapFrame in trap.S
+ */
+.macro save_volatile_to_stack el:req
+	/* Reserve stack space and save all registers x0-x30 and elr,spsr. */
+	stp x0, x1, [sp, #-(8 * 34)]!
+	stp x2, x3, [sp, #8 * 2]
+	stp x4, x5, [sp, #8 * 4]
+	stp x6, x7, [sp, #8 * 6]
+	stp x8, x9, [sp, #8 * 8]
+	stp x10, x11, [sp, #8 * 10]
+	stp x12, x13, [sp, #8 * 12]
+	stp x14, x15, [sp, #8 * 14]
+	stp x16, x17, [sp, #8 * 16]
+	stp x18, x19, [sp, #8 * 18]
+	stp x20, x21, [sp, #8 * 20]
+	stp x22, x23, [sp, #8 * 22]
+	stp x24, x25, [sp, #8 * 24]
+	stp x26, x27, [sp, #8 * 26]
+	stp x28, x29, [sp, #8 * 28]
+	str x30 [sp, #8 * 30]
 
-    # save sp, sstatus, sepc
-    csrrw t0, sscratch, x0  # sscratch = 0 (kernel)
-    csrr t1, sstatus
-    csrr t2, sepc
-    STORE_SP t0, 2          # save sp
-    STORE_SP t1, 32         # save sstatus
-    STORE_SP t2, 33         # save sepc
+	/*
+	 * Save elr_elX & spsr_elX. This such that we can take nested exception
+	 * and still be able to unwind.
+	 */
+	mrs x0, elr_\el
+	mrs x1, spsr_\el
+	stp x0, x1, [sp, #8 * 32]
 
-    li t0, 3 << 13
-    or t1, t1, t0           # sstatus.FS = Dirty (3)
-    csrw sstatus, t1
+	/* handler first argument 
+	*/
+	mov x0, sp
+.endm
 
-    andi t1, t1, 1 << 8     # sstatus.SPP == 1
-    beqz t1, end_trap_from_user
-end_trap_from_kernel:
-    mv a0, sp               # first arg is TrapFrame
-    la ra, trap_return      # set return address
-    j trap_handler
+/**
+ * Restores the volatile registers from the stack. This currently takes 14
+ * instructions, so it can be used in exception handlers while still leaving 18
+ * instructions left; if paired with save_volatile_to_stack, there are 4
+ * instructions to spare.
+ */
+.macro restore_volatile_from_stack el:req
+	/* Restore registers x2-x30. */
+	ldp x2, x3, [sp, #8 * 2]
+	ldp x4, x5, [sp, #8 * 4]
+	ldp x6, x7, [sp, #8 * 6]
+	ldp x8, x9, [sp, #8 * 8]
+	ldp x10, x11, [sp, #8 * 10]
+	ldp x12, x13, [sp, #8 * 12]
+	ldp x14, x15, [sp, #8 * 14]
+	ldp x16, x17, [sp, #8 * 16]
+	ldp x18, x19, [sp, #8 * 18]
+	ldp x20, x21, [sp, #8 * 20]
+	ldp x22, x23, [sp, #8 * 22]
+	ldp x24, x25, [sp, #8 * 24]
+	ldp x26, x27, [sp, #8 * 26]
+	ldp x28, x29, [sp, #8 * 28]
+	ldr x30, [sp, #8 * 30]
 
-end_trap_from_user:
-    # load callee-saved registers
-    LOAD_SP sp, 0
-    LOAD_SP s0, 0
-    LOAD_SP s1, 1
-    LOAD_SP s2, 2
-    LOAD_SP s3, 3
-    LOAD_SP s4, 4
-    LOAD_SP s5, 5
-    LOAD_SP s6, 6
-    LOAD_SP s7, 7
-    LOAD_SP s8, 8
-    LOAD_SP s9, 9
-    LOAD_SP s10, 10
-    LOAD_SP s11, 11
-    LOAD_SP ra, 12
-    # not callee-saved, but is used to store mhartid
-    LOAD_SP gp, 13
-    addi sp, sp, 14 * XLENB
+	/* Restore registers elr_elX & spsr_elX, using x0 & x1 as scratch. */
+	ldp x0, x1, [sp, #8 * 32]
+	msr elr_\el, x0
+	msr spsr_\el, x1
 
-    ret
+	/* Restore x0 & x1, and release stack space. */
+	ldp x0, x1, [sp], #8 * 34
+.endm
 
-.global run_user
-run_user:
-    # save callee-saved registers
-    addi sp, sp, -14 * XLENB
-    STORE_SP s0, 0
-    STORE_SP s1, 1
-    STORE_SP s2, 2
-    STORE_SP s3, 3
-    STORE_SP s4, 4
-    STORE_SP s5, 5
-    STORE_SP s6, 6
-    STORE_SP s7, 7
-    STORE_SP s8, 8
-    STORE_SP s9, 9
-    STORE_SP s10, 10
-    STORE_SP s11, 11
-    STORE_SP ra, 12
-    # not callee-saved, but is used to store mhartid
-    STORE_SP gp, 13
+/**
+ * This is a generic handler for exceptions taken at the current EL while using
+ * SP0. It behaves similarly to the SPx case by first switching to SPx, doing
+ * the work, then switching back to SP0 before returning.
+ *
+ * Switching to SPx and calling the Rust handler takes 16 instructions. To
+ * restore and return we need an additional 16 instructions, so we can implement
+ * the whole handler within the allotted 32 instructions.
+ */
+.macro current_exception_sp0 handler:req el:req
+	msr spsel, #1
+	save_volatile_to_stack \el
+	bl \handler
+	restore_volatile_from_stack \el
+	msr spsel, #0
+	eret
+.endm
 
-    mv t0, sp
-    mv sp, a0
-    STORE_SP t0, 0          # save kernel-sp
-    csrw sscratch, sp       # sscratch = bottom of trap frame
+/**
+ * This is a generic handler for exceptions taken at the current EL while using
+ * SPx. It saves volatile registers, calls the Rust handler, restores volatile
+ * registers, then returns.
+ *
+ * This also works for exceptions taken from EL0, if we don't care about
+ * non-volatile registers.
+ *
+ * Saving state and jumping to the Rust handler takes 15 instructions, and
+ * restoring and returning also takes 15 instructions, so we can fit the whole
+ * handler in 30 instructions, under the limit of 32.
+ */
+.macro current_exception_spx handler:req el:req
+	save_volatile_to_stack \el
+	bl \handler
+	restore_volatile_from_stack \el
+	eret
+.endm
 
-trap_return:
-    LOAD_SP t0, 32          # t0 = sstatus
-    LOAD_SP t1, 33          # t1 = sepc
-    csrw sstatus, t0        # load sstatus
-    csrw sepc, t1           # load sepc
 
-    # restore general registers except sp(x2)
-    LOAD_SP x1, 1
-    LOAD_SP x3, 3
-    LOAD_SP x4, 4
-    LOAD_SP x5, 5
-    LOAD_SP x6, 6
-    LOAD_SP x7, 7
-    LOAD_SP x8, 8
-    LOAD_SP x9, 9
-    LOAD_SP x10, 10
-    LOAD_SP x11, 11
-    LOAD_SP x12, 12
-    LOAD_SP x13, 13
-    LOAD_SP x14, 14
-    LOAD_SP x15, 15
-    LOAD_SP x16, 16
-    LOAD_SP x17, 17
-    LOAD_SP x18, 18
-    LOAD_SP x19, 19
-    LOAD_SP x20, 20
-    LOAD_SP x21, 21
-    LOAD_SP x22, 22
-    LOAD_SP x23, 23
-    LOAD_SP x24, 24
-    LOAD_SP x25, 25
-    LOAD_SP x26, 26
-    LOAD_SP x27, 27
-    LOAD_SP x28, 28
-    LOAD_SP x29, 29
-    LOAD_SP x30, 30
-    LOAD_SP x31, 31
-    # restore sp last
-    LOAD_SP x2, 2
+.macro vector_table el:req
+.section .vector.vector_table_\el, "ax"
+.global vector_table_\el
+.balign 0x800
+vector_table_\el:
+sync_cur_sp0_\el:
+	current_exception_sp0 sync_exception_current \el
 
-    # return from supervisor call
-    sret
+.balign 0x80
+irq_cur_sp0_\el:
+	current_exception_sp0 irq_current \el
+
+.balign 0x80
+fiq_cur_sp0_\el:
+	current_exception_sp0 fiq_current \el
+
+.balign 0x80
+serr_cur_sp0_\el:
+	current_exception_sp0 serr_current \el
+
+.balign 0x80
+sync_cur_spx_\el:
+	current_exception_spx sync_exception_current \el
+
+.balign 0x80
+irq_cur_spx_\el:
+	current_exception_spx irq_current \el
+
+.balign 0x80
+fiq_cur_spx_\el:
+	current_exception_spx fiq_current \el
+
+.balign 0x80
+serr_cur_spx_\el:
+	current_exception_spx serr_current \el
+
+.balign 0x80
+sync_lower_64_\el:
+	current_exception_spx sync_lower \el
+
+.balign 0x80
+irq_lower_64_\el:
+	current_exception_spx irq_lower \el
+
+.balign 0x80
+fiq_lower_64_\el:
+	current_exception_spx fiq_lower \el
+
+.balign 0x80
+serr_lower_64_\el:
+	current_exception_spx serr_lower \el
+
+.balign 0x80
+sync_lower_32_\el:
+	current_exception_spx sync_lower \el
+
+.balign 0x80
+irq_lower_32_\el:
+	current_exception_spx irq_lower \el
+
+.balign 0x80
+fiq_lower_32_\el:
+	current_exception_spx fiq_lower \el
+
+.balign 0x80
+serr_lower_32_\el:
+	current_exception_spx serr_lower \el
+
+.endm
+
+vector_table el1
+/* really need these two ? 
+vector_table el2
+vector_table el3
+*/

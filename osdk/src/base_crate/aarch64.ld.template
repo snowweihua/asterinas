@@ -7,6 +7,11 @@ KERNEL_VMA_OFFSET = KERNEL_VMA - KERNEL_LMA;
 
 SECTIONS
 {
+    # Vector
+    .vector             : AT(ADDR(.vector)) {
+        *(.vector .vector.*)
+    }
+    
     # First, we use physical addresses for the boot sections.
     . = KERNEL_LMA;
 
