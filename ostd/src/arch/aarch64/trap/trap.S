@@ -31,7 +31,7 @@
  *  same struct as TrapFrame in trap.S
  */
 .macro save_volatile_to_stack el:req
-	/* Reserve stack space and save all registers x0-x30 and elr,spsr. */
+	/* Reserve stack space and save all registers x0-x29 and lr,elr,spsr,esr. */
 	stp x0, x1, [sp, #-(8 * 34)]!
 	stp x2, x3, [sp, #8 * 2]
 	stp x4, x5, [sp, #8 * 4]
@@ -47,15 +47,16 @@
 	stp x24, x25, [sp, #8 * 24]
 	stp x26, x27, [sp, #8 * 26]
 	stp x28, x29, [sp, #8 * 28]
-	str x30 [sp, #8 * 30]
 
 	/*
 	 * Save elr_elX & spsr_elX. This such that we can take nested exception
 	 * and still be able to unwind.
 	 */
-	mrs x0, elr_\el
-	mrs x1, spsr_\el
-	stp x0, x1, [sp, #8 * 32]
+	mrs x1, elr_\el
+	mrs x2, spsr_\el
+	mrs x3, esr_\el
+	stp lr, x1, [sp, #8 * 30]
+	stp x2, x3, [sp, #8 * 32]
 
 	/* handler first argument 
 	*/
@@ -69,7 +70,7 @@
  * instructions to spare.
  */
 .macro restore_volatile_from_stack el:req
-	/* Restore registers x2-x30. */
+	/* Restore registers x2-x29. */
 	ldp x2, x3, [sp, #8 * 2]
 	ldp x4, x5, [sp, #8 * 4]
 	ldp x6, x7, [sp, #8 * 6]
@@ -84,12 +85,13 @@
 	ldp x24, x25, [sp, #8 * 24]
 	ldp x26, x27, [sp, #8 * 26]
 	ldp x28, x29, [sp, #8 * 28]
-	ldr x30, [sp, #8 * 30]
 
 	/* Restore registers elr_elX & spsr_elX, using x0 & x1 as scratch. */
+	ldp lr, x1, [sp, #8 * 30]
+	msr elr_\el, x1
 	ldp x0, x1, [sp, #8 * 32]
-	msr elr_\el, x0
-	msr spsr_\el, x1
+	msr spsr_\el, x0
+	msr esr_\el, x1
 
 	/* Restore x0 & x1, and release stack space. */
 	ldp x0, x1, [sp], #8 * 34

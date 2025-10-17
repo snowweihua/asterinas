@@ -27,38 +27,40 @@ impl TaskContext {
 #[derive(Debug, Clone)]
 #[repr(C)]
 struct CalleeRegs {
+    x19: u64,
+    x20: u64,
+    x21: u64,
+    x22: u64,
+    x23: u64,
+    x24: u64,
+    x25: u64,
+    x26: u64,
+    x27: u64,
+    x28: u64,
+    x29: u64,  // fp
+    x30: u64,  // lr
+    tpidr_el0: u64,
     sp: u64,
-    s0: u64,
-    s1: u64,
-    s2: u64,
-    s3: u64,
-    s4: u64,
-    s5: u64,
-    s6: u64,
-    s7: u64,
-    s8: u64,
-    s9: u64,
-    s10: u64,
-    s11: u64,
 }
 
 impl CalleeRegs {
     /// Creates a new `CalleeRegs`.
     pub(self) const fn new() -> Self {
         CalleeRegs {
+            x19: 0,
+            x20: 0,
+            x21: 0,
+            x22: 0,
+            x23: 0,
+            x24: 0,
+            x25: 0,
+            x26: 0,
+            x27: 0,
+            x28: 0,
+            x29: 0,
+            x30: 0,
+            tpidr_el0: 0,
             sp: 0,
-            s0: 0,
-            s1: 0,
-            s2: 0,
-            s3: 0,
-            s4: 0,
-            s5: 0,
-            s6: 0,
-            s7: 0,
-            s8: 0,
-            s9: 0,
-            s10: 0,
-            s11: 0,
         }
     }
 }

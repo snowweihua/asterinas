@@ -39,7 +39,7 @@ pub struct GeneralRegs {
     pub x5: usize,
     pub x6: usize,
     pub x7: usize,
-    pub x8: usize,
+    pub x8: usize,  // TP
     pub x9: usize,
     pub x10: usize,
     pub x11: usize,
@@ -60,7 +60,7 @@ pub struct GeneralRegs {
     pub x26: usize,
     pub x27: usize,
     pub x28: usize,
-    pub x29: usize,
+    pub x29: usize // FP
 }
 
 /// CPU exception information.
@@ -122,12 +122,12 @@ impl UserContext {
 
     /// Sets the thread-local storage pointer.
     pub fn set_tls_pointer(&mut self, tls: usize) {
-        self.set_tp(tls)
+        self.set_x8(tls)
     }
 
     /// Gets the thread-local storage pointer.
     pub fn tls_pointer(&self) -> usize {
-        self.tp()
+        self.x8()
     }
 
     /// Activates the thread-local storage pointer for the current task.
@@ -142,63 +142,45 @@ impl UserContextApiInternal for UserContext {
     where
         F: FnMut() -> bool,
     {
+        let esr = ESR_EL1.get();
         let ret = loop {
             self.user_context.run();
             match ESR_EL1::read(ESR_EL1::EC) {
-        // Synchronous exception from EL0
-        ESR_EL1::EC::SynchronousExceptionLowerEL => {
-            // Handle different types of synchronous exceptions.
-            match ESR_EL1.read(ESR_EL1::ISS) {
                 // Synchronous exception from EL0
                 ESR_EL1::EC::SynchronousExceptionLowerEL => {
                     // Handle different types of synchronous exceptions.
                     match ESR_EL1.read(ESR_EL1::ISS) {
-                        // e.g., instruction abort, data abort
-                        _ => println!("Unhandled Synchronous Exception from Lower EL"),
-                    }
-                },
-                // IRQ from EL0
-                ESR_EL1::EC::IRQLowerEL => {
-                    // Handle IRQ. For GIC, this involves reading ICC_IAR1_EL1.
-                    handle_irq();
-                },
-                // SVC instruction from EL0
-                ESR_EL1::EC::SVC64 => {
-                    // Handle SVC call (system call).
-                    handle_syscall(context);
-                },
-                // Data Abort from a lower Exception level
-                ESR_EL1::EC::DataAbortLowerEL => {
-                    // Read FAR_EL1 to get the fault address and handle the memory fault.
-                    handle_data_abort(context);
-                },
-                // Default case for unknown exceptions
-                _ => {
-                    println!("Unrecognized exception type: {:#x}", esr);
-                    loop {} // Halt on unknown exception.
-                }
+                        // Synchronous exception from EL0
+                        ESR_EL1::EC::SynchronousExceptionLowerEL => {
+                            // Handle different types of synchronous exceptions.
+                            match ESR_EL1.read(ESR_EL1::ISS) {
+                                // e.g., instruction abort, data abort
+                                _ => println!("Unhandled Synchronous Exception from Lower EL"),
+                            }
+                        },
+                        // IRQ from EL0
+                        ESR_EL1::EC::IRQLowerEL => {
+                            // Handle IRQ. For GIC, this involves reading ICC_IAR1_EL1.
+                            /// handle_irq();
+                            irq_current(&self.as_trap_frame());
+                        },
+                        // SVC instruction from EL0
+                        ESR_EL1::EC::SVC64 => {
+                            // Handle SVC call (system call).
+                            /// TODO: handle_syscall(context);
+                        },
+                        // Data Abort from a lower Exception level
+                        ESR_EL1::EC::DataAbortLowerEL => {
+                            // Read FAR_EL1 to get the fault address and handle the memory fault.
+                            /// TODO: handle_data_abort(context);
+                        },
+                        // Default case for unknown exceptions
+                        _ => {
+                            println!("Unrecognized exception type: {:#x}", esr);
+                            loop {} // Halt on unknown exception.
+                        }
 
-                Trap::Interrupt(Interrupt::SupervisorTimer) => {
-                    call_irq_callback_functions(
-                        &self.as_trap_frame(),
-                        TIMER_IRQ_NUM.load(Ordering::Relaxed) as usize,
-                        PrivilegeLevel::User,
-                    );
-                }
-                Trap::Interrupt(_) => todo!(),
-                Trap::Exception(Exception::UserEnvCall) => {
-                    self.user_context.sepc += 4;
-                    break ReturnReason::UserSyscall;
-                }
-                Trap::Exception(e) => {
-                    let stval = riscv::register::stval::read();
-                    log::trace!("Exception, scause: {e:?}, stval: {stval:#x?}");
-                    self.cpu_exception_info = Some(CpuExceptionInfo {
-                        code: e,
-                        page_fault_addr: stval,
-                        error_code: 0,
-                    });
-                    break ReturnReason::UserException;
+                    }
                 }
             }
 
@@ -214,8 +196,10 @@ impl UserContextApiInternal for UserContext {
     fn as_trap_frame(&self) -> TrapFrame {
         TrapFrame {
             general: self.user_context.general,
-            sstatus: self.user_context.sstatus,
-            sepc: self.user_context.sepc,
+            el: self.user_context.el,
+            elr_el1: self.user_context.elr_el1,
+            spsr_el1: self.user_context.spsr_el1,
+            esr_el1: self.user_context.esr_el1,
         }
     }
 }
@@ -230,19 +214,21 @@ impl UserContextApi for UserContext {
     }
 
     fn instruction_pointer(&self) -> usize {
-        self.user_context.sepc
+        self.user_context.elr_el1
     }
 
     fn set_instruction_pointer(&mut self, ip: usize) {
-        self.user_context.sepc = ip;
+        self.user_context.elr_el1 = ip;
     }
 
     fn stack_pointer(&self) -> usize {
-        self.sp()
+        /// use FP as stack pointer ?
+        self.user_context.x29()
     }
 
     fn set_stack_pointer(&mut self, sp: usize) {
-        self.set_sp(sp);
+        /// use FP as stack pointer ?
+        self.set_x29(sp);
     }
 }
 
@@ -267,37 +253,36 @@ macro_rules! cpu_context_impl_getter_setter {
 }
 
 cpu_context_impl_getter_setter!(
-    [ra, set_ra],
-    [sp, set_sp],
-    [gp, set_gp],
-    [tp, set_tp],
-    [t0, set_t0],
-    [t1, set_t1],
-    [t2, set_t2],
-    [s0, set_s0],
-    [s1, set_s1],
-    [a0, set_a0],
-    [a1, set_a1],
-    [a2, set_a2],
-    [a3, set_a3],
-    [a4, set_a4],
-    [a5, set_a5],
-    [a6, set_a6],
-    [a7, set_a7],
-    [s2, set_s2],
-    [s3, set_s3],
-    [s4, set_s4],
-    [s5, set_s5],
-    [s6, set_s6],
-    [s7, set_s7],
-    [s8, set_s8],
-    [s9, set_s9],
-    [s10, set_s10],
-    [s11, set_s11],
-    [t3, set_t3],
-    [t4, set_t4],
-    [t5, set_t5],
-    [t6, set_t6]
+    [x0, set_x0],
+    [x1, set_x1],
+    [x2, set_x2],
+    [x3, set_x3],
+    [x4, set_x4],
+    [x5, set_x5],
+    [x6, set_x6],
+    [x7, set_x7],
+    [x8, set_x8],
+    [x9, set_x9],
+    [x10, set_x10],
+    [x11, set_x11],
+    [x12, set_x12],
+    [x13, set_x13],
+    [x14, set_x14],
+    [x15, set_x15],
+    [x16, set_x16],
+    [x17, set_x17],
+    [x18, set_x18],
+    [x19, set_x19],
+    [x20, set_x20],
+    [x21, set_x21],
+    [x22, set_x22],
+    [x23, set_x23],
+    [x24, set_x24],
+    [x25, set_x25],
+    [x26, set_x26],
+    [x27, set_x27],
+    [x28, set_x28],
+    [x29, set_x29],
 );
 
 /// CPU exception.

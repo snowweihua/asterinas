@@ -64,12 +64,14 @@ pub unsafe fn init() {
 pub struct TrapFrame {
     /// General registers
     pub general: GeneralRegs,
-    /// #31 for 16byte align, maybe no need
-    pub x31: usize,
-    /// 
-    pub elr: usize,
-    /// 
-    pub spsr: usize,
+    /// link register, aka x30
+    pub lr: usize,
+    /// exception link register
+    pub elr_el1: usize,
+    /// saved program status
+    pub spsr_el1: usize,
+    /// exception syndrome register
+    pub esr_el1: usize,
 }
 
 /// Saved registers on a trap.
@@ -78,10 +80,14 @@ pub struct TrapFrame {
 pub(in crate::arch) struct RawUserContext {
     /// General registers
     pub(in crate::arch) general: GeneralRegs,
-    /// Supervisor Status
-    pub(in crate::arch) sstatus: usize,
-    /// Supervisor Exception Program Counter
-    pub(in crate::arch) sepc: usize,
+    /// link register
+    pub(in crate::arch) lr: usize,
+    /// exception link register
+    pub(in crate::arch) elr_el1: usize,
+    /// saved program status
+    pub(in crate::arch) spsr_el1: usize,
+    /// exception syndrome register
+    pub(in crate::arch) esr_el1: usize,
 }
 
 impl RawUserContext {
