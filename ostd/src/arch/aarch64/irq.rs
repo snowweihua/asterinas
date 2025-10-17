@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! Interrupts.
+use aarch64_cpu::asm;
 
 use crate::cpu::PinCurrentCpu;
 
@@ -34,8 +35,11 @@ impl IrqRemapping {
 // FIXME: Mark this as unsafe. See
 // <https://github.com/asterinas/asterinas/issues/1120#issuecomment-2748696592>.
 pub(crate) fn enable_local() {
-    // SAFETY: The safety is upheld by the caller.
-    unsafe { aarch64::interrupt::enable() }
+    // Clear the IRQ and FIQ mask bits in the PSTATE register.
+    // This uses aarch64-cpu's inline assembly macro.
+    unsafe {
+        asm::msr("daifclr", 0b0011); // Clear I and F bits
+    }
 }
 
 /// Enables local IRQs and halts the CPU to wait for interrupts.
@@ -47,24 +51,48 @@ pub(crate) fn enable_local() {
 // FIXME: Mark this as unsafe. See
 // <https://github.com/asterinas/asterinas/issues/1120#issuecomment-2748696592>.
 pub(crate) fn enable_local_and_halt() {
-    // RISC-V Instruction Set Manual, Machine-Level ISA, Version 1.13 says:
-    // "The WFI instruction can also be executed when interrupts are disabled. The operation of WFI
-    // must be unaffected by the global interrupt bits in `mstatus` (MIE and SIE) [..]"
-    //
-    // So we can use `wfi` even if IRQs are disabled. Pending IRQs can still wake up the CPU, but
-    // they will only occur later when we enable local IRQs.
-    aarch64::asm::wfi();
+    // Enable interrupts by clearing the I and F bits in PSTATE.
+    // The `daifclr` instruction clears the specified bits (D, A, I, F) in the DAIF register.
+    // `0b0011` corresponds to clearing the I (IRQ) and F (FIQ) bits.
+    // The `nomem` option tells the compiler this instruction has no memory side effects.
+    asm!(
+        "msr DAIFClr, #0b0011",
+        options(nomem, nostack)
+    );
 
-    // SAFETY: The safety is upheld by the caller.
-    unsafe { aarch64::interrupt::enable() }
+    // Enter a low-power, idle state and wait for an interrupt.
+    // The `wfi` instruction pauses execution until an event occurs (e.g., an interrupt).
+    // The `nomem` and `nostack` options are also applicable here.
+    asm!(
+        "wfi",
+        options(nomem, nostack)
+    );
 }
 
 pub(crate) fn disable_local() {
-    riscv::interrupt::disable();
+    // Set the IRQ and FIQ mask bits in the PSTATE register.
+    unsafe {
+        asm::msr("daifset", 0b0011); // Set I and F bits
+    }
 }
 
 pub(crate) fn is_local_enabled() -> bool {
-    riscv::register::sstatus::read().sie()
+    let daif: u64;
+    // Read the DAIF register into a local variable.
+    // The `mrs` instruction moves the value from the system register to a general-purpose register.
+    // The `DAIF` register contains the interrupt mask bits.
+    // The `nomem` and `nostack` options are used to indicate that the instruction has no memory side effects.
+    asm!(
+        "mrs {}, DAIF",
+        out(reg) daif,
+        options(nomem, nostack)
+    );
+
+    // The I (IRQ) and F (FIQ) mask bits are at positions 7 and 6, respectively, in the DAIF register.
+    // If a mask bit is 1, the corresponding interrupt is disabled.
+    // Therefore, if both are 0, interrupts are enabled.
+    // `(daif >> 6) & 0b11` extracts the I and F bits.
+    ((daif >> 6) & 0b11) == 0
 }
 
 // ####### Inter-Processor Interrupts (IPIs) #######
