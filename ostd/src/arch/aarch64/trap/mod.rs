@@ -25,9 +25,9 @@ pub(crate) unsafe fn init() {
 
 /// Handle traps (only from kernel).
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 extern "C" fn sync_exception_current(f: &mut TrapFrame) {
-    /// handle_svc()  --> syscall
+    // handle_svc()  --> syscall
 }
 
 // An instance of GicV3 created during system setup.
@@ -46,7 +46,7 @@ extern "C" fn irq_current(f: &mut TrapFrame) {
     gic_cpu_iface.write_eoir1(irq);
 }
 extern "C" fn fiq_current(f: &mut TrapFrame) {
-    /// todo 
+    // todo 
 }
 extern "C" fn serr_current(f: &mut TrapFrame) {
 

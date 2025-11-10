@@ -104,7 +104,7 @@ impl RawUserContext {
 }
 
 #[expect(improper_ctypes)]
-extern "C" {
+unsafe extern "C" {
     fn trap_entry();
     fn run_user(regs: &mut RawUserContext);
 }

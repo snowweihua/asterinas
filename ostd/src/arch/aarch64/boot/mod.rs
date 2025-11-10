@@ -105,8 +105,8 @@ fn parse_initramfs_range() -> Option<(usize, usize)> {
 }
 
 /// The entry point of the Rust code portion of Asterinas.
-#[no_mangle]
-pub extern "C" fn aarch64_boot(_hart_id: usize, device_tree_paddr: usize) -> ! {
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn aarch64_boot(_hart_id: usize, device_tree_paddr: usize) -> ! {
     early_println!("Enter aarch64_boot");
 
     let device_tree_ptr = paddr_to_vaddr(device_tree_paddr) as *const u8;

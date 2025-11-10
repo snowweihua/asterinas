@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
-
+#![feature(asm)]
 use alloc::fmt;
 use core::ops::Range;
-use aarch64_cpu::{asm, registers::*};
+use core::arch::asm;
+use aarch64_cpu::registers::*;
 //TODO:: some code could be optimized from crate::aarch64-paging
 
 use crate::{
@@ -240,33 +241,6 @@ impl PageTableEntryTrait for PageTableEntry {
     }
 
         // Implementation of fn cache_policy
-    fn cache_policy(&self) -> CachePolicy {
-        // Step 1: Extract the AttrIndx from the PTE (bits 2-4 for a page descriptor).
-        let attr_indx = ((self.0 & ATTRINDX_MASK) >> 2) as usize;
-
-        // Step 2: Read the MAIR_EL1 register. This requires aarch64-cpu and is unsafe.
-        // It assumes the MAIR is configured early in the boot process and not changed later.
-        let mair_value = unsafe { MAIR_EL1.get() };
-
-        // Step 3: Extract the relevant memory attribute field from MAIR_EL1.
-        // Each entry in MAIR is 8 bits, so we shift by attr_indx * 8.
-        let mair_entry = (mair_value >> (attr_indx * 8)) & 0xFF;
-
-        // Step 4: Interpret the memory attribute to determine the CachePolicy.
-        // This is a simplified interpretation. A real kernel would need a more
-        // robust mapping based on the full memory attribute bits.
-        match mair_entry {
-            // Check for the known configurations.
-            0b0000_0000 => CachePolicy::Device, // Device_nGnRnE
-            0b0100_0100 => CachePolicy::Uncacheable,
-            0b1111_1111 => CachePolicy::WriteBack,
-            _ => {
-                // If it doesn't match, determine a reasonable default.
-                // A common fallback for unknown Normal Memory attributes is WriteBack.
-                CachePolicy::WriteBack
-            }
-        }
-    }
 
     fn prop(&self) -> PageProperty {
         let flags = (parse_flags!(self.0, PageTableFlags::PXN, PageFlags::X))
@@ -284,7 +258,32 @@ impl PageTableEntryTrait for PageTableEntry {
             flags &= !(PageFlags::W.bits() as usize);
         } 
 
-        let cache = self.cache_policy();
+        // Step 1: Extract the AttrIndx from the PTE (bits 2-4 for a page descriptor).
+        let attr_indx = ((self.0 & ATTRINDX_MASK) >> 2) as usize;
+
+        // Step 2: Read the MAIR_EL1 register. This requires aarch64-cpu and is unsafe.
+        // It assumes the MAIR is configured early in the boot process and not changed later.
+        let mair_value = unsafe { MAIR_EL1.get() };
+
+        // Step 3: Extract the relevant memory attribute field from MAIR_EL1.
+        // Each entry in MAIR is 8 bits, so we shift by attr_indx * 8.
+        let mair_entry = (mair_value >> (attr_indx * 8)) & 0xFF;
+
+        // Step 4: Interpret the memory attribute to determine the CachePolicy.
+        // This is a simplified interpretation. A real kernel would need a more
+        // robust mapping based on the full memory attribute bits.
+        let cache = match mair_entry {
+            // Check for the known configurations.
+            0b0000_0000 => CachePolicy::Device, // Device_nGnRnE
+            0b0100_0100 => CachePolicy::Uncacheable,
+            0b1111_1111 => CachePolicy::WriteBack,
+            _ => {
+                // If it doesn't match, determine a reasonable default.
+                // A common fallback for unknown Normal Memory attributes is WriteBack.
+                CachePolicy::WriteBack
+            }
+        };
+        
 
         PageProperty {
             flags: PageFlags::from_bits(flags as u8).unwrap(),
@@ -351,26 +350,20 @@ impl fmt::Debug for PageTableEntry {
 
 pub(crate) unsafe fn __memcpy_fallible(dst: *mut u8, src: *const u8, size: usize) -> usize {
     // TODO: Implement this fallible operation.
-    unsafe { riscv::register::sstatus::set_sum() };
-    unsafe { core::ptr::copy(src, dst, size) };
-    0
+
 }
 
 pub(crate) unsafe fn __memset_fallible(dst: *mut u8, value: u8, size: usize) -> usize {
     // TODO: Implement this fallible operation.
-    unsafe { riscv::register::sstatus::set_sum() };
-    unsafe { core::ptr::write_bytes(dst, value, size) };
-    0
+
 }
 
 pub(crate) unsafe fn __atomic_load_fallible(ptr: *const u32) -> u64 {
     // TODO: Implement this fallible operation.
-    unsafe { riscv::register::sstatus::set_sum() };
-    unsafe { core::intrinsics::atomic_load_relaxed(ptr) as u64 }
+
 }
 
 pub(crate) unsafe fn __atomic_cmpxchg_fallible(ptr: *mut u32, old_val: u32, new_val: u32) -> u64 {
     // TODO: Implement this fallible operation.
-    unsafe { riscv::register::sstatus::set_sum() };
-    unsafe { core::intrinsics::atomic_cxchg_relaxed_relaxed(ptr, old_val, new_val).0 as u64 }
+
 }

@@ -84,13 +84,13 @@ struct ExtensionData {
 }
 
 define_isa_extensions! {
-    /// AA64ISAR0_EL1: AArch64 Instruction Set Attribute Register 0
+    // AA64ISAR0_EL1: AArch64 Instruction Set Attribute Register 0
     AES,       "aes",        "Advanced Encryption Standard";
     SHA1,       "sha1",       "Secure Hash Algorithm 1";
     SHA2,       "sha2",       "Secure Hash Algorithm 2";
     CRC32,      "crc32",      "Cyclic Redundancy Check 32";
     ATOMIC,   "atomic",    "Atomic memory operations";
-    /// AA64PFR0_EL1: AArch64 Performance Feature Register 0
+    // AA64PFR0_EL1: AArch64 Performance Feature Register 0
     SVE,        "sve",        "Scalable Vector Extension";
     ASIMD,    "asimd",     "Advanced SIMD";
 }

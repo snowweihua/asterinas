@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 
+#![feature(asm)]
 //! Interrupts.
-use aarch64_cpu::asm;
+use core::arch::asm;
 
 use crate::cpu::PinCurrentCpu;
 

@@ -1,7 +1,7 @@
 [package]
 name = "ostd"
 version = "0.16.0"
-edition = "2021"
+edition = "2024"
 description = "Rust OS framework that facilitates the development of and innovation in OS kernels"
 license = "MPL-2.0"
 readme = "README.md"
@@ -40,6 +40,7 @@ bitvec = { version = "1.0", default-features = false, features = ["alloc"] }
 minicov = { version = "0.3", optional = true }
 
 
+
 # The targets are chosen to prevent the generated machine code from using any
 # vector or floating-point registers.
 #
@@ -75,7 +76,10 @@ fdt = { version = "0.1.5", features = ["pretty-printing"] }
 
 [target.aarch64-unknown-none-softfloat.dependencies]
 aarch64-cpu = "10.0.0"
+arm-gic = "0.7.1"
 fdt = { version = "0.1.5", features = ["pretty-printing"] }
+unwinding = { version = "=0.2.5", default-features = false, features = ["fde-static", "hide-trace", "panic", "personality", "unwinder"] }
+
 
 [features]
 default = ["cvm_guest"]

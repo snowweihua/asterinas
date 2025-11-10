@@ -165,7 +165,7 @@ impl TaskOptions {
         //
         // We provide an assembly wrapper for this function as the end of call stack so we
         // have to disable name mangling for it.
-        #[no_mangle]
+        #[unsafe(no_mangle)]
         extern "C" fn kernel_task_entry() -> ! {
             // SAFETY: The new task is switched on a CPU for the first time, `after_switching_to`
             // hasn't been called yet.

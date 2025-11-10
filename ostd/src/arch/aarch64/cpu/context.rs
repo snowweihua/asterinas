@@ -3,8 +3,7 @@
 //! CPU execution context control.
 
 use core::{fmt::Debug, sync::atomic::Ordering};
-
-use riscv::register::scause::{Exception, Interrupt, Trap};
+use crate::prelude::println;
 use aarch64_cpu::registers::{ESR_EL1, Readable};
 
 use crate::{
@@ -167,12 +166,12 @@ impl UserContextApiInternal for UserContext {
                         // SVC instruction from EL0
                         ESR_EL1::EC::SVC64 => {
                             // Handle SVC call (system call).
-                            /// TODO: handle_syscall(context);
+                            // TODO: handle_syscall(context);
                         },
                         // Data Abort from a lower Exception level
                         ESR_EL1::EC::DataAbortLowerEL => {
                             // Read FAR_EL1 to get the fault address and handle the memory fault.
-                            /// TODO: handle_data_abort(context);
+                            // TODO: handle_data_abort(context);
                         },
                         // Default case for unknown exceptions
                         _ => {
@@ -282,7 +281,7 @@ cpu_context_impl_getter_setter!(
     [x26, set_x26],
     [x27, set_x27],
     [x28, set_x28],
-    [x29, set_x29],
+    [x29, set_x29]
 );
 
 /// CPU exception.

@@ -3,7 +3,7 @@
 //! Statically-allocated CPU-local objects.
 
 #![cfg_attr(
-    any(target_arch = "riscv64", target_arch = "loongarch64"),
+    any(target_arch = "riscv64", target_arch = "loongarch64", target_arch = "aarch64"),
     expect(dead_code)
 )]
 
@@ -48,7 +48,7 @@ use crate::{arch, cpu::CpuId, irq::DisabledLocalIrqGuard};
 macro_rules! cpu_local {
     ($( $(#[$attr:meta])* $vis:vis static $name:ident: $t:ty = $init:expr; )*) => {
         $(
-            #[link_section = ".cpu_local"]
+            #[unsafe(link_section = ".cpu_local")]
             $(#[$attr])* $vis static $name: $crate::cpu::local::StaticCpuLocal<$t> = {
                 let val = $init;
                 // SAFETY: The per-CPU variable instantiated is statically

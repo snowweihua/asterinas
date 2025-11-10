@@ -76,6 +76,9 @@ riscv = { version = "0.11.1", features = ["s-mode"] }
 [target.loongarch64-unknown-none-softfloat.dependencies]
 loongArch64 = "0.2.5"
 
+[target.aarch64-unknown-none-softfloat.dependencies]
+aarch64-cpu = "10.0.0"
+
 [features]
 all = ["cvm_guest"]
 cvm_guest = ["dep:tdx-guest", "ostd/cvm_guest", "aster-virtio/cvm_guest"]
