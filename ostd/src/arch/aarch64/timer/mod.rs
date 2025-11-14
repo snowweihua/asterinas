@@ -3,7 +3,6 @@
 //! The timer support.
 
 use core::{
-    arch::asm,
     sync::atomic::{AtomicU64, AtomicU8, Ordering},
 };
 
@@ -14,6 +13,8 @@ use crate::{
     irq::IrqLine,
     timer::TIMER_FREQ,
 };
+
+use aarch64_cpu;
 
 static TIMER_IRQ: Once<IrqLine> = Once::new();
 pub(super) static TIMER_IRQ_NUM: AtomicU8 = AtomicU8::new(0);
@@ -61,13 +62,7 @@ pub(super) unsafe fn init() {
     });
 
     set_next_timer();
-    // SAFETY: Accessing the `sie` CSR to enable the timer interrupt is safe
-    // here because this function is only called during timer initialization,
-    // and we ensure that only the timer interrupt bit is set without affecting
-    // other interrupt sources.
-    unsafe {
-        riscv::register::sie::set_stimer();
-    }
+
 }
 
 fn timer_callback(trapframe: &TrapFrame) {
@@ -92,13 +87,7 @@ fn set_next_timer_sbi() {
 }
 
 fn set_next_timer_sstc() {
-    // SAFETY: Setting the next timer using the `stimecmp` CSR is safe here
-    // because we are using the `stimecmp` CSR to set the next timer interrupt
-    // only when we're handling a timer interrupt, which is a standard operation
-    // specified by RISC-V SSTC extension.
-    unsafe {
-        asm!("csrrw {}, stimecmp, {}", out(reg) _, in(reg) get_next_when());
-    }
+
 }
 
 fn is_sstc_enabled() -> bool {
@@ -106,7 +95,7 @@ fn is_sstc_enabled() -> bool {
 }
 
 fn get_next_when() -> u64 {
-    let current = riscv::register::time::read64();
+    let current = aarch64_cpu::registers::CNTVCT_EL0.get();
     let interval = TIMER_INTERVAL.load(Ordering::Relaxed);
     current + interval
 }

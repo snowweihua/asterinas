@@ -2,17 +2,17 @@
 
 //! CPU execution context control.
 
-use core::{fmt::Debug, sync::atomic::Ordering};
-use crate::prelude::println;
-use aarch64_cpu::registers::{ESR_EL1, Readable};
+use core::{fmt::Debug};
+
+use aarch64_cpu::registers::{TPIDR_EL1, Readable};
 
 use crate::{
     arch::{
-        trap::{RawUserContext, TrapFrame},
-        TIMER_IRQ_NUM,
+        trap::{RawUserContext, TrapFrame},        
     },
     cpu::PrivilegeLevel,
     irq::call_irq_callback_functions,
+    task::scheduler,
     user::{ReturnReason, UserContextApi, UserContextApiInternal},
 };
 
@@ -21,8 +21,7 @@ use crate::{
 #[repr(C)]
 pub struct UserContext {
     user_context: RawUserContext,
-    trap: Trap,
-    cpu_exception_info: Option<CpuExceptionInfo>,
+    exception: Option<CpuException>,
 }
 
 /// General registers.
@@ -63,45 +62,95 @@ pub struct GeneralRegs {
 }
 
 /// CPU exception information.
-//
-// TODO: Refactor the struct into an enum (similar to x86's `CpuException`).
-#[expect(missing_docs)]
-#[derive(Clone, Copy, Debug)]
-#[repr(C)]
-pub struct CpuExceptionInfo {
-    /// The type of the exception.
-    pub code: Exception,
-    /// The error code associated with the exception.
-    pub page_fault_addr: usize,
-    pub error_code: usize, // TODO
+/// Represents the Exception Class (EC) field [31:26] of the ESR_EL1 register.
+/// This field indicates the reason for the exception being taken to EL1.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[repr(u32)] // Ensure the enum values match the raw ESR bits
+pub enum CpuException {
+    /// Unknown reason (e.g., illegal execution state).
+    Unknown = 0x00,
+    /// Trapped MCR or MRC access.
+    TrappedMcrMrc = 0x01,
+    /// Trapped LDC or STC access.
+    TrappedLdcStc = 0x05,
+    /// Trapped access to a System register (MRS or MSR).
+    TrappedSysReg = 0x06,
+    /// Trapped access to SVE/SIMD/FP functionality.
+    TrappedSimdFpSve = 0x07,
+    /// Trapped generic timer access.
+    TrappedTimer = 0x08,
+
+    /// Instruction Abort from a lower Exception level (EL0).
+    InstructionAbortLowerEL = 0x20,
+    /// Instruction Abort from the same Exception level (EL1).
+    InstructionAbortCurrentEL = 0x21,
+    /// PC alignment fault.
+    PCAlignmentFault = 0x22,
+    /// Data Abort from a lower Exception level (EL0) - often a page fault.
+    DataAbortLowerEL = 0x24,
+    /// Data Abort from the same Exception level (EL1).
+    DataAbortCurrentEL = 0x25,
+    /// SP alignment fault.
+    SPAlignmentFault = 0x26,
+    /// Trapped floating-point exception (AArch64).
+    TrappedFPException = 0x2c,
+
+    /// SVC (System Call) instruction execution (AArch64).
+    Svc64 = 0x15,
+
+    /// Asynchronous exceptions from the current EL (e.g., IRQ, FIQ).
+    AsyncCurrentEL = 0x08,
+    /// Asynchronous exceptions from a lower EL (e.g., IRQ, FIQ from EL0).
+    AsyncLowerEL = 0x1c, // Base value for IRQ, FIQ, SError from lower EL
+
+    /// A fallback variant for any other EC value not explicitly listed above.
+    Other(u8),
 }
 
-impl Default for UserContext {
-    fn default() -> Self {
-        UserContext {
-            user_context: RawUserContext::default(),
-            trap: Trap::Exception(Exception::Unknown),
-            cpu_exception_info: None,
+
+impl CpuException {
+    pub(crate) fn new(trap_num: usize, error_code: usize) -> Option<Self> {
+        let exception = match trap_num {
+            0 => Self::Unknown,
+            1 => Self::TrappedMcrMrc,
+            5 => Self::TrappedLdcStc,
+            6 => Self::TrappedSysReg,
+            7 => Self::TrappedSimdFpSve,
+            8 => Self::TrappedTimer,
+            0x20 => Self::InstructionAbortLowerEL,
+            0x21 => Self::InstructionAbortCurrentEL,
+            0x22 => Self::PCAlignmentFault,
+            0x24 => Self::DataAbortLowerEL,
+            0x25 => Self::DataAbortCurrentEL,
+            0x26 => Self::SPAlignmentFault,
+            0x2c => Self::TrappedFPException,
+            0x15 => Self::Svc64,
+            0x08 => Self::AsyncCurrentEL,
+            0x1c => Self::AsyncLowerEL,
+
+       
+            _ => Self::Other(trap_num as u8),
+        };
+
+        Some(exception)
+    }
+
+    const fn type_(&self) -> CpuExceptionType {
+        match self {
+            Self::Unknown | Self::PCAlignmentFault | Self::SPAlignmentFault => CpuExceptionType::FaultOrTrap,
+            Self::AsyncCurrentEL | Self::AsyncLowerEL | Self::Svc64 => CpuExceptionType::Interrupt,
+            Self::TrappedMcrMrc | Self::TrappedLdcStc | Self::TrappedSysReg | Self::TrappedSimdFpSve => CpuExceptionType::Trap,
+            Self::InstructionAbortLowerEL | Self::InstructionAbortCurrentEL | Self::DataAbortLowerEL | Self::DataAbortCurrentEL => CpuExceptionType::Abort,
+
+            _ => CpuExceptionType::Fault,
         }
     }
-}
 
-impl Default for CpuExceptionInfo {
-    fn default() -> Self {
-        CpuExceptionInfo {
-            code: Exception::Unknown,
-            page_fault_addr: 0,
-            error_code: 0,
-        }
+    pub(crate) const fn is_cpu_exception(trap_num: usize) -> bool {
+        trap_num <= 0x3f
     }
 }
 
-impl CpuExceptionInfo {
-    /// Get corresponding CPU exception
-    pub fn cpu_exception(&self) -> CpuException {
-        self.code
-    }
-}
 
 impl UserContext {
     /// Returns a reference to the general registers.
@@ -115,24 +164,23 @@ impl UserContext {
     }
 
     /// Returns the trap information.
-    pub fn take_exception(&mut self) -> Option<CpuExceptionInfo> {
-        self.cpu_exception_info.take()
+    pub fn take_exception(&mut self) -> Option<CpuException> {
+        self.exception.take()
     }
 
     /// Sets the thread-local storage pointer.
     pub fn set_tls_pointer(&mut self, tls: usize) {
-        self.set_x8(tls)
+        TPIDR_EL1.set(tls)
     }
 
     /// Gets the thread-local storage pointer.
     pub fn tls_pointer(&self) -> usize {
-        self.x8()
+        TPIDR_EL1.get()
     }
 
     /// Activates the thread-local storage pointer for the current task.
     pub fn activate_tls_pointer(&self) {
-        // In RISC-V, `tp` will be loaded at `UserContext::execute`, so it does not need to be
-        // activated in advance.
+
     }
 }
 
@@ -141,45 +189,38 @@ impl UserContextApiInternal for UserContext {
     where
         F: FnMut() -> bool,
     {
-        let esr = ESR_EL1.get();
-        let ret = loop {
-            self.user_context.run();
-            match ESR_EL1::read(ESR_EL1::EC) {
-                // Synchronous exception from EL0
-                ESR_EL1::EC::SynchronousExceptionLowerEL => {
-                    // Handle different types of synchronous exceptions.
-                    match ESR_EL1.read(ESR_EL1::ISS) {
-                        // Synchronous exception from EL0
-                        ESR_EL1::EC::SynchronousExceptionLowerEL => {
-                            // Handle different types of synchronous exceptions.
-                            match ESR_EL1.read(ESR_EL1::ISS) {
-                                // e.g., instruction abort, data abort
-                                _ => println!("Unhandled Synchronous Exception from Lower EL"),
-                            }
-                        },
-                        // IRQ from EL0
-                        ESR_EL1::EC::IRQLowerEL => {
-                            // Handle IRQ. For GIC, this involves reading ICC_IAR1_EL1.
-                            /// handle_irq();
-                            irq_current(&self.as_trap_frame());
-                        },
-                        // SVC instruction from EL0
-                        ESR_EL1::EC::SVC64 => {
-                            // Handle SVC call (system call).
-                            // TODO: handle_syscall(context);
-                        },
-                        // Data Abort from a lower Exception level
-                        ESR_EL1::EC::DataAbortLowerEL => {
-                            // Read FAR_EL1 to get the fault address and handle the memory fault.
-                            // TODO: handle_data_abort(context);
-                        },
-                        // Default case for unknown exceptions
-                        _ => {
-                            println!("Unrecognized exception type: {:#x}", esr);
-                            loop {} // Halt on unknown exception.
-                        }
 
-                    }
+        // Return when it is syscall or cpu exception type is Fault or Trap.
+        let ret = loop {
+            scheduler::might_preempt();
+            self.user_context.run();
+            
+            let exception =
+                CpuException::new(self.user_context.trap_num, self.user_context.error_code);
+            match exception {
+                Some(exception) if exception.type_().is_fault_or_trap() => {
+                    crate::arch::irq::enable_local();
+                    self.exception = Some(exception);
+                    return ReturnReason::UserException;
+                }
+                Some(exception) => {
+                    panic!(
+                        "cannot handle user CPU exception: {:?}, trapframe: {:?}",
+                        exception,
+                        self.as_trap_frame()
+                    );
+                }
+                None if self.user_context.trap_num == CpuException::Svc64 => {
+                    crate::arch::irq::enable_local();
+                    return ReturnReason::UserSyscall;
+                }
+                None => {
+                    call_irq_callback_functions(
+                        &self.as_trap_frame(),
+                        self.as_trap_frame().trap_num,
+                        PrivilegeLevel::User,
+                    );
+                    crate::arch::irq::enable_local();
                 }
             }
 
@@ -203,6 +244,49 @@ impl UserContextApiInternal for UserContext {
     }
 }
 
+/// As Osdev Wiki defines(<https://wiki.osdev.org/Exceptions>):
+/// CPU exceptions are classified as:
+///
+/// Faults: These can be corrected and the program may continue as if nothing happened.
+///
+/// Traps: Traps are reported immediately after the execution of the trapping instruction.
+///
+/// Aborts: Some severe unrecoverable error.
+///
+/// But there exists some vector which are special. Vector 1 can be both fault or trap and vector 2 is interrupt.
+/// So here we also define FaultOrTrap and Interrupt
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum CpuExceptionType {
+    /// CPU faults. Faults can be corrected, and the program may continue as if nothing happened.
+    Fault,
+    /// CPU traps. Traps are reported immediately after the execution of the trapping instruction
+    Trap,
+    /// Faults or traps
+    FaultOrTrap,
+    /// CPU interrupts
+    Interrupt,
+    /// Some severe unrecoverable error
+    Abort,
+    /// Reserved for future use
+    Reserved,
+}
+
+impl CpuExceptionType {
+    /// Returns whether this exception type is a fault or a trap.
+    pub fn is_fault_or_trap(self) -> bool {
+        match self {
+            CpuExceptionType::Trap | CpuExceptionType::Fault | CpuExceptionType::FaultOrTrap => {
+                true
+            }
+            CpuExceptionType::Abort | CpuExceptionType::Interrupt | CpuExceptionType::Reserved => {
+                false
+            }
+        }
+    }
+}
+
+
+
 impl UserContextApi for UserContext {
     fn trap_number(&self) -> usize {
         todo!()
@@ -221,12 +305,12 @@ impl UserContextApi for UserContext {
     }
 
     fn stack_pointer(&self) -> usize {
-        /// use FP as stack pointer ?
-        self.user_context.x29()
+        // use FP as stack pointer ?
+        self.user_context.x29();
     }
 
     fn set_stack_pointer(&mut self, sp: usize) {
-        /// use FP as stack pointer ?
+        // use FP as stack pointer ?
         self.set_x29(sp);
     }
 }
@@ -284,8 +368,6 @@ cpu_context_impl_getter_setter!(
     [x29, set_x29]
 );
 
-/// CPU exception.
-pub type CpuException = Exception;
 
 /// The FPU context of user task.
 ///

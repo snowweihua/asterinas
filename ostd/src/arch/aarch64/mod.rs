@@ -21,6 +21,9 @@ use core::sync::atomic::Ordering;
 
 use crate::arch::timer::TIMER_IRQ_NUM;
 
+use aarch64_cpu::registers::*;
+
+
 #[cfg(feature = "cvm_guest")]
 pub(crate) fn init_cvm_guest() {
     // Unimplemented, no-op
@@ -67,7 +70,9 @@ pub fn tsc_freq() -> u64 {
 
 /// Reads the current value of the processor’s time-stamp counter (TSC).
 pub fn read_tsc() -> u64 {
-    aarch64::register::time::read64()
+    // SAFETY: The CNTVCT_EL0 register can be read at EL0 and EL1.
+    // The `get()` method performs the `mrs` instruction safely.
+    CNTVCT_EL0.get()
 }
 
 /// Reads a hardware generated 64-bit random value.
@@ -80,9 +85,11 @@ pub fn read_random() -> Option<u64> {
 
 pub(crate) fn enable_cpu_features() {
     cpu::extension::init();
+    // Read the current value and set the FPEN field to enable access.
+    // A value of 0b11 means "No trapping of SIMD and FP instructions" for EL0 and EL1.
+    // 0b00 means trapped at all levels.
+    // We update the register safely.
     unsafe {
-        // We adopt a lazy approach to enable the floating-point unit; it's not
-        // enabled before the first FPU trap.
-        aarch64::register::sstatus::set_fs(riscv::register::sstatus::FS::Off);
+        CPACR_EL1.modify(CPACR_EL1::FPEN::TrapNothing); 
     }
 }

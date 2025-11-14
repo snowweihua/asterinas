@@ -5,36 +5,48 @@
 use bitflags::bitflags;
 use spin::Once;
 
-use crate::arch::boot::DEVICE_TREE;
+
 
 use aarch64_cpu::registers::*;
 use aarch64_cpu::registers::Readable;
+
+// Import the 'Field' type from the tock-registers crate directly
+use tock_registers::fields::Field; 
+
+// Define the missing constants locally.
+// These match the bit ranges from the ARM Architecture Reference Manual.
+const AES_F: Field = Field::new(4, 4);   // Bits [7:4]
+const SHA1_F: Field = Field::new(8, 4);  // Bits [11:8]
+const SHA2_F: Field = Field::new(12, 4); // Bits [15:12]
+const CRC32_F: Field = Field::new(20, 4); // Bits [23:20]
+const SVE_F: Field = Field::new(24, 4);  // Bits [27:24]
+const ASIMD_F: Field = Field::new(28, 4); // Bits [31:28]
 
 /// Detects available AArch64 ISA extensions.
 pub(in crate::arch) fn init() {
     let mut global_isa_extensions = IsaExtensions::all();
 
-    if ID_AA64ISAR0_EL1.is_set(ID_AA64ISAR0_EL1::AES) {
+    if ID_AA64ISAR0_EL1.read(AES_F) {
         global_isa_extensions |= IsaExtensions::AES;
     }
 
-    if ID_AA64ISAR0_EL1.is_set(ID_AA64ISAR0_EL1::SHA1) {
+    if ID_AA64ISAR0_EL1.read(SHA1_F) {
         global_isa_extensions |= IsaExtensions::SHA1;
     }
 
-    if ID_AA64ISAR0_EL1.is_set(ID_AA64ISAR0_EL1::SHA2) {
+    if ID_AA64ISAR0_EL1.read(SHA2_F) {
         global_isa_extensions |= IsaExtensions::SHA2;
     }
 
-    if ID_AA64ISAR0_EL1.is_set(ID_AA64ISAR0_EL1::CRC32) {
+    if ID_AA64ISAR0_EL1.read(CRC32_F) {
         global_isa_extensions |= IsaExtensions::CRC32;
     }
 
-    if ID_AA64PFR0_EL1.read(ID_AA64PFR0_EL1::SVE) > 0 {
+    if ID_AA64PFR0_EL1.read(SVE_F) > 0 {
         global_isa_extensions |= IsaExtensions::SVE;
     }
 
-    if ID_AA64PFR0_EL1.read(ID_AA64PFR0_EL1::ASIMD) > 0 {
+    if ID_AA64PFR0_EL1.read(ASIMD_F) > 0 {
         global_isa_extensions |= IsaExtensions::ASIMD;
     }
 

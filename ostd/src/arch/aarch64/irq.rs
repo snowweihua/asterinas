@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
 
-#![feature(asm)]
 //! Interrupts.
 use core::arch::asm;
 

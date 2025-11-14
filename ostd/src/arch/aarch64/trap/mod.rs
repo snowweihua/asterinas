@@ -5,15 +5,14 @@
 #[expect(clippy::module_inception)]
 mod trap;
 
-use core::sync::atomic::Ordering;
 
-use arm_gic::gicv3::{GicCpuInterface, GicV3, registers::*};
+use arm_gic::gicv3::GicV3;
 
 use spin::Once;
 pub(super) use trap::RawUserContext;
 pub use trap::TrapFrame;
 
-use super::{cpu::context::CpuExceptionInfo, timer::TIMER_IRQ_NUM};
+use super::{cpu::context::CpuException};
 use crate::{cpu::PrivilegeLevel, irq::call_irq_callback_functions};
 
 /// Initializes interrupt handling on RISC-V.
@@ -27,7 +26,8 @@ pub(crate) unsafe fn init() {
 
 #[unsafe(no_mangle)]
 extern "C" fn sync_exception_current(f: &mut TrapFrame) {
-    // handle_svc()  --> syscall
+    // handle_svc()  --> syscall 
+    // might_switch context
 }
 
 // An instance of GicV3 created during system setup.
@@ -49,7 +49,7 @@ extern "C" fn fiq_current(f: &mut TrapFrame) {
     // todo 
 }
 extern "C" fn serr_current(f: &mut TrapFrame) {
-
+    // show exception
 }
 extern "C" fn sync_lower(f: &mut TrapFrame) {
     panic!("Unexpected sync_lower");
@@ -64,13 +64,13 @@ extern "C" fn serr_lower(f: &mut TrapFrame) {
     panic!("Unexpected serr_lower");
 }
 #[expect(clippy::type_complexity)]
-static USER_PAGE_FAULT_HANDLER: Once<fn(&CpuExceptionInfo) -> core::result::Result<(), ()>> =
+static USER_PAGE_FAULT_HANDLER: Once<fn(&CpuException) -> core::result::Result<(), ()>> =
     Once::new();
 
 /// Injects a custom handler for page faults that occur in the kernel and
 /// are caused by user-space address.
 pub fn inject_user_page_fault_handler(
-    handler: fn(info: &CpuExceptionInfo) -> core::result::Result<(), ()>,
+    handler: fn(info: &CpuException) -> core::result::Result<(), ()>,
 ) {
     USER_PAGE_FAULT_HANDLER.call_once(|| handler);
 }

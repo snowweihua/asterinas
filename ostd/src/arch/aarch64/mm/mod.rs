@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: MPL-2.0
-#![feature(asm)]
 use alloc::fmt;
 use core::ops::Range;
 use core::arch::asm;
@@ -7,7 +6,6 @@ use aarch64_cpu::registers::*;
 //TODO:: some code could be optimized from crate::aarch64-paging
 
 use crate::{
-    arch::cpu::extension::{has_extensions, IsaExtensions},
     mm::{
         page_prop::{CachePolicy, PageFlags, PageProperty, PrivilegedPageFlags as PrivFlags},
         page_table::PageTableEntryTrait,
@@ -82,7 +80,7 @@ const SH_MASK: u64 = 0b11 << 8;
 // These constants specify the AttrIndx corresponding to each policy.
 const ATTRINDX_DEVICE: u64 = 0b000 << 2; // Index 0
 const ATTRINDX_WRITE_BACK: u64 = 0b001 << 2; // Index 1
-const ATTRINDX_NOCACHEABLE: u64 = 0b010 << 2; // Index 2
+const ATTRINDX_UNCACHEABLE: u64 = 0b010 << 2; // Index 2
 
 // Shareability values (from the ARM ARM):
 const SH_NON_SHAREABLE: u64 = 0b00 << 8;
@@ -96,10 +94,10 @@ pub(crate) fn tlb_flush_addr(vaddr: Vaddr) {
     //    before the TLBI instruction.
     asm!("dsb ishst", options(nostack, nomem, preserves_flags));
 
-    // 2. Invalidate the TLB entry for the given virtual address.
-    //    We use TLBI VAE1IS (Virtual Address EL1 Inner Shareable) as a common example.
-    //    The address register 'x0' will contain the virtual address 'addr'.
-    asm!("tlbi vae1is, {0}", in(x0) vaddr, options(nostack, nomem, preserves_flags));
+        // Invalidate the TLB entry.
+        // Use 'in(reg)' or 'in(xreg)' for a generic 64-bit register constraint.
+        // The compiler will pick a register and insert its name into the {0} placeholder.
+    asm!("tlbi vae1is, {0}", in(reg) vaddr.as_usize() as u64, options(nostack, nomem, preserves_flags));
 
     // 3. Ensure the TLB invalidation completes and subsequent instructions see it.
     //    "dsb ish" (Inner Shareable) ensures the TLB invalidation completes.
@@ -177,7 +175,7 @@ pub unsafe fn activate_page_table(root_paddr: Paddr, _root_pt_cache: CachePolicy
     //    of the new root page table. TTBR0_EL1 typically handles the lower half of the
     //    virtual address space (often user space).
     //    The register 'x0' will contain the physical address `root_paddr`.
-    asm!("msr ttbr0_el1, {0}", in(x0) root_paddr, options(nostack, nomem, preserves_flags));
+    asm!("msr ttbr0_el1, {0}", in(reg) root_paddr, options(nostack, nomem, preserves_flags));
 
     // 3. Invalidate all existing TLB entries, as the entire page table mapping has changed.
     //    TLBI ALLE1IS invalidates all EL1 TLB entries (including global) across the Inner Shareable domain.
@@ -201,7 +199,7 @@ pub fn current_page_table_paddr() -> Paddr {
     // boot_l4pt in boot.S
     // Read the value from TTBR0_EL1 into a general-purpose register (x0 in this case).
     // The "mrs" (Move Register to System Register) instruction is used for this purpose.
-    asm!("mrs {0}, ttbr0_el1", out(x0) root_paddr, options(nostack, nomem, preserves_flags));
+    asm!("mrs {0}, ttbr0_el1", out(reg) root_paddr, options(nostack, nomem, preserves_flags));
 
     root_paddr
 }
@@ -300,7 +298,7 @@ impl PageTableEntryTrait for PageTableEntry {
             | parse_flags!(prop.priv_flags.bits(), PrivFlags::AVAIL1, PageTableFlags::RSV1)
             | parse_flags!(prop.flags.bits(), PageFlags::AVAIL2, PageTableFlags::RSV2);
 
-        if(prop.flags.bits() & PageFlags::W.bits() as usize != 0) {
+        if prop.flags.bits() & PageFlags::W.bits() as usize != 0 {
             flags |= PageTableFlags::WRITABLE.bits() | PageTableFlags::READABLE.bits();
         } else {
             flags |= PageTableFlags::READABLE.bits();
