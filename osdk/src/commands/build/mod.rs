@@ -239,6 +239,7 @@ fn build_kernel_elf(
         .arg("--target-dir")
         .arg(cargo_target_directory.as_ref());
     command.args(COMMON_CARGO_ARGS);
+    command.arg("--ignore-rust-version");
     command.arg("--profile=".to_string() + profile);
     for override_config in override_configs {
         command.arg("--config").arg(override_config);

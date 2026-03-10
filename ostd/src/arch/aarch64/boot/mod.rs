@@ -20,6 +20,33 @@ use crate::{
 
 global_asm!(include_str!("boot.S"));
 
+// Pure-assembly PL011 helpers that live entirely outside Rust's debug
+// machinery.  No volatile-wrapper calls, no ptr::add precondition checks,
+// no panic paths — just plain AArch64 instructions.
+//
+// pl011_puts_asm(ptr: *const u8, len: usize)
+//   x0 = pointer to first byte
+//   x1 = byte count
+//   Clobbers x2-x5; preserves everything else (including lr via ret).
+global_asm!(r#"
+    .text
+    .align 2
+    .globl pl011_puts_asm
+pl011_puts_asm:
+    cbz     x1, 2f
+    mov     x2, #0x09000000
+1:
+    ldrb    w3, [x0], #1
+3:
+    ldr     w4, [x2, #0x18]
+    tbnz    w4, #5, 3b
+    str     w3, [x2]
+    subs    x1, x1, #1
+    bne     1b
+2:
+    ret
+"#);
+
 /// The Flattened Device Tree of the platform.
 pub static DEVICE_TREE: Once<Fdt> = Once::new();
 
@@ -104,10 +131,27 @@ fn parse_initramfs_range() -> Option<(usize, usize)> {
     Some((initrd_start, initrd_end))
 }
 
+/// Declared here; defined in the global_asm! block above.
+unsafe extern "C" {
+    fn pl011_puts_asm(ptr: *const u8, len: usize);
+}
+
+/// Write a byte slice to the PL011 UART.  Safe to call before any Rust
+/// runtime infrastructure (no panics, no volatile wrappers, no alloc).
+#[inline(always)]
+unsafe fn pl011_puts(s: &[u8]) {
+    unsafe { pl011_puts_asm(s.as_ptr(), s.len()) };
+}
+
 /// The entry point of the Rust code portion of Asterinas.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn aarch64_boot(_hart_id: usize, device_tree_paddr: usize) -> ! {
-    early_println!("Enter aarch64_boot");
+    // Direct PL011 writes to survive before SpinLock/CPU-local are ready.
+    unsafe { pl011_puts(b"[1] aarch64_boot entered\n") };
+    unsafe { pl011_puts_asm(b"[2] direct\n".as_ptr(), 11) };
+    // early_println!("Enter aarch64_boot");
+    unsafe { pl011_puts(b"[3] after early_println\n") };
+    // early_println!("  device_tree_paddr = {:#x}", device_tree_paddr);
 
     let device_tree_ptr = paddr_to_vaddr(device_tree_paddr) as *const u8;
     let fdt = unsafe { fdt::Fdt::from_ptr(device_tree_ptr).unwrap() };

@@ -3,18 +3,17 @@
 //! The timer support.
 
 use core::{
+    arch::asm,
     sync::atomic::{AtomicU64, AtomicU8, Ordering},
 };
 
 use spin::Once;
 
 use crate::{
-    arch::{self, boot::DEVICE_TREE, cpu::extension::IsaExtensions, trap::TrapFrame},
+    arch::{boot::DEVICE_TREE, trap::TrapFrame},
     irq::IrqLine,
     timer::TIMER_FREQ,
 };
-
-use aarch64_cpu;
 
 static TIMER_IRQ: Once<IrqLine> = Once::new();
 pub(super) static TIMER_IRQ_NUM: AtomicU8 = AtomicU8::new(0);
@@ -44,15 +43,6 @@ pub(super) unsafe fn init() {
         TIMEBASE_FREQ.load(Ordering::Relaxed) / TIMER_FREQ,
         Ordering::Relaxed,
     );
-    if is_sstc_enabled() {
-        // SAFETY: Mutating the static variable `SET_NEXT_TIMER_FN` is safe here
-        // because we ensure that it is only modified during the initialization
-        // phase of the timer.
-        unsafe {
-            SET_NEXT_TIMER_FN = set_next_timer_sstc;
-        }
-    }
-
     TIMER_IRQ.call_once(|| {
         let mut timer_irq = IrqLine::alloc().unwrap();
         TIMER_IRQ_NUM.store(timer_irq.num(), Ordering::Relaxed);
@@ -80,22 +70,21 @@ fn set_next_timer() {
     }
 }
 
-static mut SET_NEXT_TIMER_FN: fn() = set_next_timer_sbi;
+static mut SET_NEXT_TIMER_FN: fn() = set_next_timer_arch;
 
-fn set_next_timer_sbi() {
-    sbi_rt::set_timer(TIMER_INTERVAL.load(Ordering::Relaxed));
-}
-
-fn set_next_timer_sstc() {
-
-}
-
-fn is_sstc_enabled() -> bool {
-    arch::cpu::extension::has_extensions(IsaExtensions::SSTC)
+fn set_next_timer_arch() {
+    let next = get_next_when();
+    unsafe {
+        asm!("msr cntv_cval_el0, {0}", in(reg) next, options(nostack, nomem, preserves_flags));
+        asm!("msr cntv_ctl_el0, {0}", in(reg) 1u64, options(nostack, nomem, preserves_flags));
+    }
 }
 
 fn get_next_when() -> u64 {
-    let current = aarch64_cpu::registers::CNTVCT_EL0.get();
+    let current: u64;
+    unsafe {
+        asm!("mrs {0}, cntvct_el0", out(reg) current, options(nostack, nomem, preserves_flags));
+    }
     let interval = TIMER_INTERVAL.load(Ordering::Relaxed);
     current + interval
 }

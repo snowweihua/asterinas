@@ -4,7 +4,7 @@
 
 use core::{fmt::Debug};
 
-use aarch64_cpu::registers::{TPIDR_EL1, Readable};
+use aarch64_cpu::registers::{FAR_EL1, Readable, TPIDR_EL1, Writeable};
 
 use crate::{
     arch::{
@@ -21,7 +21,7 @@ use crate::{
 #[repr(C)]
 pub struct UserContext {
     user_context: RawUserContext,
-    exception: Option<CpuException>,
+    exception: Option<CpuExceptionInfo>,
 }
 
 /// General registers.
@@ -99,7 +99,7 @@ pub enum CpuException {
     Svc64 = 0x15,
 
     /// Asynchronous exceptions from the current EL (e.g., IRQ, FIQ).
-    AsyncCurrentEL = 0x08,
+    AsyncCurrentEL = 0x09,
     /// Asynchronous exceptions from a lower EL (e.g., IRQ, FIQ from EL0).
     AsyncLowerEL = 0x1c, // Base value for IRQ, FIQ, SError from lower EL
 
@@ -109,6 +109,28 @@ pub enum CpuException {
 
 
 impl CpuException {
+    pub(crate) fn from_esr(esr_el1: usize) -> Self {
+        let ec = ((esr_el1 >> 26) & 0x3f) as usize;
+        match ec {
+            0 => Self::Unknown,
+            1 => Self::TrappedMcrMrc,
+            5 => Self::TrappedLdcStc,
+            6 => Self::TrappedSysReg,
+            7 => Self::TrappedSimdFpSve,
+            8 => Self::TrappedTimer,
+            0x20 => Self::InstructionAbortLowerEL,
+            0x21 => Self::InstructionAbortCurrentEL,
+            0x22 => Self::PCAlignmentFault,
+            0x24 => Self::DataAbortLowerEL,
+            0x25 => Self::DataAbortCurrentEL,
+            0x26 => Self::SPAlignmentFault,
+            0x2c => Self::TrappedFPException,
+            0x15 => Self::Svc64,
+            0x1c => Self::AsyncLowerEL,
+            _ => Self::Other(ec as u8),
+        }
+    }
+
     pub(crate) fn new(trap_num: usize, error_code: usize) -> Option<Self> {
         let exception = match trap_num {
             0 => Self::Unknown,
@@ -151,6 +173,14 @@ impl CpuException {
     }
 }
 
+impl Default for UserContext {
+    fn default() -> Self {
+        UserContext {
+            user_context: RawUserContext::default(),
+            exception: None,
+        }
+    }
+}
 
 impl UserContext {
     /// Returns a reference to the general registers.
@@ -164,18 +194,18 @@ impl UserContext {
     }
 
     /// Returns the trap information.
-    pub fn take_exception(&mut self) -> Option<CpuException> {
+    pub fn take_exception(&mut self) -> Option<CpuExceptionInfo> {
         self.exception.take()
     }
 
     /// Sets the thread-local storage pointer.
     pub fn set_tls_pointer(&mut self, tls: usize) {
-        TPIDR_EL1.set(tls)
+        TPIDR_EL1.set(tls as u64)
     }
 
     /// Gets the thread-local storage pointer.
     pub fn tls_pointer(&self) -> usize {
-        TPIDR_EL1.get()
+        TPIDR_EL1.get() as usize
     }
 
     /// Activates the thread-local storage pointer for the current task.
@@ -195,32 +225,29 @@ impl UserContextApiInternal for UserContext {
             scheduler::might_preempt();
             self.user_context.run();
             
-            let exception =
-                CpuException::new(self.user_context.trap_num, self.user_context.error_code);
-            match exception {
-                Some(exception) if exception.type_().is_fault_or_trap() => {
+            let cpu_exception = CpuException::from_esr(self.user_context.esr_el1);
+            match cpu_exception {
+                exception if exception.type_().is_fault_or_trap() => {
                     crate::arch::irq::enable_local();
-                    self.exception = Some(exception);
+                    // Read FAR_EL1 to capture the faulting virtual address for memory aborts.
+                    let far_el1 = FAR_EL1.get() as usize;
+                    self.exception = Some(CpuExceptionInfo {
+                        code: exception,
+                        page_fault_addr: far_el1,
+                        error_code: self.user_context.esr_el1,
+                    });
                     return ReturnReason::UserException;
                 }
-                Some(exception) => {
-                    panic!(
-                        "cannot handle user CPU exception: {:?}, trapframe: {:?}",
-                        exception,
-                        self.as_trap_frame()
-                    );
-                }
-                None if self.user_context.trap_num == CpuException::Svc64 => {
+                CpuException::Svc64 => {
                     crate::arch::irq::enable_local();
                     return ReturnReason::UserSyscall;
                 }
-                None => {
-                    call_irq_callback_functions(
-                        &self.as_trap_frame(),
-                        self.as_trap_frame().trap_num,
-                        PrivilegeLevel::User,
+                cpu_exception => {
+                    panic!(
+                        "cannot handle user CPU exception: {:?}, trapframe: {:?}",
+                        cpu_exception,
+                        self.as_trap_frame()
                     );
-                    crate::arch::irq::enable_local();
                 }
             }
 
@@ -236,11 +263,43 @@ impl UserContextApiInternal for UserContext {
     fn as_trap_frame(&self) -> TrapFrame {
         TrapFrame {
             general: self.user_context.general,
-            el: self.user_context.el,
+            lr: self.user_context.lr,
             elr_el1: self.user_context.elr_el1,
             spsr_el1: self.user_context.spsr_el1,
             esr_el1: self.user_context.esr_el1,
         }
+    }
+}
+
+/// CPU exception information, compatible with the interface expected by kernel arch modules.
+///
+/// For AArch64, the exception class (EC) is found in ESR_EL1[31:26], and
+/// the faulting address for memory aborts is stored in FAR_EL1.
+#[expect(missing_docs)]
+#[derive(Clone, Copy, Debug)]
+pub struct CpuExceptionInfo {
+    /// The AArch64 exception (derived from ESR_EL1).
+    pub code: CpuException,
+    /// Faulting virtual address (from FAR_EL1 for data/instruction aborts).
+    pub page_fault_addr: usize,
+    /// Raw ESR_EL1 value (includes ISS bits).
+    pub error_code: usize,
+}
+
+impl Default for CpuExceptionInfo {
+    fn default() -> Self {
+        CpuExceptionInfo {
+            code: CpuException::Unknown,
+            page_fault_addr: 0,
+            error_code: 0,
+        }
+    }
+}
+
+impl CpuExceptionInfo {
+    /// Returns the CPU exception type.
+    pub fn cpu_exception(&self) -> CpuException {
+        self.code
     }
 }
 
@@ -289,11 +348,11 @@ impl CpuExceptionType {
 
 impl UserContextApi for UserContext {
     fn trap_number(&self) -> usize {
-        todo!()
+        (self.user_context.esr_el1 >> 26) & 0x3f
     }
 
     fn trap_error_code(&self) -> usize {
-        todo!()
+        self.user_context.esr_el1 & 0x01ff_ffff
     }
 
     fn instruction_pointer(&self) -> usize {
@@ -305,8 +364,7 @@ impl UserContextApi for UserContext {
     }
 
     fn stack_pointer(&self) -> usize {
-        // use FP as stack pointer ?
-        self.user_context.x29();
+        self.user_context.general.x29
     }
 
     fn set_stack_pointer(&mut self, sp: usize) {

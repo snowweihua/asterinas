@@ -78,3 +78,6 @@ lto = true
 panic = "abort"
 # set codegen-units as the smallest number
 codegen-units = 1
+
+[patch.crates-io]
+arm-gic = { path = "/tmp/arm-gic-patched" }

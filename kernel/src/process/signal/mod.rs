@@ -99,6 +99,8 @@ pub fn handle_pending_signal(
                 const SYSCALL_INSTR_LEN: usize = 4; // ecall
                 #[cfg(target_arch = "loongarch64")]
                 const SYSCALL_INSTR_LEN: usize = 4; // syscall
+                #[cfg(target_arch = "aarch64")]
+                const SYSCALL_INSTR_LEN: usize = 4; // svc
 
                 user_ctx.set_syscall_num(syscall_number);
                 user_ctx
@@ -271,6 +273,15 @@ pub fn handle_user_signal(
             )?;
             // TODO: Set the `SigContext`.flags
             // Reference: <https://elixir.bootlin.com/linux/v6.15.7/source/arch/loongarch/kernel/signal.c#L805>
+            let fpu_context_addr = (ucontext_addr as usize) + size_of::<ucontext_t>();
+        } else if #[cfg(target_arch = "aarch64")] {
+            // AArch64: FPU context placed directly after ucontext_t on the signal stack,
+            // matching the RISC-V / LoongArch64 layout convention.
+            let ucontext_addr = alloc_aligned_in_user_stack(
+                stack_pointer,
+                size_of::<ucontext_t>() + fpu_context_bytes.len(),
+                align_of::<ucontext_t>(),
+            )?;
             let fpu_context_addr = (ucontext_addr as usize) + size_of::<ucontext_t>();
         } else {
             compile_error!("unsupported target");

@@ -28,19 +28,14 @@ global_asm!(include_str!("trap.S"));
 /// # Safety
 ///
 /// This function will:
-/// - Set `sscratch` to 0.
-/// - Set `stvec` to internal exception vector.
+/// - Set `vbar_el1` to the EL1 vector table.
 ///
-/// You **MUST NOT** modify these registers later.
+/// You **MUST NOT** modify `vbar_el1` later.
 pub unsafe fn init() {
     unsafe {
         asm!(
             "adr x9, vector_table_el1",
             "msr vbar_el1, x9",
-            "adr x9, vector_table_el2",
-            "msr vbar_el2, x9",
-            "adr x9, vector_table_el3",
-            "msr vbar_el3, x9",
             options(nomem, nostack),
             out("x9") _,
         );
@@ -105,6 +100,5 @@ impl RawUserContext {
 
 #[expect(improper_ctypes)]
 unsafe extern "C" {
-    fn trap_entry();
     fn run_user(regs: &mut RawUserContext);
 }

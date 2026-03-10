@@ -148,7 +148,7 @@ cfg_if! {
                 }
             }
         }
-    } else if #[cfg(any(target_arch = "riscv64", target_arch = "loongarch64"))] {
+    } else if #[cfg(any(target_arch = "riscv64", target_arch = "loongarch64", target_arch = "aarch64"))] {
         /// File Stat
         #[derive(Debug, Clone, Copy, Pod, Default)]
         #[repr(C)]

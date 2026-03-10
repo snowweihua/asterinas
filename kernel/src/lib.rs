@@ -57,6 +57,9 @@ mod arch;
 #[cfg(target_arch = "loongarch64")]
 #[path = "arch/loongarch/mod.rs"]
 mod arch;
+#[cfg(target_arch = "aarch64")]
+#[path = "arch/aarch64/mod.rs"]
+mod arch;
 
 mod context;
 mod cpu;

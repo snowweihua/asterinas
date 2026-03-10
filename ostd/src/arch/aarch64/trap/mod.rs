@@ -6,71 +6,81 @@
 mod trap;
 
 
-use arm_gic::gicv3::GicV3;
-
 use spin::Once;
 pub(super) use trap::RawUserContext;
 pub use trap::TrapFrame;
 
-use super::{cpu::context::CpuException};
+use super::{cpu::context::{CpuException, CpuExceptionInfo}};
 use crate::{cpu::PrivilegeLevel, irq::call_irq_callback_functions};
 
-/// Initializes interrupt handling on RISC-V.
+/// Initializes interrupt handling on AArch64.
 pub(crate) unsafe fn init() {
     unsafe {
         self::trap::init();
     }
 }
 
-/// Handle traps (only from kernel).
-
+/// Handle synchronous exceptions from current EL (kernel exceptions).
 #[unsafe(no_mangle)]
 extern "C" fn sync_exception_current(f: &mut TrapFrame) {
-    // handle_svc()  --> syscall 
-    // might_switch context
+    // Kernel-mode exceptions (e.g. data abort) - for now panic.
+    // TODO: handle kernel-mode page faults.
 }
 
-// An instance of GicV3 created during system setup.
-static mut GIC: Option<GicV3> = None;
+/// Handle IRQ from current EL.
+#[unsafe(no_mangle)]
 extern "C" fn irq_current(f: &mut TrapFrame) {
-    let gic_cpu_iface = unsafe {
-        // Assume GIC instance is initialized and accessible
-        GIC.as_mut().unwrap().cpu_interface()
-    };
-
-    // Read the IAR to get the IRQ ID
-    let irq = gic_cpu_iface.read_iar1();
-    call_irq_callback_functions(f, irq as _, PrivilegeLevel::Kernel);
-
-    // Write to the EOI register
-    gic_cpu_iface.write_eoir1(irq);
+    call_irq_callback_functions(f, 0, PrivilegeLevel::Kernel);
 }
-extern "C" fn fiq_current(f: &mut TrapFrame) {
-    // todo 
+
+/// Handle FIQ from current EL.
+#[unsafe(no_mangle)]
+extern "C" fn fiq_current(_f: &mut TrapFrame) {
+    // FIQ not used in Asterinas; ignore.
 }
+
+/// Handle SError from current EL.
+#[unsafe(no_mangle)]
 extern "C" fn serr_current(f: &mut TrapFrame) {
-    // show exception
+    panic!("SError (system error) at current EL: {:?}", f);
 }
+
+/// Handle synchronous exception from lower EL (user mode).
+/// This is the user-space exception entry: SVC, data abort, etc.
+#[unsafe(no_mangle)]
 extern "C" fn sync_lower(f: &mut TrapFrame) {
-    panic!("Unexpected sync_lower");
+    // User-mode exceptions are handled by UserContextApiInternal::execute().
+    // This handler should never be reached during normal operation because
+    // run_user() returns via eret and the kernel re-examines the ESR.
+    panic!("Unexpected sync_lower: esr={:#x} elr={:#x}", f.esr_el1, f.elr_el1);
 }
+
+/// Handle IRQ from lower EL.
+#[unsafe(no_mangle)]
 extern "C" fn irq_lower(f: &mut TrapFrame) {
-    panic!("Unexpected irq_lower");
+    call_irq_callback_functions(f, 0, PrivilegeLevel::User);
 }
-extern "C" fn fiq_lower(f: &mut TrapFrame) {
-    panic!("Unexpected fiq_lower");
+
+/// Handle FIQ from lower EL.
+#[unsafe(no_mangle)]
+extern "C" fn fiq_lower(_f: &mut TrapFrame) {
+    // FIQ not used; ignore.
 }
+
+/// Handle SError from lower EL.
+#[unsafe(no_mangle)]
 extern "C" fn serr_lower(f: &mut TrapFrame) {
-    panic!("Unexpected serr_lower");
+    panic!("SError from lower EL: {:?}", f);
 }
+
 #[expect(clippy::type_complexity)]
-static USER_PAGE_FAULT_HANDLER: Once<fn(&CpuException) -> core::result::Result<(), ()>> =
+static USER_PAGE_FAULT_HANDLER: Once<fn(&CpuExceptionInfo) -> core::result::Result<(), ()>> =
     Once::new();
 
 /// Injects a custom handler for page faults that occur in the kernel and
 /// are caused by user-space address.
 pub fn inject_user_page_fault_handler(
-    handler: fn(info: &CpuException) -> core::result::Result<(), ()>,
+    handler: fn(info: &CpuExceptionInfo) -> core::result::Result<(), ()>,
 ) {
     USER_PAGE_FAULT_HANDLER.call_once(|| handler);
 }

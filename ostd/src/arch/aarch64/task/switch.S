@@ -33,6 +33,6 @@ first_context_switch: # (nxt: *const TaskContext)
 
 kernel_task_entry_wrapper:
   .cfi_startproc
-  .cfi_undefined ra # mark return address as undefined to indicate end of call stack
-  call kernel_task_entry
+  .cfi_undefined lr /* mark return address as undefined to indicate end of call stack */
+  bl kernel_task_entry
   .cfi_endproc

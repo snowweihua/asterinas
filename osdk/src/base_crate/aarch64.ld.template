@@ -7,11 +7,6 @@ KERNEL_VMA_OFFSET = KERNEL_VMA - KERNEL_LMA;
 
 SECTIONS
 {
-    # Vector
-    .vector             : AT(ADDR(.vector)) {
-        *(.vector .vector.*)
-    }
-    
     # First, we use physical addresses for the boot sections.
     . = KERNEL_LMA;
 
@@ -30,9 +25,18 @@ SECTIONS
     # Then, we switch to virtual addresses for all the other sections.
     . += KERNEL_VMA_OFFSET;
 
+    PROVIDE(__executable_start = .);
+
     .text                   : AT(ADDR(.text) - KERNEL_VMA_OFFSET) {
         *(.text .text.*)
         PROVIDE(__etext = .);
+    }
+
+    # AArch64 vector table: must be 2KB (0x800) aligned.
+    # Placed in the high VMA range so ADR/ADRP from .text can reach it.
+    . = ALIGN(0x800);
+    .vector                 : AT(ADDR(.vector) - KERNEL_VMA_OFFSET) {
+        *(.vector .vector.*)
     }
 
     .rodata                 : AT(ADDR(.rodata) - KERNEL_VMA_OFFSET) {

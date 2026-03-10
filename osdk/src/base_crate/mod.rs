@@ -99,6 +99,8 @@ pub fn new_base_crate(
         std::fs::remove_dir_all(&base_crate_tmp_path).unwrap();
         if cargo_result.is_ok_and(|res| res) && main_rs_result.is_ok_and(|res| res) {
             info!("Reusing existing base crate");
+            // Ensure rust-toolchain.toml is present even when reusing the crate.
+            ensure_toolchain_file(&base_crate_path);
             return base_crate_path;
         }
     }
@@ -112,6 +114,24 @@ pub fn new_base_crate(
     base_crate_path
 }
 
+/// Copy the workspace's rust-toolchain.toml into `dest` if it does not already
+/// exist there.  This makes child `cargo` invocations pick the right nightly
+/// channel even when `RUSTUP_TOOLCHAIN` has been stripped from the environment.
+fn ensure_toolchain_file(dest: impl AsRef<Path>) {
+    let dest_file = dest.as_ref().join("rust-toolchain.toml");
+    if dest_file.exists() {
+        return;
+    }
+    let workspace_root = {
+        let meta = get_cargo_metadata(None::<&str>, None::<&[&str]>).unwrap();
+        PathBuf::from(meta.get("workspace_root").unwrap().as_str().unwrap())
+    };
+    let src_file = workspace_root.join("rust-toolchain.toml");
+    if src_file.exists() {
+        fs::copy(&src_file, &dest_file).unwrap();
+    }
+}
+
 fn do_new_base_crate(
     base_crate_path: impl AsRef<Path>,
     dep_crate_name: &str,
@@ -122,6 +142,14 @@ fn do_new_base_crate(
         let meta = get_cargo_metadata(None::<&str>, None::<&[&str]>).unwrap();
         PathBuf::from(meta.get("workspace_root").unwrap().as_str().unwrap())
     };
+
+    // Save the existing Cargo.lock (if any) before wiping the directory,
+    // so we can restore it and avoid unintended dependency upgrades.
+    let saved_cargo_lock: Option<Vec<u8>> = base_crate_path
+        .as_ref()
+        .join("Cargo.lock")
+        .exists()
+        .then(|| fs::read(base_crate_path.as_ref().join("Cargo.lock")).unwrap());
 
     if base_crate_path.as_ref().exists() {
         std::fs::remove_dir_all(&base_crate_path).unwrap();
@@ -159,6 +187,32 @@ fn do_new_base_crate(
     let cargo_toml = cargo_toml.replace("#VERSION#", &dep_crate_version);
     fs::write(base_crate_path.as_ref().join("Cargo.toml"), cargo_toml).unwrap();
 
+    // Write rust-toolchain.toml so child cargo invocations use the same
+    // nightly channel as the workspace, even when RUSTUP_TOOLCHAIN is unset.
+    let toolchain_toml = workspace_root.join("rust-toolchain.toml");
+    if toolchain_toml.exists() {
+        fs::copy(
+            &toolchain_toml,
+            base_crate_path.as_ref().join("rust-toolchain.toml"),
+        )
+        .unwrap();
+    }
+
+    // Restore the saved Cargo.lock (if any) to pin dependencies and avoid
+    // upgrade attempts that may fail on this toolchain version.
+    // Prefer the workspace root's Cargo.lock as the initial seed so all
+    // shared transitive dependencies are already pinned correctly.
+    let workspace_lock = workspace_root.join("Cargo.lock");
+    let lock_source = saved_cargo_lock
+        .as_deref()
+        // Only reuse if the saved lock actually mentions unwinding (sanity check).
+        .filter(|b| b.windows(b"unwinding".len()).any(|w| w == b"unwinding"))
+        .map(|b| b.to_vec())
+        .or_else(|| workspace_lock.exists().then(|| fs::read(&workspace_lock).unwrap()));
+    if let Some(lock_contents) = lock_source {
+        fs::write(base_crate_path.as_ref().join("Cargo.lock"), lock_contents).unwrap();
+    }
+
     // Set the current directory to the target osdk directory
     let original_dir = std::env::current_dir().unwrap();
     std::env::set_current_dir(&base_crate_path).unwrap();
@@ -186,7 +240,10 @@ fn do_new_base_crate(
     add_manifest_dependency(dep_crate_name, dep_crate_path, link_unit_test_kernel);
 
     // Copy the manifest configurations from the target crate to the base crate
-    copy_profile_configurations(workspace_root);
+    copy_profile_configurations(&workspace_root);
+
+    // Copy [patch.crates-io] from workspace so dependency overrides work in run-base
+    copy_patch_configurations(&workspace_root);
 
     // Generate the features by copying the features from the target crate
     add_feature_entries(dep_crate_name, &dep_crate_features);
@@ -296,6 +353,34 @@ fn copy_profile_configurations(workspace_root: impl AsRef<Path>) {
         manifest.insert(
             "profile".to_string(),
             toml::Value::Table(profile.as_table().unwrap().clone()),
+        );
+    }
+
+    let content = toml::to_string(&manifest).unwrap();
+    fs::write(manifest_path, content).unwrap();
+}
+
+fn copy_patch_configurations(workspace_root: impl AsRef<Path>) {
+    let target_manifest_path = workspace_root.as_ref().join("Cargo.toml");
+    let manifest_path = "Cargo.toml";
+
+    let target_manifest: toml::Table = {
+        let content = fs::read_to_string(target_manifest_path).unwrap();
+        toml::from_str(&content).unwrap()
+    };
+
+    let mut manifest: toml::Table = {
+        let content = fs::read_to_string(manifest_path).unwrap();
+        toml::from_str(&content).unwrap()
+    };
+
+    // Copy the [patch] sections (e.g. [patch.crates-io]) so crate overrides
+    // present in the workspace are also active when building the run-base crate.
+    let patch = target_manifest.get("patch");
+    if let Some(patch) = patch {
+        manifest.insert(
+            "patch".to_string(),
+            toml::Value::Table(patch.as_table().unwrap().clone()),
         );
     }
 

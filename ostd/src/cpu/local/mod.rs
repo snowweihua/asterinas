@@ -179,10 +179,6 @@ unsafe impl<T: Send + 'static> Send for CpuLocal<T, DynamicStorage<T>> {}
 impl<T: 'static, S: AnyStorage<T>> !Copy for CpuLocal<T, S> {}
 impl<T: 'static, S: AnyStorage<T>> !Clone for CpuLocal<T, S> {}
 
-// In general, it does not make any sense to send instances of static `CpuLocal`
-// to other tasks as they should live on other CPUs to make sending useful.
-impl<T: 'static> !Send for CpuLocal<T, StaticStorage<T>> {}
-
 /// The static CPU-local areas for APs.
 static CPU_LOCAL_STORAGES: Once<&'static [Paddr]> = Once::new();
 

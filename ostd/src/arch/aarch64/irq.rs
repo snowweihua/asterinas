@@ -35,10 +35,8 @@ impl IrqRemapping {
 // FIXME: Mark this as unsafe. See
 // <https://github.com/asterinas/asterinas/issues/1120#issuecomment-2748696592>.
 pub(crate) fn enable_local() {
-    // Clear the IRQ and FIQ mask bits in the PSTATE register.
-    // This uses aarch64-cpu's inline assembly macro.
     unsafe {
-        asm::msr("daifclr", 0b0011); // Clear I and F bits
+        asm!("msr DAIFClr, #0b0011", options(nomem, nostack));
     }
 }
 
@@ -55,24 +53,27 @@ pub(crate) fn enable_local_and_halt() {
     // The `daifclr` instruction clears the specified bits (D, A, I, F) in the DAIF register.
     // `0b0011` corresponds to clearing the I (IRQ) and F (FIQ) bits.
     // The `nomem` option tells the compiler this instruction has no memory side effects.
-    asm!(
-        "msr DAIFClr, #0b0011",
-        options(nomem, nostack)
-    );
+    unsafe {
+        asm!(
+            "msr DAIFClr, #0b0011",
+            options(nomem, nostack)
+        );
+    }
 
     // Enter a low-power, idle state and wait for an interrupt.
     // The `wfi` instruction pauses execution until an event occurs (e.g., an interrupt).
     // The `nomem` and `nostack` options are also applicable here.
-    asm!(
-        "wfi",
-        options(nomem, nostack)
-    );
+    unsafe {
+        asm!(
+            "wfi",
+            options(nomem, nostack)
+        );
+    }
 }
 
 pub(crate) fn disable_local() {
-    // Set the IRQ and FIQ mask bits in the PSTATE register.
     unsafe {
-        asm::msr("daifset", 0b0011); // Set I and F bits
+        asm!("msr DAIFSet, #0b0011", options(nomem, nostack));
     }
 }
 
@@ -82,11 +83,13 @@ pub(crate) fn is_local_enabled() -> bool {
     // The `mrs` instruction moves the value from the system register to a general-purpose register.
     // The `DAIF` register contains the interrupt mask bits.
     // The `nomem` and `nostack` options are used to indicate that the instruction has no memory side effects.
-    asm!(
-        "mrs {}, DAIF",
-        out(reg) daif,
-        options(nomem, nostack)
-    );
+    unsafe {
+        asm!(
+            "mrs {}, DAIF",
+            out(reg) daif,
+            options(nomem, nostack)
+        );
+    }
 
     // The I (IRQ) and F (FIQ) mask bits are at positions 7 and 6, respectively, in the DAIF register.
     // If a mask bit is 1, the corresponding interrupt is disabled.

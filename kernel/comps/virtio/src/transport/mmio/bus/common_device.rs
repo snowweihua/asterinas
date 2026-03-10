@@ -15,6 +15,8 @@ use ostd::arch::kernel::MappedIrqLine;
 use ostd::irq::IrqLine as MappedIrqLine;
 #[cfg(target_arch = "loongarch64")] // TODO: Add `MappedIrqLine` support for Loongarch.
 use ostd::irq::IrqLine as MappedIrqLine;
+#[cfg(target_arch = "aarch64")] // TODO: Add `MappedIrqLine` support for AArch64.
+use ostd::irq::IrqLine as MappedIrqLine;
 use ostd::{
     io::IoMem,
     irq::IrqLine,
