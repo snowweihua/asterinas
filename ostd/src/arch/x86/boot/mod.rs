@@ -33,3 +33,7 @@ global_asm!(
     KCODE32 = const super::trap::gdt::KCODE32,
 );
 global_asm!(include_str!("ap_boot.S"));
+
+pub fn kernel_physical_base(kernel_start: usize, kernel_loaded_offset: usize) -> usize {
+    kernel_start - kernel_loaded_offset
+}

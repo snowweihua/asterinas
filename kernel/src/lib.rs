@@ -86,14 +86,8 @@ mod vm;
 #[ostd::main]
 #[controlled]
 fn main() {
-    #[cfg(target_arch = "aarch64")]
-    ostd::arch::boot::pl011_puts_static(b"K0\n");
-
     #[cfg(not(target_arch = "aarch64"))]
     ostd::early_println!("[kernel] OSTD initialized. Preparing components.");
-
-    #[cfg(target_arch = "aarch64")]
-    ostd::arch::boot::pl011_puts_static(b"K1\n");
 
     #[cfg(not(target_arch = "aarch64"))]
     component::init_all(InitStage::Bootstrap, component::parse_metadata!()).unwrap();
@@ -111,9 +105,6 @@ fn main() {
         .cpu_affinity(CpuId::bsp().into())
         .sched_policy(SchedPolicy::Idle)
         .spawn();
-
-    #[cfg(target_arch = "aarch64")]
-    ostd::arch::boot::pl011_puts_static(b"K2\n");
 
     #[cfg(target_arch = "aarch64")]
     exit_qemu(QemuExitCode::Success);

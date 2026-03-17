@@ -14,6 +14,10 @@ use crate::{
 
 pub(crate) const NR_ENTRIES_PER_PAGE: usize = 512;
 
+pub(crate) const fn frame_paddr_base() -> usize {
+    0
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct PagingConsts {}
 

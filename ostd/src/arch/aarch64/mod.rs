@@ -90,6 +90,7 @@ pub(crate) fn enable_cpu_features() {
     // 0b00 means trapped at all levels.
     // We update the register safely.
     unsafe {
-        CPACR_EL1.modify(CPACR_EL1::FPEN::TrapNothing); 
+        CPACR_EL1.modify(CPACR_EL1::FPEN::TrapNothing);
+        core::arch::asm!("isb", options(nostack, nomem, preserves_flags));
     }
 }

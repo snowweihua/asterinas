@@ -30,9 +30,6 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
         #[cfg(not(ktest))]
         #[no_mangle]
         extern "Rust" fn __ostd_main() -> ! {
-            #[cfg(target_arch = "aarch64")]
-            ostd::arch::boot::pl011_puts_static(b"M\n");
-
             let _: () = #main_fn_name();
 
             ostd::task::Task::yield_now();
@@ -57,9 +54,6 @@ pub fn test_main(_attr: TokenStream, item: TokenStream) -> TokenStream {
     quote!(
         #[no_mangle]
         extern "Rust" fn __ostd_main() -> ! {
-            #[cfg(target_arch = "aarch64")]
-            ostd::arch::boot::pl011_puts_static(b"M\n");
-
             let _: () = #main_fn_name();
 
             ostd::task::Task::yield_now();

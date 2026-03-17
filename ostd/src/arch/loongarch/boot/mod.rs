@@ -25,6 +25,10 @@ static EFI_SYSTEM_TABLE: Once<&'static EfiSystemTable> = Once::new();
 /// The Flattened Device Tree of the platform.
 pub static DEVICE_TREE: Once<Fdt> = Once::new();
 
+pub fn kernel_physical_base(kernel_start: usize, kernel_loaded_offset: usize) -> usize {
+    kernel_start - kernel_loaded_offset
+}
+
 fn parse_bootloader_name() -> &'static str {
     "Unknown"
 }

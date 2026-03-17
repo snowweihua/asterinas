@@ -98,6 +98,7 @@ qemu.args = """\
     -smp 1 \
     -m 512M \
     -dtb test/nix/aarch64-virt.dtb \
+    -device loader,file=test/nix/aarch64-virt.dtb,addr=0x48000000,force-raw=on \
     --no-reboot \
     -nographic \
     -serial mon:stdio

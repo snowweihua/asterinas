@@ -66,8 +66,12 @@ impl MemoryRegion {
             fn __kernel_start();
             fn __kernel_end();
         }
+        let base = crate::arch::boot::kernel_physical_base(
+            __kernel_start as usize,
+            kernel_loaded_offset(),
+        );
         MemoryRegion {
-            base: __kernel_start as usize - kernel_loaded_offset(),
+            base,
             len: __kernel_end as usize - __kernel_start as usize,
             typ: MemoryRegionType::Kernel,
         }

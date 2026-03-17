@@ -22,14 +22,10 @@ pub(crate) mod mapping {
     use super::MetaSlot;
     use crate::mm::{kspace::FRAME_METADATA_RANGE, Paddr, PagingConstsTrait, Vaddr, PAGE_SIZE};
 
-    #[cfg(target_arch = "aarch64")]
-    const AARCH64_FRAME_PADDR_BASE: Paddr = 0x4000_0000;
-
     /// Converts a physical address of a base frame to the virtual address of the metadata slot.
     pub(crate) const fn frame_to_meta<C: PagingConstsTrait>(paddr: Paddr) -> Vaddr {
         let base = FRAME_METADATA_RANGE.start;
-        #[cfg(target_arch = "aarch64")]
-        let paddr = paddr - AARCH64_FRAME_PADDR_BASE;
+        let paddr = paddr - crate::arch::mm::frame_paddr_base();
         let offset = paddr / PAGE_SIZE;
         base + offset * size_of::<MetaSlot>()
     }
@@ -38,14 +34,7 @@ pub(crate) mod mapping {
     pub(crate) const fn meta_to_frame<C: PagingConstsTrait>(vaddr: Vaddr) -> Paddr {
         let base = FRAME_METADATA_RANGE.start;
         let offset = (vaddr - base) / size_of::<MetaSlot>();
-        #[cfg(target_arch = "aarch64")]
-        {
-            return AARCH64_FRAME_PADDR_BASE + offset * PAGE_SIZE;
-        }
-        #[cfg(not(target_arch = "aarch64"))]
-        {
-            offset * PAGE_SIZE
-        }
+        crate::arch::mm::frame_paddr_base() + offset * PAGE_SIZE
     }
 }
 
@@ -56,7 +45,7 @@ use core::{
     fmt::Debug,
     mem::{size_of, ManuallyDrop, MaybeUninit},
     result::Result,
-    sync::atomic::{AtomicU64, Ordering},
+    sync::atomic::{AtomicU64, AtomicUsize, Ordering},
 };
 
 use log::info;
@@ -86,10 +75,7 @@ pub const FRAME_METADATA_MAX_ALIGN: usize = META_SLOT_SIZE;
 
 const META_SLOT_SIZE: usize = 64;
 
-#[cfg(target_arch = "aarch64")]
-const AARCH64_FRAME_PADDR_BASE: usize = 0x4000_0000;
-#[cfg(target_arch = "aarch64")]
-const AARCH64_BOOTSTRAP_FRAME_CAP: usize = 2 * 1024; // 8 MiB tracked during early bring-up
+static FRAME_META_PADDR_BASE: AtomicUsize = AtomicUsize::new(0);
 
 #[repr(C)]
 pub(in crate::mm) struct MetaSlot {
@@ -216,19 +202,35 @@ pub enum GetFrameError {
 
 /// Gets the reference to a metadata slot.
 pub(super) fn get_slot(paddr: Paddr) -> Result<&'static MetaSlot, GetFrameError> {
+    let frame_paddr_base = crate::arch::mm::frame_paddr_base();
+
     if paddr % PAGE_SIZE != 0 {
         return Err(GetFrameError::NotAligned);
     }
-    #[cfg(target_arch = "aarch64")]
-    if paddr < 0x4000_0000 {
+    if paddr < frame_paddr_base {
         return Err(GetFrameError::OutOfBound);
     }
     if paddr >= super::max_paddr() {
         return Err(GetFrameError::OutOfBound);
     }
 
-    let vaddr = mapping::frame_to_meta::<PagingConsts>(paddr);
-    let ptr = vaddr as *mut MetaSlot;
+    let ptr = if frame_paddr_base == 0 {
+        let vaddr = mapping::frame_to_meta::<PagingConsts>(paddr);
+        vaddr as *mut MetaSlot
+    } else {
+        let meta_paddr_base = FRAME_META_PADDR_BASE.load(Ordering::Relaxed);
+        if meta_paddr_base == 0 {
+            return Err(GetFrameError::OutOfBound);
+        }
+
+        let frame_idx = (paddr - frame_paddr_base) / PAGE_SIZE;
+        let slot_paddr = meta_paddr_base + frame_idx * size_of::<MetaSlot>();
+        if crate::IN_BOOTSTRAP_CONTEXT.load(Ordering::Relaxed) {
+            slot_paddr as *mut MetaSlot
+        } else {
+            paddr_to_vaddr(slot_paddr) as *mut MetaSlot
+        }
+    };
 
     // SAFETY: `ptr` points to a valid `MetaSlot` that will never be
     // mutably borrowed, so taking an immutable reference to it is safe.
@@ -467,7 +469,7 @@ impl_frame_meta_for!(MetaPageMeta);
 /// This function should be called only once and only on the BSP,
 /// before any APs are started.
 pub(crate) unsafe fn init() -> Segment<MetaPageMeta> {
-    let mut max_paddr = {
+    let max_paddr = {
         let regions = &crate::boot::EARLY_INFO.get().unwrap().memory_regions;
         regions
             .iter()
@@ -476,18 +478,6 @@ pub(crate) unsafe fn init() -> Segment<MetaPageMeta> {
             .max()
             .unwrap()
     };
-
-            #[cfg(target_arch = "aarch64")]
-            crate::early_println!("[fm0] after max_paddr");
-
-            #[cfg(target_arch = "aarch64")]
-            {
-                let max_frames = (max_paddr - AARCH64_FRAME_PADDR_BASE) / PAGE_SIZE;
-                if max_frames > AARCH64_BOOTSTRAP_FRAME_CAP {
-                    max_paddr = AARCH64_FRAME_PADDR_BASE + AARCH64_BOOTSTRAP_FRAME_CAP * PAGE_SIZE;
-                    crate::early_println!("[fm0c] capped tracked RAM to 8MiB");
-                }
-            }
 
     info!(
         "Initializing frame metadata for physical memory up to {:x}",
@@ -501,73 +491,52 @@ pub(crate) unsafe fn init() -> Segment<MetaPageMeta> {
     #[cfg(target_arch = "x86_64")]
     add_temp_linear_mapping(max_paddr);
 
-    #[cfg(target_arch = "aarch64")]
-    let tot_nr_frames = (max_paddr - AARCH64_FRAME_PADDR_BASE) / page_size::<PagingConsts>(1);
-    #[cfg(not(target_arch = "aarch64"))]
-    let tot_nr_frames = max_paddr / page_size::<PagingConsts>(1);
+    let frame_paddr_base = crate::arch::mm::frame_paddr_base();
+    let tot_nr_frames = max_paddr.saturating_sub(frame_paddr_base) / page_size::<PagingConsts>(1);
     let (nr_meta_pages, meta_pages) = alloc_meta_frames(tot_nr_frames);
 
-    #[cfg(target_arch = "aarch64")]
-    crate::early_println!("[fm1] after alloc_meta_frames");
-
-    // Map the metadata frames.
-    boot_pt::with_borrow(|boot_pt| {
-        #[cfg(target_arch = "aarch64")]
-        let meta_vaddr_base = mapping::frame_to_meta::<PagingConsts>(AARCH64_FRAME_PADDR_BASE);
-        #[cfg(not(target_arch = "aarch64"))]
-        let meta_vaddr_base = mapping::frame_to_meta::<PagingConsts>(0);
-
-        for i in 0..nr_meta_pages {
-            let frame_paddr = meta_pages + i * PAGE_SIZE;
-            let vaddr = meta_vaddr_base + i * PAGE_SIZE;
-            let prop = PageProperty {
-                flags: PageFlags::RW,
-                cache: CachePolicy::Writeback,
-                priv_flags: PrivilegedPageFlags::GLOBAL,
-            };
-            // SAFETY: we are doing the metadata mappings for the kernel.
-            unsafe { boot_pt.map_base_page(vaddr, frame_paddr / PAGE_SIZE, prop) };
-        }
-    })
-    .unwrap();
-
-    #[cfg(target_arch = "aarch64")]
-    unsafe {
-        core::arch::asm!(
-            "dsb ishst",
-            "tlbi vmalle1",
-            "dsb ish",
-            "isb",
-            options(nostack, preserves_flags)
-        );
+    if frame_paddr_base == 0 {
+        boot_pt::with_borrow(|boot_pt| {
+            let meta_vaddr_base = mapping::frame_to_meta::<PagingConsts>(0);
+            for i in 0..nr_meta_pages {
+                let frame_paddr = meta_pages + i * PAGE_SIZE;
+                let vaddr = meta_vaddr_base + i * PAGE_SIZE;
+                let prop = PageProperty {
+                    flags: PageFlags::RW,
+                    cache: CachePolicy::Writeback,
+                    priv_flags: PrivilegedPageFlags::GLOBAL,
+                };
+                unsafe { boot_pt.map_base_page(vaddr, frame_paddr / PAGE_SIZE, prop) };
+            }
+        })
+        .unwrap();
+        let slots = paddr_to_vaddr(meta_pages) as *mut MetaSlot;
+        init_slots(slots, tot_nr_frames);
+    } else {
+        FRAME_META_PADDR_BASE.store(meta_pages, Ordering::Relaxed);
+        let slots = meta_pages as *mut MetaSlot;
+        init_slots(slots, tot_nr_frames);
     }
-
-    #[cfg(target_arch = "aarch64")]
-    crate::early_println!("[fm2] after boot_pt::with_borrow");
 
     // Now the metadata frames are mapped, we can initialize the metadata.
     super::MAX_PADDR.store(max_paddr, Ordering::Relaxed);
 
-    #[cfg(target_arch = "aarch64")]
-    crate::early_println!("[fm3] after MAX_PADDR.store");
-
     let meta_page_range = meta_pages..meta_pages + nr_meta_pages * PAGE_SIZE;
 
-    #[cfg(not(target_arch = "aarch64"))]
-    let (range_1, range_2) = allocator::EARLY_ALLOCATOR
-        .lock()
-        .as_ref()
-        .unwrap()
-        .allocated_regions();
-    #[cfg(not(target_arch = "aarch64"))]
-    for r in range_difference(&range_1, &meta_page_range) {
-        let early_seg = Segment::from_unused(r, |_| EarlyAllocatedFrameMeta).unwrap();
-        let _ = ManuallyDrop::new(early_seg);
-    }
-    #[cfg(not(target_arch = "aarch64"))]
-    for r in range_difference(&range_2, &meta_page_range) {
-        let early_seg = Segment::from_unused(r, |_| EarlyAllocatedFrameMeta).unwrap();
-        let _ = ManuallyDrop::new(early_seg);
+    if frame_paddr_base == 0 {
+        let (range_1, range_2) = allocator::EARLY_ALLOCATOR
+            .lock()
+            .as_ref()
+            .unwrap()
+            .allocated_regions();
+        for r in range_difference(&range_1, &meta_page_range) {
+            let early_seg = Segment::from_unused(r, |_| EarlyAllocatedFrameMeta).unwrap();
+            let _ = ManuallyDrop::new(early_seg);
+        }
+        for r in range_difference(&range_2, &meta_page_range) {
+            let early_seg = Segment::from_unused(r, |_| EarlyAllocatedFrameMeta).unwrap();
+            let _ = ManuallyDrop::new(early_seg);
+        }
     }
 
     mark_unusable_ranges();
@@ -588,25 +557,15 @@ fn alloc_meta_frames(tot_nr_frames: usize) -> (usize, Paddr) {
         .checked_mul(size_of::<MetaSlot>())
         .unwrap()
         .div_ceil(PAGE_SIZE);
-    #[cfg(target_arch = "aarch64")]
-    crate::early_println!("[fm1a] after nr_meta_pages");
     let paddr = allocator::early_alloc(
         Layout::from_size_align(nr_meta_pages * PAGE_SIZE, PAGE_SIZE).unwrap(),
     )
     .unwrap();
-    #[cfg(target_arch = "aarch64")]
-    crate::early_println!("[fm1b] after early_alloc");
 
-    #[cfg(target_arch = "aarch64")]
-    let slots = paddr as *mut MetaSlot;
-    #[cfg(not(target_arch = "aarch64"))]
-    let slots = paddr_to_vaddr(paddr) as *mut MetaSlot;
-    #[cfg(target_arch = "aarch64")]
-    crate::early_println!("[fm1c] after paddr_to_vaddr");
+    (nr_meta_pages, paddr)
+}
 
-    #[cfg(target_arch = "aarch64")]
-    crate::early_println!("[fm1d] initializing slots");
-
+fn init_slots(slots: *mut MetaSlot, tot_nr_frames: usize) {
     for i in 0..tot_nr_frames {
         // SAFETY: The memory is successfully allocated with `tot_nr_frames`
         // slots so the index must be within the range.
@@ -620,11 +579,6 @@ fn alloc_meta_frames(tot_nr_frames: usize) -> (usize, Paddr) {
                 .write(UnsafeCell::new(MaybeUninit::uninit()));
         }
     }
-
-    #[cfg(target_arch = "aarch64")]
-    crate::early_println!("[fm1e] after slot init loop");
-
-    (nr_meta_pages, paddr)
 }
 
 /// Unusable memory metadata. Cannot be used for any purposes.
@@ -655,6 +609,7 @@ macro_rules! mark_ranges {
 
 fn mark_unusable_ranges() {
     let regions = &crate::boot::EARLY_INFO.get().unwrap().memory_regions;
+    let frame_paddr_base = crate::arch::mm::frame_paddr_base();
 
     for region in regions
         .iter()
@@ -667,12 +622,11 @@ fn mark_unusable_ranges() {
             continue;
         }
 
-        #[cfg(target_arch = "aarch64")]
-        {
-            if end <= AARCH64_FRAME_PADDR_BASE {
+        if frame_paddr_base != 0 {
+            if end <= frame_paddr_base {
                 continue;
             }
-            start = start.max(AARCH64_FRAME_PADDR_BASE);
+            start = start.max(frame_paddr_base);
         }
 
         match region.typ() {
