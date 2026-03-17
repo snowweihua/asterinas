@@ -14,7 +14,6 @@ use crate::{
         memory_region::{MemoryRegion, MemoryRegionArray, MemoryRegionType},
         BootloaderAcpiArg, BootloaderFramebufferArg,
     },
-    early_println,
     mm::paddr_to_vaddr,
 };
 
@@ -47,8 +46,16 @@ pl011_puts_asm:
     ret
 "#);
 
+
 /// The Flattened Device Tree of the platform.
 pub static DEVICE_TREE: Once<Fdt> = Once::new();
+static DEVICE_TREE_REGION: Once<(usize, usize)> = Once::new();
+
+const QEMU_VIRT_RAM_BASE: usize = 0x4000_0000;
+const QEMU_VIRT_RAM_SCAN_SIZE: usize = 512 * 1024 * 1024;
+const FDT_MAGIC_BE: [u8; 4] = [0xd0, 0x0d, 0xfe, 0xed];
+const EMBEDDED_QEMU_VIRT_DTB: &[u8] =
+    include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../test/nix/aarch64-virt.dtb"));
 
 fn parse_bootloader_name() -> &'static str {
     "Unknown"
@@ -107,6 +114,19 @@ fn parse_memory_regions() -> MemoryRegionArray {
         }
     }
 
+    if let Some((dtb_base, dtb_size)) = DEVICE_TREE_REGION.get().copied() {
+        let aligned_base = dtb_base & !(crate::mm::PAGE_SIZE - 1);
+        let aligned_end = (dtb_base + dtb_size + crate::mm::PAGE_SIZE - 1)
+            & !(crate::mm::PAGE_SIZE - 1);
+        regions
+            .push(MemoryRegion::new(
+                aligned_base,
+                aligned_end - aligned_base,
+                MemoryRegionType::Reserved,
+            ))
+            .unwrap();
+    }
+
     // Add the kernel region.
     regions.push(MemoryRegion::kernel()).unwrap();
 
@@ -131,6 +151,56 @@ fn parse_initramfs_range() -> Option<(usize, usize)> {
     Some((initrd_start, initrd_end))
 }
 
+fn parse_fdt_total_size(dtb_ptr: *const u8) -> usize {
+    let total_size_bytes = unsafe { core::slice::from_raw_parts(dtb_ptr.add(4), 4) };
+    u32::from_be_bytes(total_size_bytes.try_into().unwrap()) as usize
+}
+
+fn find_dtb_paddr_in_qemu_ram() -> Option<usize> {
+    let scan_start = QEMU_VIRT_RAM_BASE;
+    let scan_end = QEMU_VIRT_RAM_BASE + QEMU_VIRT_RAM_SCAN_SIZE;
+
+    let is_valid_fdt = |paddr: usize| {
+        let dtb_ptr = paddr as *const u8;
+        let magic = unsafe { core::slice::from_raw_parts(dtb_ptr, 4) };
+        magic == FDT_MAGIC_BE && unsafe { Fdt::from_ptr(dtb_ptr) }.is_ok()
+    };
+
+    let dense_scan = |start: usize, end: usize| {
+        let mut paddr = start;
+        while paddr + 4 <= end {
+            if is_valid_fdt(paddr) {
+                return Some(paddr);
+            }
+            paddr += 8;
+        }
+        None
+    };
+
+    for paddr in (scan_start..scan_end).step_by(0x1000) {
+        if is_valid_fdt(paddr) {
+            return Some(paddr);
+        }
+    }
+
+    let dense_window = 32 * 1024 * 1024;
+    let low_window_end = scan_start + dense_window;
+    if let Some(found) = dense_scan(scan_start, low_window_end) {
+        return Some(found);
+    }
+
+    let high_window_start = scan_end - dense_window;
+    if let Some(found) = dense_scan(high_window_start, scan_end) {
+        return Some(found);
+    }
+
+    None
+}
+
+fn parse_embedded_qemu_dtb() -> Option<Fdt<'static>> {
+    unsafe { Fdt::from_ptr(EMBEDDED_QEMU_VIRT_DTB.as_ptr()) }.ok()
+}
+
 /// Declared here; defined in the global_asm! block above.
 unsafe extern "C" {
     fn pl011_puts_asm(ptr: *const u8, len: usize);
@@ -139,13 +209,26 @@ unsafe extern "C" {
 /// Write a byte slice to the PL011 UART.  Safe to call before any Rust
 /// runtime infrastructure (no panics, no volatile wrappers, no alloc).
 #[inline(always)]
-unsafe fn pl011_puts(s: &[u8]) {
+pub unsafe fn pl011_puts(s: &[u8]) {
     unsafe { pl011_puts_asm(s.as_ptr(), s.len()) };
 }
 
+#[inline(always)]
+pub fn pl011_puts_static(s: &'static [u8]) {
+    unsafe { pl011_puts_asm(s.as_ptr(), s.len()) };
+}
+
+#[inline(always)]
+pub fn pl011_putc(c: u8) {
+    let buf = [c];
+    unsafe { pl011_puts_asm(buf.as_ptr(), 1) };
+}
+
 /// The entry point of the Rust code portion of Asterinas.
+///
+/// AArch64 Linux boot protocol: x0 = physical address of DTB, x1 = 0 (reserved).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn aarch64_boot(_hart_id: usize, device_tree_paddr: usize) -> ! {
+pub unsafe extern "C" fn aarch64_boot(device_tree_paddr: usize, _reserved: usize) -> ! {
     // Direct PL011 writes to survive before SpinLock/CPU-local are ready.
     unsafe { pl011_puts(b"[1] aarch64_boot entered\n") };
     unsafe { pl011_puts_asm(b"[2] direct\n".as_ptr(), 11) };
@@ -153,20 +236,54 @@ pub unsafe extern "C" fn aarch64_boot(_hart_id: usize, device_tree_paddr: usize)
     unsafe { pl011_puts(b"[3] after early_println\n") };
     // early_println!("  device_tree_paddr = {:#x}", device_tree_paddr);
 
-    let device_tree_ptr = paddr_to_vaddr(device_tree_paddr) as *const u8;
-    let fdt = unsafe { fdt::Fdt::from_ptr(device_tree_ptr).unwrap() };
-    DEVICE_TREE.call_once(|| fdt);
-
     use crate::boot::{call_ostd_main, EarlyBootInfo, EARLY_INFO};
 
-    EARLY_INFO.call_once(|| EarlyBootInfo {
-        bootloader_name: parse_bootloader_name(),
-        kernel_cmdline: parse_kernel_commandline(),
-        initramfs: parse_initramfs(),
-        acpi_arg: parse_acpi_arg(),
-        framebuffer_arg: parse_framebuffer_info(),
-        memory_regions: parse_memory_regions(),
-    });
+    let discovered_dtb_paddr = if device_tree_paddr != 0 {
+        device_tree_paddr
+    } else {
+        find_dtb_paddr_in_qemu_ram().unwrap_or(0)
+    };
+
+    unsafe { pl011_puts(b"[5g] before early_info once\n") };
+    if discovered_dtb_paddr != 0 {
+        if device_tree_paddr == 0 {
+            unsafe { pl011_puts(b"[3x] DTB discovered by RAM scan\n") };
+        }
+        unsafe { pl011_puts(b"[3x] before fdt::from_ptr\n") };
+        let device_tree_ptr = discovered_dtb_paddr as *const u8;
+        let device_tree_size = parse_fdt_total_size(device_tree_ptr);
+        let fdt = unsafe { fdt::Fdt::from_ptr(device_tree_ptr).unwrap() };
+        DEVICE_TREE.call_once(|| fdt);
+        DEVICE_TREE_REGION.call_once(|| (discovered_dtb_paddr, device_tree_size));
+        unsafe { pl011_puts(b"[4] after device_tree once\n") };
+
+        EARLY_INFO.call_once(|| EarlyBootInfo {
+            bootloader_name: parse_bootloader_name(),
+            kernel_cmdline: parse_kernel_commandline(),
+            initramfs: parse_initramfs(),
+            acpi_arg: parse_acpi_arg(),
+            framebuffer_arg: parse_framebuffer_info(),
+            memory_regions: parse_memory_regions(),
+        });
+    } else if let Some(fdt) = parse_embedded_qemu_dtb() {
+        unsafe { pl011_puts(b"[3x] no DTB register; using embedded DTB blob\n") };
+        DEVICE_TREE.call_once(|| fdt);
+
+        EARLY_INFO.call_once(|| EarlyBootInfo {
+            bootloader_name: parse_bootloader_name(),
+            kernel_cmdline: parse_kernel_commandline(),
+            initramfs: parse_initramfs(),
+            acpi_arg: parse_acpi_arg(),
+            framebuffer_arg: parse_framebuffer_info(),
+            memory_regions: parse_memory_regions(),
+        });
+    } else {
+        unsafe { pl011_puts(b"[3x] FATAL: no DTB source available\n") };
+        loop {
+            core::hint::spin_loop();
+        }
+    }
+    unsafe { pl011_puts(b"[5h] after early_info once\n") };
 
     call_ostd_main();
 }

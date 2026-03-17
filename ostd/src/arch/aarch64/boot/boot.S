@@ -87,8 +87,39 @@ PTE_NORMAL_2M  = ( MM_TYPE_BLOCK | PTE_AIDX_MEMORY | PTE_SH_INNER | PTE_AF )
 .section ".boot", "awx", @progbits
 .globl _start
 _start:
-    /* Save QEMU's x0 (hart_id) and x1 (DTB paddr) to callee-saved registers
-     * before any debug macros clobber them. */
+    /*
+     * ARM64 Linux Image header (64 bytes, offsets 0x00..0x3f).
+     *
+     * Present at the ELF entry point so that QEMU -machine virt recognises
+     * this as an ARM64 Linux kernel and passes the generated FDT physical
+     * address in x0 (per the AArch64 Linux boot protocol), rather than
+     * leaving x0 as zero.
+     *
+     *   [0x00] code0       – branch past the header to _start_real
+     *   [0x04] code1       – reserved (0)
+     *   [0x08] text_offset – load offset from start of RAM (0x80000)
+     *   [0x10] image_size  – effective kernel image size (0 = use file size)
+     *   [0x18] flags       – kernel flags (0 = unspecified / little-endian)
+     *   [0x20] res2        – reserved (0)
+     *   [0x28] res3        – reserved (0)
+     *   [0x30] res4        – reserved (0)
+     *   [0x38] magic       – ARM64_IMAGE_MAGIC = 0x644d5241
+     *   [0x3c] res5        – reserved (0)
+     */
+    b       _start_real              /* [0x00] code0 */
+    .long   0                        /* [0x04] code1 */
+    .quad   0x80000                  /* [0x08] text_offset (LMA − RAM base) */
+    .quad   0                        /* [0x10] image_size */
+    .quad   0                        /* [0x18] flags */
+    .quad   0                        /* [0x20] res2 */
+    .quad   0                        /* [0x28] res3 */
+    .quad   0                        /* [0x30] res4 */
+    .long   0x644d5241               /* [0x38] ARM64_IMAGE_MAGIC */
+    .long   0                        /* [0x3c] res5 */
+
+_start_real:
+    /* AArch64 Linux boot protocol: x0 = DTB physical address, x1 = 0 (reserved).
+     * Save to callee-saved registers before any debug macros clobber them. */
     mov     x19, x0
     mov     x20, x1
     early_uart_putchar 'A'          /* debug: reached _start */
@@ -148,8 +179,11 @@ switch_to_el1_from_el2:
 jump_to_main:
     early_uart_putchar 'M'          /* debug: reached EL1 jump_to_main */
     /* Load boot page tables */
+    /* TTBR0: identity map (low VA == PA, covers boot code at 0x40080000) */
     adr     x2, boot_l4pt
     msr     ttbr0_el1, x2
+    /* TTBR1: separate kernel table mapping high VA → DRAM (PA 0x40000000+) */
+    adr     x2, boot_l4pt_kern
     msr     ttbr1_el1, x2
     isb
 
@@ -170,12 +204,9 @@ jump_to_main:
     msr     sctlr_el1, x5
     isb
 
-    /* Switch to using the virtual address stack.
-     * We cannot use ldr sp, =sym on AArch64 (no ADR pseudo for sp).
-     * Instead: compute phys addr of boot_stack_top, then add KERNEL_VMA. */
+    /* Set SP to boot_stack_top (now in DRAM at ~0x400c5dd0 with KERNEL_LMA=0x40080000).
+     * adr is PC-relative so it computes the correct physical/identity-mapped address. */
     adr     x7, boot_stack_top
-    ldr     x8, =KERNEL_VMA
-    add     x7, x7, x8
     mov     sp, x7
 
     /* Jump to virtual-address _start_virt */
@@ -190,15 +221,16 @@ jump_to_main:
 /* --------------------------------------------------------------------------
  * Boot page tables (4 KB granule, 4 levels: PGD -> PUD -> PMD -> PTE)
  *
- * We need only two entries in PGD:
- *   [0]   -> boot_l3pt_low  (identity: VA == PA, first 4 GB)
- *   [256] -> boot_l3pt_high (high-half: VA 0xffff000000000000, first 4 GB)
+ * Two separate PGD tables:
+ *   boot_l4pt      (TTBR0): identity map — VA == PA for the full 4 GB range.
+ *     [0] -> boot_l3pt_low  (first 4 GB via PUD with 1 GB blocks / L2 for GB0)
  *
- * L3 (PGD) tables point to L2 (PUD) tables which either:
- *   - Use 1 GB block descriptors for RAM-only GBs (1-3), OR
- *   - Point to an L1 (PMD) table for the first GB which has mixed attrs:
- *       0x00000000–0x3FFFFFFF: Device-nGnRnE (MMIO: UART, etc.)
- *       0x40000000–0x7FFFFFFF: Normal WB WA  (QEMU RAM)
+ *   boot_l4pt_kern (TTBR1): kernel high-half — VA 0xffff000000000000 → DRAM.
+ *     [0] -> boot_l3pt_high (first 4 GB, remapped to start at PA 0x40000000)
+ *
+ * With KERNEL_LMA=0x40080000, kernel code/data sit in QEMU DRAM (PA 0x40000000+).
+ * TTBR1 entry[0] maps the 1st GB of the high half directly to the DRAM 1 GB block
+ * so that VA 0xffff000000XXXXXX → PA 0x40000000+XXXXXX (writable RAM).
  * -------------------------------------------------------------------------- */
 .balign 4096
 .globl boot_l4pt
@@ -207,6 +239,12 @@ boot_l4pt:
     .zero 8 * 255
     .quad boot_l3pt_high + MM_TYPE_TABLE    /* slot 256: high half */
     .zero 8 * (512 - 257)
+/* PGD for TTBR1: kernel high-half maps to DRAM */
+.balign 4096
+.globl boot_l4pt_kern
+boot_l4pt_kern:
+    .quad boot_l3pt_high + MM_TYPE_TABLE    /* slot 0: high VA → DRAM */
+    .zero 8 * (512 - 1)
 
 /* L3 (PUD) for the low / identity half: first 4 GB */
 .balign 4096
@@ -217,14 +255,13 @@ boot_l3pt_low:
     .quad ( PTE_NORMAL_1G | (3 << 30) )     /* 0xC0000000–0xFFFFFFFF */
     .zero 8 * (512 - 4)
 
-/* L3 (PUD) for the high half: same physical mapping as low */
+/* L3 (PUD) for the kernel high half: maps to DRAM (PA + 0x40000000) */
 .balign 4096
 boot_l3pt_high:
-    .quad boot_l2pt_gb0 + MM_TYPE_TABLE     /* 0x00000000–0x3FFFFFFF: via L2 */
-    .quad ( PTE_NORMAL_1G | (1 << 30) )     /* 0x40000000–0x7FFFFFFF */
-    .quad ( PTE_NORMAL_1G | (2 << 30) )     /* 0x80000000–0xBFFFFFFF */
-    .quad ( PTE_NORMAL_1G | (3 << 30) )     /* 0xC0000000–0xFFFFFFFF */
-    .zero 8 * (512 - 4)
+    .quad ( PTE_NORMAL_1G | (1 << 30) )     /* VA[0–1GB)   → PA 0x40000000–0x7FFFFFFF (DRAM) */
+    .quad ( PTE_NORMAL_1G | (2 << 30) )     /* VA[1–2GB)   → PA 0x80000000–0xBFFFFFFF */
+    .quad ( PTE_NORMAL_1G | (3 << 30) )     /* VA[2–3GB)   → PA 0xC0000000–0xFFFFFFFF */
+    .zero 8 * (512 - 3)
 
 /*
  * L2 (PMD) for the first 1 GB (0x00000000–0x3FFFFFFF), 2 MB per entry.
@@ -285,8 +322,8 @@ _start_virt:
 
     early_uart_putchar 'B'          /* debug: TPIDR_EL1 set, about to call Rust */
 
-    /* Restore x0 (hart_id) and x1 (DTB paddr) that were saved in x19/x20
-     * at _start before the debug macros clobbered them. */
+    /* Restore x0 (DTB paddr, per AArch64 boot protocol) and x1 (reserved=0)
+     * that were saved in x19/x20 at _start before debug macros clobbered them. */
     mov     x0, x19
     mov     x1, x20
     b       aarch64_boot

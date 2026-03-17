@@ -22,9 +22,14 @@ pub(crate) mod mapping {
     use super::MetaSlot;
     use crate::mm::{kspace::FRAME_METADATA_RANGE, Paddr, PagingConstsTrait, Vaddr, PAGE_SIZE};
 
+    #[cfg(target_arch = "aarch64")]
+    const AARCH64_FRAME_PADDR_BASE: Paddr = 0x4000_0000;
+
     /// Converts a physical address of a base frame to the virtual address of the metadata slot.
     pub(crate) const fn frame_to_meta<C: PagingConstsTrait>(paddr: Paddr) -> Vaddr {
         let base = FRAME_METADATA_RANGE.start;
+        #[cfg(target_arch = "aarch64")]
+        let paddr = paddr - AARCH64_FRAME_PADDR_BASE;
         let offset = paddr / PAGE_SIZE;
         base + offset * size_of::<MetaSlot>()
     }
@@ -33,7 +38,14 @@ pub(crate) mod mapping {
     pub(crate) const fn meta_to_frame<C: PagingConstsTrait>(vaddr: Vaddr) -> Paddr {
         let base = FRAME_METADATA_RANGE.start;
         let offset = (vaddr - base) / size_of::<MetaSlot>();
-        offset * PAGE_SIZE
+        #[cfg(target_arch = "aarch64")]
+        {
+            return AARCH64_FRAME_PADDR_BASE + offset * PAGE_SIZE;
+        }
+        #[cfg(not(target_arch = "aarch64"))]
+        {
+            offset * PAGE_SIZE
+        }
     }
 }
 
@@ -54,7 +66,7 @@ use crate::{
     boot::memory_region::MemoryRegionType,
     const_assert,
     mm::{
-        frame::allocator::{self, EarlyAllocatedFrameMeta},
+        frame::{allocator::{self, EarlyAllocatedFrameMeta}, Frame},
         paddr_to_vaddr, page_size,
         page_table::boot_pt,
         CachePolicy, Infallible, Paddr, PageFlags, PageProperty, PrivilegedPageFlags, Segment,
@@ -73,6 +85,11 @@ pub const FRAME_METADATA_MAX_SIZE: usize = META_SLOT_SIZE
 pub const FRAME_METADATA_MAX_ALIGN: usize = META_SLOT_SIZE;
 
 const META_SLOT_SIZE: usize = 64;
+
+#[cfg(target_arch = "aarch64")]
+const AARCH64_FRAME_PADDR_BASE: usize = 0x4000_0000;
+#[cfg(target_arch = "aarch64")]
+const AARCH64_BOOTSTRAP_FRAME_CAP: usize = 2 * 1024; // 8 MiB tracked during early bring-up
 
 #[repr(C)]
 pub(in crate::mm) struct MetaSlot {
@@ -201,6 +218,10 @@ pub enum GetFrameError {
 pub(super) fn get_slot(paddr: Paddr) -> Result<&'static MetaSlot, GetFrameError> {
     if paddr % PAGE_SIZE != 0 {
         return Err(GetFrameError::NotAligned);
+    }
+    #[cfg(target_arch = "aarch64")]
+    if paddr < 0x4000_0000 {
+        return Err(GetFrameError::OutOfBound);
     }
     if paddr >= super::max_paddr() {
         return Err(GetFrameError::OutOfBound);
@@ -446,7 +467,7 @@ impl_frame_meta_for!(MetaPageMeta);
 /// This function should be called only once and only on the BSP,
 /// before any APs are started.
 pub(crate) unsafe fn init() -> Segment<MetaPageMeta> {
-    let max_paddr = {
+    let mut max_paddr = {
         let regions = &crate::boot::EARLY_INFO.get().unwrap().memory_regions;
         regions
             .iter()
@@ -455,6 +476,18 @@ pub(crate) unsafe fn init() -> Segment<MetaPageMeta> {
             .max()
             .unwrap()
     };
+
+            #[cfg(target_arch = "aarch64")]
+            crate::early_println!("[fm0] after max_paddr");
+
+            #[cfg(target_arch = "aarch64")]
+            {
+                let max_frames = (max_paddr - AARCH64_FRAME_PADDR_BASE) / PAGE_SIZE;
+                if max_frames > AARCH64_BOOTSTRAP_FRAME_CAP {
+                    max_paddr = AARCH64_FRAME_PADDR_BASE + AARCH64_BOOTSTRAP_FRAME_CAP * PAGE_SIZE;
+                    crate::early_println!("[fm0c] capped tracked RAM to 8MiB");
+                }
+            }
 
     info!(
         "Initializing frame metadata for physical memory up to {:x}",
@@ -468,14 +501,25 @@ pub(crate) unsafe fn init() -> Segment<MetaPageMeta> {
     #[cfg(target_arch = "x86_64")]
     add_temp_linear_mapping(max_paddr);
 
+    #[cfg(target_arch = "aarch64")]
+    let tot_nr_frames = (max_paddr - AARCH64_FRAME_PADDR_BASE) / page_size::<PagingConsts>(1);
+    #[cfg(not(target_arch = "aarch64"))]
     let tot_nr_frames = max_paddr / page_size::<PagingConsts>(1);
     let (nr_meta_pages, meta_pages) = alloc_meta_frames(tot_nr_frames);
 
+    #[cfg(target_arch = "aarch64")]
+    crate::early_println!("[fm1] after alloc_meta_frames");
+
     // Map the metadata frames.
     boot_pt::with_borrow(|boot_pt| {
+        #[cfg(target_arch = "aarch64")]
+        let meta_vaddr_base = mapping::frame_to_meta::<PagingConsts>(AARCH64_FRAME_PADDR_BASE);
+        #[cfg(not(target_arch = "aarch64"))]
+        let meta_vaddr_base = mapping::frame_to_meta::<PagingConsts>(0);
+
         for i in 0..nr_meta_pages {
             let frame_paddr = meta_pages + i * PAGE_SIZE;
-            let vaddr = mapping::frame_to_meta::<PagingConsts>(0) + i * PAGE_SIZE;
+            let vaddr = meta_vaddr_base + i * PAGE_SIZE;
             let prop = PageProperty {
                 flags: PageFlags::RW,
                 cache: CachePolicy::Writeback,
@@ -487,20 +531,40 @@ pub(crate) unsafe fn init() -> Segment<MetaPageMeta> {
     })
     .unwrap();
 
+    #[cfg(target_arch = "aarch64")]
+    unsafe {
+        core::arch::asm!(
+            "dsb ishst",
+            "tlbi vmalle1",
+            "dsb ish",
+            "isb",
+            options(nostack, preserves_flags)
+        );
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    crate::early_println!("[fm2] after boot_pt::with_borrow");
+
     // Now the metadata frames are mapped, we can initialize the metadata.
     super::MAX_PADDR.store(max_paddr, Ordering::Relaxed);
 
+    #[cfg(target_arch = "aarch64")]
+    crate::early_println!("[fm3] after MAX_PADDR.store");
+
     let meta_page_range = meta_pages..meta_pages + nr_meta_pages * PAGE_SIZE;
 
+    #[cfg(not(target_arch = "aarch64"))]
     let (range_1, range_2) = allocator::EARLY_ALLOCATOR
         .lock()
         .as_ref()
         .unwrap()
         .allocated_regions();
+    #[cfg(not(target_arch = "aarch64"))]
     for r in range_difference(&range_1, &meta_page_range) {
         let early_seg = Segment::from_unused(r, |_| EarlyAllocatedFrameMeta).unwrap();
         let _ = ManuallyDrop::new(early_seg);
     }
+    #[cfg(not(target_arch = "aarch64"))]
     for r in range_difference(&range_2, &meta_page_range) {
         let early_seg = Segment::from_unused(r, |_| EarlyAllocatedFrameMeta).unwrap();
         let _ = ManuallyDrop::new(early_seg);
@@ -524,29 +588,41 @@ fn alloc_meta_frames(tot_nr_frames: usize) -> (usize, Paddr) {
         .checked_mul(size_of::<MetaSlot>())
         .unwrap()
         .div_ceil(PAGE_SIZE);
+    #[cfg(target_arch = "aarch64")]
+    crate::early_println!("[fm1a] after nr_meta_pages");
     let paddr = allocator::early_alloc(
         Layout::from_size_align(nr_meta_pages * PAGE_SIZE, PAGE_SIZE).unwrap(),
     )
     .unwrap();
+    #[cfg(target_arch = "aarch64")]
+    crate::early_println!("[fm1b] after early_alloc");
 
+    #[cfg(target_arch = "aarch64")]
+    let slots = paddr as *mut MetaSlot;
+    #[cfg(not(target_arch = "aarch64"))]
     let slots = paddr_to_vaddr(paddr) as *mut MetaSlot;
+    #[cfg(target_arch = "aarch64")]
+    crate::early_println!("[fm1c] after paddr_to_vaddr");
 
-    // Initialize the metadata slots.
+    #[cfg(target_arch = "aarch64")]
+    crate::early_println!("[fm1d] initializing slots");
+
     for i in 0..tot_nr_frames {
         // SAFETY: The memory is successfully allocated with `tot_nr_frames`
         // slots so the index must be within the range.
         let slot = unsafe { slots.add(i) };
-        // SAFETY: The memory is just allocated so we have exclusive access and
-        // it's valid for writing.
+
+        // SAFETY: The allocated memory is exclusively owned during bootstrap.
         unsafe {
-            slot.write(MetaSlot {
-                storage: UnsafeCell::new([0; FRAME_METADATA_MAX_SIZE]),
-                ref_count: AtomicU64::new(REF_COUNT_UNUSED),
-                vtable_ptr: UnsafeCell::new(MaybeUninit::uninit()),
-                in_list: AtomicU64::new(0),
-            })
-        };
+            core::ptr::addr_of_mut!((*slot).ref_count).write(AtomicU64::new(REF_COUNT_UNUSED));
+            core::ptr::addr_of_mut!((*slot).in_list).write(AtomicU64::new(0));
+            core::ptr::addr_of_mut!((*slot).vtable_ptr)
+                .write(UnsafeCell::new(MaybeUninit::uninit()));
+        }
     }
+
+    #[cfg(target_arch = "aarch64")]
+    crate::early_println!("[fm1e] after slot init loop");
 
     (nr_meta_pages, paddr)
 }
@@ -567,11 +643,12 @@ pub struct KernelMeta;
 impl_frame_meta_for!(KernelMeta);
 
 macro_rules! mark_ranges {
-    ($region: expr, $typ: expr) => {{
-        debug_assert!($region.base() % PAGE_SIZE == 0);
-        debug_assert!($region.len() % PAGE_SIZE == 0);
+    ($range: expr, $typ: expr) => {{
+        let range = $range;
+        debug_assert!(range.start % PAGE_SIZE == 0);
+        debug_assert!((range.end - range.start) % PAGE_SIZE == 0);
 
-        let seg = Segment::from_unused($region.base()..$region.end(), |_| $typ).unwrap();
+        let seg = Segment::from_unused(range, |_| $typ).unwrap();
         let _ = ManuallyDrop::new(seg);
     }};
 }
@@ -584,15 +661,29 @@ fn mark_unusable_ranges() {
         .rev()
         .skip_while(|r| r.typ() != MemoryRegionType::Usable)
     {
+        let mut start = region.base();
+        let end = region.end().min(super::max_paddr());
+        if start >= end {
+            continue;
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            if end <= AARCH64_FRAME_PADDR_BASE {
+                continue;
+            }
+            start = start.max(AARCH64_FRAME_PADDR_BASE);
+        }
+
         match region.typ() {
-            MemoryRegionType::BadMemory => mark_ranges!(region, UnusableMemoryMeta),
-            MemoryRegionType::Unknown => mark_ranges!(region, ReservedMemoryMeta),
-            MemoryRegionType::NonVolatileSleep => mark_ranges!(region, UnusableMemoryMeta),
-            MemoryRegionType::Reserved => mark_ranges!(region, ReservedMemoryMeta),
-            MemoryRegionType::Kernel => mark_ranges!(region, KernelMeta),
-            MemoryRegionType::Module => mark_ranges!(region, UnusableMemoryMeta),
-            MemoryRegionType::Framebuffer => mark_ranges!(region, ReservedMemoryMeta),
-            MemoryRegionType::Reclaimable => mark_ranges!(region, UnusableMemoryMeta),
+            MemoryRegionType::BadMemory => mark_ranges!(start..end, UnusableMemoryMeta),
+            MemoryRegionType::Unknown => mark_ranges!(start..end, ReservedMemoryMeta),
+            MemoryRegionType::NonVolatileSleep => mark_ranges!(start..end, UnusableMemoryMeta),
+            MemoryRegionType::Reserved => mark_ranges!(start..end, ReservedMemoryMeta),
+            MemoryRegionType::Kernel => mark_ranges!(start..end, KernelMeta),
+            MemoryRegionType::Module => mark_ranges!(start..end, UnusableMemoryMeta),
+            MemoryRegionType::Framebuffer => mark_ranges!(start..end, ReservedMemoryMeta),
+            MemoryRegionType::Reclaimable => mark_ranges!(start..end, UnusableMemoryMeta),
             MemoryRegionType::Usable => {} // By default it is initialized as usable.
         }
     }

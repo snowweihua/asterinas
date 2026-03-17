@@ -94,16 +94,11 @@ build.strip_elf = false
 
 qemu.args = """\
     -machine virt \
-    -m 8G \
+    -cpu cortex-a72 \
     -smp 1 \
+    -m 512M \
+    -dtb test/nix/aarch64-virt.dtb \
     --no-reboot \
     -nographic \
-    -display none \
-    -serial chardev:mux \
-    -monitor chardev:mux \
-    -chardev stdio,id=mux,mux=on,signal=off,logfile=qemu.log \
-    -device virtio-keyboard-pci \
-    -device virtio-serial \
-    -device virtconsole,chardev=mux \
-    -rtc base=utc
+    -serial mon:stdio
 """

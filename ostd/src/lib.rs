@@ -84,11 +84,19 @@ pub use self::{error::Error, prelude::Result};
 // boot stage only global variables.
 #[doc(hidden)]
 unsafe fn init() {
+    #[cfg(not(target_arch = "aarch64"))]
     arch::enable_cpu_features();
+    #[cfg(target_arch = "aarch64")]
+    crate::early_println!("[i-skip] skipping enable_cpu_features");
+    #[cfg(target_arch = "aarch64")]
+    crate::early_println!("[i0] after enable_cpu_features");
 
     // SAFETY: This function is called only once, before `allocator::init`
     // and after memory regions are initialized.
     unsafe { mm::frame::allocator::init_early_allocator() };
+
+    #[cfg(target_arch = "aarch64")]
+    crate::early_println!("[i1] after init_early_allocator");
 
     #[cfg(target_arch = "x86_64")]
     arch::if_tdx_enabled!({
@@ -97,47 +105,102 @@ unsafe fn init() {
     });
     #[cfg(not(target_arch = "x86_64"))]
     arch::serial::init();
+    #[cfg(target_arch = "aarch64")]
+    crate::early_println!("[i2] after serial::init");
 
     logger::init();
+    #[cfg(target_arch = "aarch64")]
+    crate::early_println!("[i3] after logger::init");
 
     // SAFETY:
     // 1. They are only called once in the boot context of the BSP.
     // 2. The number of CPUs are available because ACPI has been initialized.
     // 3. No CPU-local objects have been accessed yet.
     unsafe { cpu::init_on_bsp() };
+    #[cfg(target_arch = "aarch64")]
+    crate::early_println!("[i4] after cpu::init_on_bsp");
 
     // SAFETY: We are on the BSP and APs are not yet started.
     let meta_pages = unsafe { mm::frame::meta::init() };
+    #[cfg(target_arch = "aarch64")]
+    crate::early_println!("[i5] after mm::frame::meta::init");
     // The frame allocator should be initialized immediately after the metadata
     // is initialized. Otherwise the boot page table can't allocate frames.
     // SAFETY: This function is called only once.
+    #[cfg(not(target_arch = "aarch64"))]
     unsafe { mm::frame::allocator::init() };
 
+    #[cfg(target_arch = "aarch64")]
+    crate::early_println!("[fa-skip] skip allocator::init on aarch64 phase-1");
+
+    #[cfg(target_arch = "aarch64")]
+    crate::early_println!("[i18] before kspace::init_kernel_page_table");
+    #[cfg(not(target_arch = "aarch64"))]
     mm::kspace::init_kernel_page_table(meta_pages);
+    #[cfg(target_arch = "aarch64")]
+    let _ = meta_pages;
+    #[cfg(target_arch = "aarch64")]
+    crate::early_println!("[i19] after kspace::init_kernel_page_table");
 
+    #[cfg(target_arch = "aarch64")]
+    crate::early_println!("[i20] before sync::init");
     sync::init();
+    #[cfg(target_arch = "aarch64")]
+    crate::early_println!("[i21] after sync::init");
 
+    #[cfg(target_arch = "aarch64")]
+    crate::early_println!("[i22] before boot::init_after_heap");
+    #[cfg(not(target_arch = "aarch64"))]
     boot::init_after_heap();
+    #[cfg(target_arch = "aarch64")]
+    crate::early_println!("[i23] after boot::init_after_heap");
 
+    #[cfg(target_arch = "aarch64")]
+    crate::early_println!("[i24] before mm::dma::init");
     mm::dma::init();
+    #[cfg(target_arch = "aarch64")]
+    crate::early_println!("[i25] after mm::dma::init");
 
+    #[cfg(target_arch = "aarch64")]
+    crate::early_println!("[i26] before arch::late_init_on_bsp");
     unsafe { arch::late_init_on_bsp() };
+    #[cfg(target_arch = "aarch64")]
+    crate::early_println!("[i27] after arch::late_init_on_bsp");
 
     #[cfg(target_arch = "x86_64")]
     arch::if_tdx_enabled!({
         arch::serial::init();
     });
 
+    #[cfg(target_arch = "aarch64")]
+    crate::early_println!("[i28] before smp::init");
+    #[cfg(not(target_arch = "aarch64"))]
     smp::init();
+    #[cfg(target_arch = "aarch64")]
+    crate::early_println!("[i29] after smp::init");
 
     // SAFETY: This function is called only once on the BSP.
+    #[cfg(target_arch = "aarch64")]
+    crate::early_println!("[i30] before activate_kernel_page_table");
+    #[cfg(not(target_arch = "aarch64"))]
     unsafe {
         mm::kspace::activate_kernel_page_table();
     }
+    #[cfg(target_arch = "aarch64")]
+    crate::early_println!("[i31] after activate_kernel_page_table");
 
+    #[cfg(target_arch = "aarch64")]
+    crate::early_println!("[i32] before irq enable");
     arch::irq::enable_local();
+    #[cfg(target_arch = "aarch64")]
+    crate::early_println!("[i33] after irq enable");
 
+    #[cfg(target_arch = "aarch64")]
+    crate::early_println!("[i34] before invoke_ffi_init_funcs");
+    #[cfg(not(target_arch = "aarch64"))]
     invoke_ffi_init_funcs();
+    #[cfg(target_arch = "aarch64")]
+    crate::early_println!("[i35] after invoke_ffi_init_funcs");
 
     IN_BOOTSTRAP_CONTEXT.store(false, Ordering::Relaxed);
 }

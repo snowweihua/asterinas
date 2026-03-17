@@ -29,6 +29,11 @@ static TIMER_INTERVAL: AtomicU64 = AtomicU64::new(0);
 /// 1. It is called once and at most once at a proper timing in the boot context.
 /// 2. It is called before any other public functions of this module is called.
 pub(super) unsafe fn init() {
+    #[cfg(target_arch = "aarch64")]
+    {
+        return;
+    }
+
     TIMEBASE_FREQ.store(
         DEVICE_TREE
             .get()

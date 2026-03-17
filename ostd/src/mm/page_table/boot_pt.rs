@@ -28,6 +28,18 @@ use crate::{
 
 type FrameNumber = usize;
 
+#[inline(always)]
+fn early_boot_pt_ptr<T>(paddr: Paddr) -> *mut T {
+    #[cfg(target_arch = "aarch64")]
+    {
+        paddr as *mut T
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        paddr_to_vaddr(paddr) as *mut T
+    }
+}
+
 /// The accessor to the boot page table singleton [`BootPageTable`].
 ///
 /// The user should provide a closure to access the boot page table. The
@@ -134,12 +146,15 @@ impl<E: PageTableEntryTrait, C: PagingConstsTrait> BootPageTable<E, C> {
     /// by the firmware, loader or the setup code.
     unsafe fn from_current_pt() -> Self {
         let root_pt = crate::arch::mm::current_page_table_paddr() / C::BASE_PAGE_SIZE;
-        // Make sure the 2 available bits are not set for firmware page tables.
-        dfs_walk_on_leave::<E, C>(root_pt, C::NR_LEVELS, &mut |pte: &mut E| {
-            let mut prop = pte.prop();
-            prop.priv_flags |= PTE_POINTS_TO_FIRMWARE_PT;
-            pte.set_prop(prop);
-        });
+        #[cfg(not(target_arch = "aarch64"))]
+        {
+            // Make sure the 2 available bits are not set for firmware page tables.
+            dfs_walk_on_leave::<E, C>(root_pt, C::NR_LEVELS, &mut |pte: &mut E| {
+                let mut prop = pte.prop();
+                prop.priv_flags |= PTE_POINTS_TO_FIRMWARE_PT;
+                pte.set_prop(prop);
+            });
+        }
         Self {
             root_pt,
             _pretend_to_use: core::marker::PhantomData,
@@ -167,7 +182,7 @@ impl<E: PageTableEntryTrait, C: PagingConstsTrait> BootPageTable<E, C> {
         // Walk to the last level of the page table.
         while level > 1 {
             let index = pte_index::<C>(from, level);
-            let pte_ptr = unsafe { (paddr_to_vaddr(pt * C::BASE_PAGE_SIZE) as *mut E).add(index) };
+            let pte_ptr = unsafe { early_boot_pt_ptr::<E>(pt * C::BASE_PAGE_SIZE).add(index) };
             let pte = unsafe { pte_ptr.read() };
             pt = if !pte.is_present() {
                 let pte = self.alloc_child();
@@ -182,7 +197,7 @@ impl<E: PageTableEntryTrait, C: PagingConstsTrait> BootPageTable<E, C> {
         }
         // Map the page in the last level page table.
         let index = pte_index::<C>(from, 1);
-        let pte_ptr = unsafe { (paddr_to_vaddr(pt * C::BASE_PAGE_SIZE) as *mut E).add(index) };
+        let pte_ptr = unsafe { early_boot_pt_ptr::<E>(pt * C::BASE_PAGE_SIZE).add(index) };
         let pte = unsafe { pte_ptr.read() };
         if pte.is_present() {
             panic!("mapping an already mapped page in the boot page table");
@@ -213,7 +228,7 @@ impl<E: PageTableEntryTrait, C: PagingConstsTrait> BootPageTable<E, C> {
         // Walk to the last level of the page table.
         while level > 1 {
             let index = pte_index::<C>(virt_addr, level);
-            let pte_ptr = unsafe { (paddr_to_vaddr(pt * C::BASE_PAGE_SIZE) as *mut E).add(index) };
+            let pte_ptr = unsafe { early_boot_pt_ptr::<E>(pt * C::BASE_PAGE_SIZE).add(index) };
             let pte = unsafe { pte_ptr.read() };
             pt = if !pte.is_present() {
                 panic!("protecting an unmapped page in the boot page table");
@@ -223,7 +238,7 @@ impl<E: PageTableEntryTrait, C: PagingConstsTrait> BootPageTable<E, C> {
                 let child_frame_pa = child_pte.paddr();
                 let huge_pa = pte.paddr();
                 for i in 0..nr_subpage_per_huge::<C>() {
-                    let nxt_ptr = unsafe { (paddr_to_vaddr(child_frame_pa) as *mut E).add(i) };
+                    let nxt_ptr = unsafe { early_boot_pt_ptr::<E>(child_frame_pa).add(i) };
                     unsafe {
                         nxt_ptr.write(E::new_page(
                             huge_pa + i * C::BASE_PAGE_SIZE,
@@ -241,7 +256,7 @@ impl<E: PageTableEntryTrait, C: PagingConstsTrait> BootPageTable<E, C> {
         }
         // Do protection in the last level page table.
         let index = pte_index::<C>(virt_addr, 1);
-        let pte_ptr = unsafe { (paddr_to_vaddr(pt * C::BASE_PAGE_SIZE) as *mut E).add(index) };
+        let pte_ptr = unsafe { early_boot_pt_ptr::<E>(pt * C::BASE_PAGE_SIZE).add(index) };
         let pte = unsafe { pte_ptr.read() };
         if !pte.is_present() {
             panic!("protecting an unmapped page in the boot page table");
@@ -266,7 +281,7 @@ impl<E: PageTableEntryTrait, C: PagingConstsTrait> BootPageTable<E, C> {
         };
 
         // Zero it out.
-        let vaddr = paddr_to_vaddr(frame_paddr) as *mut u8;
+        let vaddr = early_boot_pt_ptr::<u8>(frame_paddr);
         unsafe { core::ptr::write_bytes(vaddr, 0, PAGE_SIZE) };
 
         E::new_pt(frame_paddr)
@@ -291,7 +306,7 @@ fn dfs_walk_on_leave<E: PageTableEntryTrait, C: PagingConstsTrait>(
     op: &mut impl FnMut(&mut E),
 ) {
     if level >= 2 {
-        let pt_vaddr = paddr_to_vaddr(pt * C::BASE_PAGE_SIZE) as *mut E;
+        let pt_vaddr = early_boot_pt_ptr::<E>(pt * C::BASE_PAGE_SIZE);
         let pt = unsafe { core::slice::from_raw_parts_mut(pt_vaddr, nr_subpage_per_huge::<C>()) };
         for pte in pt {
             if pte.is_present() && !pte.is_last(level) {
