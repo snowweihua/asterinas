@@ -99,6 +99,11 @@ pub fn system_console() -> &'static Arc<Tty<ConsoleDriver>> {
     &N_TTY.get().unwrap()[0]
 }
 
+/// Returns the system console if one exists, or `None` if no console devices were registered.
+pub fn system_console_opt() -> Option<&'static Arc<Tty<ConsoleDriver>>> {
+    N_TTY.get().and_then(|ttys| ttys.first())
+}
+
 /// Iterates all TTY devices, i.e., `/dev/tty1`, `/dev/tty2`, e.t.c.
 pub fn iter_n_tty() -> impl Iterator<Item = &'static Arc<Tty<ConsoleDriver>>> {
     N_TTY.get().unwrap().iter()

@@ -51,6 +51,7 @@ const MAX_BUDDY_ORDER: BuddyOrder = 32;
 /// chunks.
 const MAX_LOCAL_BUDDY_ORDER: BuddyOrder = 18;
 
+#[cfg(not(target_arch = "aarch64"))]
 pub(super) fn alloc(guard: &DisabledLocalIrqGuard, layout: Layout) -> Option<Paddr> {
     let local_pool_cell = LOCAL_POOL.get_with(guard);
     let mut local_pool = local_pool_cell.borrow_mut();
@@ -88,6 +89,34 @@ pub(super) fn alloc(guard: &DisabledLocalIrqGuard, layout: Layout) -> Option<Pad
     }
 
     balancing::balance(local_pool.deref_mut(), &mut global_pool);
+
+    global_pool.update_global_size_if_locked();
+
+    chunk_addr
+}
+
+#[cfg(target_arch = "aarch64")]
+pub(super) fn alloc(_guard: &DisabledLocalIrqGuard, layout: Layout) -> Option<Paddr> {
+    let mut global_pool = OnDemandGlobalLock::new();
+
+    let size_order = greater_order_of(layout.size());
+    let align_order = greater_order_of(layout.align());
+    let order = size_order.max(align_order);
+
+    let pool = global_pool.get();
+
+    let chunk_addr = pool.alloc_chunk(order);
+
+    let allocated_size = size_of_order(order);
+    if allocated_size > layout.size() {
+        if let Some(chunk_addr) = chunk_addr {
+            split_to_chunks(chunk_addr + layout.size(), allocated_size - layout.size()).for_each(
+                |(addr, order)| {
+                    global_pool.get().insert_chunk(addr, order);
+                },
+            );
+        }
+    }
 
     global_pool.update_global_size_if_locked();
 

@@ -100,6 +100,7 @@ impl<'a, G: PinCurrentCpu> TlbFlusher<'a, G> {
             need_flush_on_self = true;
         }
 
+
         for cpu in target_cpus.iter() {
             {
                 let mut flush_ops = FLUSH_OPS.get_on_cpu(cpu).lock();
@@ -358,11 +359,14 @@ impl OpsStack {
     }
 
     fn flush_all(&mut self) {
-        if self.need_flush_all() {
+        let need_all = self.need_flush_all();
+        if need_all {
             crate::arch::mm::tlb_flush_all_excluding_global();
         } else {
+            let mut i = 0u32;
             self.ops_iter().for_each(|op| {
                 op.perform_on_current();
+                i += 1;
             });
         }
 

@@ -83,6 +83,8 @@ pub(in crate::arch) struct RawUserContext {
     pub(in crate::arch) spsr_el1: usize,
     /// exception syndrome register
     pub(in crate::arch) esr_el1: usize,
+    /// user stack pointer (SP_EL0)
+    pub(in crate::arch) sp_el0: usize,
 }
 
 impl RawUserContext {

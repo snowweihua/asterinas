@@ -30,14 +30,7 @@ type FrameNumber = usize;
 
 #[inline(always)]
 fn early_boot_pt_ptr<T>(paddr: Paddr) -> *mut T {
-    #[cfg(target_arch = "aarch64")]
-    {
-        paddr as *mut T
-    }
-    #[cfg(not(target_arch = "aarch64"))]
-    {
-        paddr_to_vaddr(paddr) as *mut T
-    }
+    paddr_to_vaddr(paddr) as *mut T
 }
 
 /// The accessor to the boot page table singleton [`BootPageTable`].
@@ -85,7 +78,11 @@ where
 pub(crate) unsafe fn dismiss() {
     IS_DISMISSED.store(true);
     if DISMISS_COUNT.fetch_add(1, Ordering::SeqCst) as usize == num_cpus() - 1 {
-        let boot_pt = BOOT_PAGE_TABLE.lock().take().unwrap();
+        let Some(boot_pt) = BOOT_PAGE_TABLE.lock().take() else {
+            // The boot page table was never lazily initialized (e.g. on AArch64 where
+            // no with_borrow calls are made). Nothing to free.
+            return;
+        };
 
         dfs_walk_on_leave::<PageTableEntry, PagingConsts>(
             boot_pt.root_pt,

@@ -41,8 +41,10 @@ fn post_schedule_handler() {
 
     let root_vmar = thread_local.root_vmar().borrow();
     if let Some(vmar) = root_vmar.as_ref() {
-        vmar.vm_space().activate()
+        vmar.vm_space().activate();
+    } else {
     }
+    drop(root_vmar);
 
     thread_local.fpu().after_schedule();
 }

@@ -7,6 +7,7 @@
 
 use alloc::{sync::Arc, vec::Vec};
 
+use log;
 use ostd::{irq::IrqLine, mm::VmIoOnce};
 
 use crate::{
@@ -50,7 +51,7 @@ impl Clone for CapabilityMsixData {
 }
 
 impl CapabilityMsixData {
-    pub(super) fn new(dev: &mut PciCommonDevice, cap_ptr: u16) -> Self {
+    pub(super) fn new(dev: &mut PciCommonDevice, cap_ptr: u16) -> Option<Self> {
         // Get Table and PBA offset, provide functions to modify them
         let table_info = dev.location().read32(cap_ptr + 4);
         let pba_info = dev.location().read32(cap_ptr + 8);
@@ -62,25 +63,33 @@ impl CapabilityMsixData {
         match bar_manager
             .bar((pba_info & 0b111) as u8)
             .clone()
-            .expect("MSIX cfg:pba BAR is none")
         {
-            Bar::Memory(memory) => {
+            Some(Bar::Memory(memory)) => {
                 pba_bar = memory;
             }
-            Bar::Io(_) => {
-                panic!("MSIX cfg:pba BAR is IO type")
+            Some(Bar::Io(_)) => {
+                log::warn!("MSIX cfg:pba BAR is IO type, skipping device");
+                return None;
+            }
+            None => {
+                log::warn!("MSIX cfg:pba BAR is none, skipping device");
+                return None;
             }
         };
         match bar_manager
             .bar((table_info & 0b111) as u8)
             .clone()
-            .expect("MSIX cfg:table BAR is none")
         {
-            Bar::Memory(memory) => {
+            Some(Bar::Memory(memory)) => {
                 table_bar = memory;
             }
-            Bar::Io(_) => {
-                panic!("MSIX cfg:table BAR is IO type")
+            Some(Bar::Io(_)) => {
+                log::warn!("MSIX cfg:table BAR is IO type, skipping device");
+                return None;
+            }
+            None => {
+                log::warn!("MSIX cfg:table BAR is none, skipping device");
+                return None;
             }
         }
 
@@ -120,7 +129,7 @@ impl CapabilityMsixData {
             irqs.push(None);
         }
 
-        Self {
+        Some(Self {
             loc: *dev.location(),
             ptr: cap_ptr,
             table_size: (dev.location().read16(cap_ptr + 2) & 0b11_1111_1111) + 1,
@@ -129,7 +138,7 @@ impl CapabilityMsixData {
             irqs,
             table_offset,
             pending_table_offset: pba_offset,
-        }
+        })
     }
 
     /// MSI-X Table size

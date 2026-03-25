@@ -43,6 +43,7 @@ pub fn handle_exception(ctx: &Context, context: &UserContext, exception: CpuExce
         if handle_page_fault_from_vmar(root_vmar, &page_fault_info).is_ok() {
             return;
         }
+    } else {
     }
 
     generate_fault_signal(exception, ctx);

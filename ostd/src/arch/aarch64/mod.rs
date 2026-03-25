@@ -7,21 +7,34 @@
 pub mod boot;
 pub mod cpu;
 pub mod device;
+mod gic;
 mod io;
 pub(crate) mod iommu;
 pub(crate) mod irq;
 pub(crate) mod mm;
 pub mod qemu;
-pub(crate) mod serial;
+pub mod serial;
 pub(crate) mod task;
 mod timer;
 pub mod trap;
 
-use core::sync::atomic::Ordering;
-
-use crate::arch::timer::TIMER_IRQ_NUM;
-
 use aarch64_cpu::registers::*;
+
+/// Write a single byte to the PL011 UART via linear map (for low-level probing).
+/// Safe to call with IRQs disabled. Does NOT use any locks.
+#[inline(always)]
+pub(crate) unsafe fn uart_probe(c: u8) {
+    // PL011 UART base PA: 0x0900_0000 → linear-map VA: 0xffff_8000_0900_0000
+    let uart_va: usize = 0xffff_8000_0900_0000;
+    unsafe {
+        core::arch::asm!(
+            "str {w}, [{addr}]",
+            w = in(reg) c as u32,
+            addr = in(reg) uart_va,
+            options(nostack, nomem)
+        );
+    }
+}
 
 
 #[cfg(feature = "cvm_guest")]
@@ -32,6 +45,9 @@ pub(crate) fn init_cvm_guest() {
 pub(crate) unsafe fn late_init_on_bsp() {
     // SAFETY: This function is called in the boot context of the BSP.
     unsafe { trap::init() };
+
+    // SAFETY: This function is called once on the BSP after the MMU setup.
+    unsafe { gic::init_on_bsp() };
 
     let io_mem_builder = io::construct_io_mem_allocator_builder();
 
@@ -54,13 +70,7 @@ pub(crate) unsafe fn init_on_ap() {
 }
 
 pub(crate) fn interrupts_ack(irq_number: usize) {
-    // TODO: We should check for software interrupts too here. Only those external
-    // interrupts would go through the IRQ chip.
-    if irq_number == TIMER_IRQ_NUM.load(Ordering::Relaxed) as usize {
-        return;
-    }
-
-    unimplemented!()
+    gic::end_interrupt(irq_number);
 }
 
 /// Return the frequency of TSC. The unit is Hz.

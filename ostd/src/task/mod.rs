@@ -169,10 +169,16 @@ impl TaskOptions {
         extern "C" fn kernel_task_entry() -> ! {
             // SAFETY: The new task is switched on a CPU for the first time, `after_switching_to`
             // hasn't been called yet.
+            #[cfg(target_arch = "aarch64")]
+            unsafe { crate::arch::uart_probe(b'[') };
             unsafe { processor::after_switching_to() };
+            #[cfg(target_arch = "aarch64")]
+            unsafe { crate::arch::uart_probe(b']') };
 
             let current_task = Task::current()
                 .expect("no current task, it should have current task in kernel task entry");
+            #[cfg(target_arch = "aarch64")]
+            unsafe { crate::arch::uart_probe(b't') };
 
             // SAFETY: The `func` field will only be accessed by the current task in the task
             // context, so the data won't be accessed concurrently.
@@ -180,6 +186,8 @@ impl TaskOptions {
             let task_func = task_func
                 .take()
                 .expect("task function is `None` when trying to run");
+            #[cfg(target_arch = "aarch64")]
+            unsafe { crate::arch::uart_probe(b'f') };
             task_func();
 
             // Manually drop all the on-stack variables to prevent memory leakage!

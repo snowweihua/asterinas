@@ -38,7 +38,18 @@ pub fn inter_processor_call(targets: &CpuSet, f: fn()) {
     let irq_guard = irq::disable_local();
     let this_cpu_id = irq_guard.current_cpu();
 
-    let ipi_data = IPI_GLOBAL_DATA.get().unwrap();
+    // If IPI is not initialized (e.g., on AArch64 single-CPU), only handle
+    // self-calls. Remote CPU targets are impossible without IPI infrastructure.
+    let Some(ipi_data) = IPI_GLOBAL_DATA.get() else {
+        // Call on self synchronously if this CPU is in the targets
+        for cpu_id in targets.iter() {
+            if cpu_id == this_cpu_id {
+                f();
+                break;
+            }
+        }
+        return;
+    };
     let irq_num = ipi_data.irq.num();
 
     let mut call_on_self = false;

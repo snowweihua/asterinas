@@ -243,8 +243,10 @@ boot_l4pt:
 .balign 4096
 .globl boot_l4pt_kern
 boot_l4pt_kern:
-    .quad boot_l3pt_high + MM_TYPE_TABLE    /* slot 0: high VA → DRAM */
-    .zero 8 * (512 - 1)
+    .quad boot_l3pt_high + MM_TYPE_TABLE    /* slot 0:   VA 0xffff000000000000 → DRAM */
+    .zero 8 * 255                           /* slots 1-255: empty */
+    .quad boot_l3pt_linear + MM_TYPE_TABLE  /* slot 256: VA 0xffff800000000000 → linear map */
+    .zero 8 * (512 - 257)
 
 /* L3 (PUD) for the low / identity half: first 4 GB */
 .balign 4096
@@ -262,6 +264,25 @@ boot_l3pt_high:
     .quad ( PTE_NORMAL_1G | (2 << 30) )     /* VA[1–2GB)   → PA 0x80000000–0xBFFFFFFF */
     .quad ( PTE_NORMAL_1G | (3 << 30) )     /* VA[2–3GB)   → PA 0xC0000000–0xFFFFFFFF */
     .zero 8 * (512 - 3)
+
+/*
+ * L3 (PUD) for the linear mapping half (TTBR1 PGD slot 256).
+ *
+ * paddr_to_vaddr(pa) = pa + 0xffff800000000000.  To reach a physical address
+ * in DRAM (0x40000000..0x60000000) through the linear mapping the VA is
+ * 0xffff800040000000..0xffff800060000000 → PUD slot 1 → PA 0x40000000.
+ *
+ * We map all 4 GB of the 32‑bit PA space here (slots 0–3) so that memory
+ * allocated during early boot (before activate_kernel_page_table) still
+ * appears at its correct paddr_to_vaddr address.
+ */
+.balign 4096
+boot_l3pt_linear:
+    .quad ( PTE_NORMAL_1G | (0 << 30) )     /* slot 0: VA 0xffff800000000000 → PA 0x00000000 */
+    .quad ( PTE_NORMAL_1G | (1 << 30) )     /* slot 1: VA 0xffff800040000000 → PA 0x40000000 (DRAM) */
+    .quad ( PTE_NORMAL_1G | (2 << 30) )     /* slot 2: VA 0xffff800080000000 → PA 0x80000000 */
+    .quad ( PTE_NORMAL_1G | (3 << 30) )     /* slot 3: VA 0xffff8000c0000000 → PA 0xC0000000 */
+    .zero 8 * (512 - 4)
 
 /*
  * L2 (PMD) for the first 1 GB (0x00000000–0x3FFFFFFF), 2 MB per entry.
@@ -300,6 +321,19 @@ boot_stack_top:
 .globl _start_virt
 _start_virt:
     early_uart_putchar 'R'          /* debug: reached _start_virt in high VMA */
+
+    /* Fix up SP: before enabling the MMU we set SP from an `adr` instruction,
+     * which gives the physical / identity-mapped address of boot_stack_top
+     * (somewhere around 0x400cXXXX).  Now that TTBR1 maps PA 0x40000000..
+     * 0x7fffffff to VA 0xffff000000000000..0xffff00003fffffff, the same frame
+     * is reachable at VA = PA - 0x40000000 + 0xffff000000000000.
+     * Rust stack-variable addresses come from SP, so we MUST switch to the
+     * high-VA stack pointer here before any Rust frame is allocated. */
+    mov     x7, sp
+    ldr     x8, =0x40000000
+    sub     x7, x7, x8              /* SP - DRAM_BASE */
+    ldr     x8, =0xffff000000000000
+    add     sp, x7, x8              /* SP_virt = SP_phys - DRAM_BASE + HIGH_HALF */
 
     /* Initialize TPIDR_EL1 to &__cpu_local_start so that CPU-local accesses
      * work before the full CPU-local initialisation in Rust.  This mirrors

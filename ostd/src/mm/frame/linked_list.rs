@@ -12,14 +12,12 @@ use core::{
 };
 
 use super::{
-    mapping,
     meta::{get_slot, AnyFrameMeta},
     unique::UniqueFrame,
     MetaSlot,
 };
 use crate::{
-    arch::mm::PagingConsts,
-    mm::{Paddr, Vaddr},
+    mm::Paddr,
     panic::abort,
 };
 
@@ -286,7 +284,8 @@ where
 
         let mut frame = {
             let meta_ptr = current.as_ptr() as *mut MetaSlot;
-            let paddr = mapping::meta_to_frame::<PagingConsts>(meta_ptr as Vaddr);
+            // SAFETY: `current` points to a live link stored in a valid metadata slot.
+            let paddr = unsafe { (&*meta_ptr).frame_paddr() };
             // SAFETY: The frame was forgotten when inserted into the linked list.
             unsafe { UniqueFrame::<Link<M>>::from_raw(paddr) }
         };

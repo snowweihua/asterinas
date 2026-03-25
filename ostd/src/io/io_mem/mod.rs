@@ -111,8 +111,10 @@ impl IoMem {
         // physical address range is I/O memory, so it is safe to map.
         let kva = unsafe { KVirtArea::map_untracked_frames(area_size, 0, frames_range, prop) };
 
+        let arc_kva = Arc::new(kva);
+
         Self {
-            kvirt_area: Arc::new(kva),
+            kvirt_area: arc_kva,
             offset: range.start - first_page_start,
             limit: range.len(),
             pa: range.start,

@@ -202,9 +202,9 @@ impl<M: AnyFrameMeta + ?Sized> Frame<M> {
     /// no checking of the usage in this function.
     pub(in crate::mm) unsafe fn from_raw(paddr: Paddr) -> Self {
         debug_assert!(paddr < max_paddr());
-
-        let vaddr = mapping::frame_to_meta::<PagingConsts>(paddr);
-        let ptr = vaddr as *const MetaSlot;
+        let ptr = meta::get_slot(paddr)
+            .expect("raw frame address should always resolve to a metadata slot")
+            as *const MetaSlot;
 
         Self {
             ptr,
@@ -327,10 +327,8 @@ pub(in crate::mm) unsafe fn inc_frame_ref_count(paddr: Paddr) {
     debug_assert!(paddr % PAGE_SIZE == 0);
     debug_assert!(paddr < max_paddr());
 
-    let vaddr: Vaddr = mapping::frame_to_meta::<PagingConsts>(paddr);
-    // SAFETY: `vaddr` points to a valid `MetaSlot` that will never be mutably borrowed, so taking
-    // an immutable reference to it is always safe.
-    let slot = unsafe { &*(vaddr as *const MetaSlot) };
+    let slot = meta::get_slot(paddr)
+        .expect("frame address should always resolve to a metadata slot");
 
     // SAFETY: We have already held a reference to the frame.
     unsafe { slot.inc_ref_count() };

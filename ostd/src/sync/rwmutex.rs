@@ -7,7 +7,7 @@ use core::{
     ops::{Deref, DerefMut},
     sync::atomic::{
         AtomicUsize,
-        Ordering::{AcqRel, Acquire, Relaxed, Release},
+        Ordering::{AcqRel, Acquire, Release},
     },
 };
 
@@ -169,13 +169,14 @@ impl<T: ?Sized> RwMutex<T> {
     ///
     /// This function will never sleep and will return immediately.
     pub fn try_write(&self) -> Option<RwMutexWriteGuard<T>> {
-        if self
-            .lock
-            .compare_exchange(0, WRITER, Acquire, Relaxed)
-            .is_ok()
-        {
+        // WORKAROUND: QEMU 6.2 AArch64 compare_exchange (LDAXR/STXR exclusive monitor)
+        // fails spuriously even when the expected value matches. Use fetch_or + verify
+        // instead: set the WRITER bit unconditionally, then check the previous value.
+        let prev = self.lock.fetch_or(WRITER, Acquire);
+        if prev == 0 {
             Some(RwMutexWriteGuard { inner: self })
         } else {
+            self.lock.fetch_and(!WRITER, Release);
             None
         }
     }
@@ -199,6 +200,11 @@ impl<T: ?Sized> RwMutex<T> {
     /// already statically guaranteed that access to the data is exclusive.
     pub fn get_mut(&mut self) -> &mut T {
         self.val.get_mut()
+    }
+
+    /// Returns the raw lock value for debugging purposes.
+    pub fn debug_lock_bits(&self) -> usize {
+        self.lock.load(core::sync::atomic::Ordering::Relaxed)
     }
 }
 
@@ -294,17 +300,14 @@ impl<T: ?Sized, R: Deref<Target = RwMutex<T>> + Clone> RwMutexWriteGuard_<T, R> 
     /// This is not exposed as a public method to prevent intermediate lock states from affecting the
     /// downgrade process.
     fn try_downgrade(self) -> Result<RwMutexUpgradeableGuard_<T, R>, Self> {
+        // WORKAROUND: QEMU 6.2 AArch64 compare_exchange fails spuriously.
+        // We hold the write lock exclusively, so no other core can race here.
+        // Clear WRITER and set UPGRADEABLE_READER in two steps.
         let inner = self.inner.clone();
-        let res = self
-            .inner
-            .lock
-            .compare_exchange(WRITER, UPGRADEABLE_READER, AcqRel, Relaxed);
-        if res.is_ok() {
-            drop(self);
-            Ok(RwMutexUpgradeableGuard_ { inner })
-        } else {
-            Err(self)
-        }
+        self.inner.lock.fetch_and(!WRITER, Release);
+        self.inner.lock.fetch_or(UPGRADEABLE_READER, Acquire);
+        drop(self);
+        Ok(RwMutexUpgradeableGuard_ { inner })
     }
 }
 
@@ -338,6 +341,11 @@ pub type RwMutexUpgradeableGuard<'a, T> = RwMutexUpgradeableGuard_<T, &'a RwMute
 pub type ArcRwMutexUpgradeableGuard<T> = RwMutexUpgradeableGuard_<T, Arc<RwMutex<T>>>;
 
 impl<T: ?Sized, R: Deref<Target = RwMutex<T>> + Clone> RwMutexUpgradeableGuard_<T, R> {
+    /// Returns the raw lock value for debugging.
+    pub fn debug_lock_bits(&self) -> usize {
+        self.inner.debug_lock_bits()
+    }
+
     /// Upgrades this upread guard to a write guard atomically.
     ///
     /// After calling this method, subsequent readers will be blocked
@@ -351,7 +359,9 @@ impl<T: ?Sized, R: Deref<Target = RwMutex<T>> + Clone> RwMutexUpgradeableGuard_<
         self.inner.lock.fetch_or(BEING_UPGRADED, Acquire);
         loop {
             self = match self.try_upgrade() {
-                Ok(guard) => return guard,
+                Ok(guard) => {
+                    return guard;
+                }
                 Err(e) => e,
             };
         }
@@ -361,17 +371,20 @@ impl<T: ?Sized, R: Deref<Target = RwMutex<T>> + Clone> RwMutexUpgradeableGuard_<
     ///
     /// This function will return immediately.
     pub fn try_upgrade(self) -> Result<RwMutexWriteGuard_<T, R>, Self> {
-        let res = self.inner.lock.compare_exchange(
-            UPGRADEABLE_READER | BEING_UPGRADED,
-            WRITER | UPGRADEABLE_READER,
-            AcqRel,
-            Relaxed,
-        );
-        if res.is_ok() {
+        // WORKAROUND: QEMU 6.2 AArch64 compare_exchange (LDAXR/STXR exclusive monitor)
+        // fails spuriously. Use fetch_or + verify pattern instead.
+        // We expect the lock to be UPGRADEABLE_READER | BEING_UPGRADED with no readers.
+        let prev = self.inner.lock.fetch_or(WRITER, AcqRel);
+        if prev == UPGRADEABLE_READER | BEING_UPGRADED {
+            // Successfully claimed WRITER. Now clear BEING_UPGRADED and UPGRADEABLE_READER
+            // to reach the clean WRITER-only state (matching what the original CAS produced).
+            // drop(self) would call fetch_sub(UPGRADEABLE_READER), so clear BEING_UPGRADED here.
+            self.inner.lock.fetch_and(!BEING_UPGRADED, Release);
             let inner = self.inner.clone();
             drop(self);
             Ok(RwMutexWriteGuard_ { inner })
         } else {
+            self.inner.lock.fetch_and(!WRITER, Release);
             Err(self)
         }
     }

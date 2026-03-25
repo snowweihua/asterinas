@@ -129,7 +129,12 @@ impl Capability {
                 0x0E => CapabilityData::Agp3,
                 0x0F => CapabilityData::Secdev,
                 0x10 => CapabilityData::Exp,
-                0x11 => CapabilityData::Msix(CapabilityMsixData::new(dev, cap_ptr)),
+                0x11 => {
+                    match CapabilityMsixData::new(dev, cap_ptr) {
+                        Some(msix) => CapabilityData::Msix(msix),
+                        None => CapabilityData::Unknown(cap_type),
+                    }
+                }
                 0x12 => CapabilityData::Sata,
                 0x13 => CapabilityData::Af,
                 0x14 => CapabilityData::Ea,

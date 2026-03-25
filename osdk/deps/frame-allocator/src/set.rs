@@ -70,8 +70,10 @@ impl<const MAX_ORDER: BuddyOrder> BuddySet<MAX_ORDER> {
             }
         }
         let non_empty = non_empty?;
+
         let mut chunk = {
             let head = self.lists[non_empty].pop_front().unwrap();
+
             debug_assert_eq!(head.meta().order(), non_empty as BuddyOrder);
 
             Some(FreeChunk::from_free_head(head))
@@ -96,6 +98,7 @@ impl<const MAX_ORDER: BuddyOrder> BuddySet<MAX_ORDER> {
         let head_frame = chunk.take().unwrap().into_unique_head();
         let paddr = head_frame.paddr();
         head_frame.reset_as_unused(); // It will "drop" the frame without up-calling us.
+
         Some(paddr)
     }
 }

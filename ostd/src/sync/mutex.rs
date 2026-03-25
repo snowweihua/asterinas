@@ -84,9 +84,9 @@ impl<T: ?Sized> Mutex<T> {
     }
 
     fn acquire_lock(&self) -> bool {
-        self.lock
-            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-            .is_ok()
+        // WORKAROUND: QEMU 6.2 AArch64 compare_exchange (LDAXR/STXR exclusive monitor)
+        // fails spuriously. Use swap + check pattern instead.
+        !self.lock.swap(true, Ordering::Acquire)
     }
 
     fn release_lock(&self) {

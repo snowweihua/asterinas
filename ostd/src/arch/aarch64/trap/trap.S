@@ -12,7 +12,8 @@
  *  offset 248: elr_el1
  *  offset 256: spsr_el1
  *  offset 264: esr_el1
- * Total = 272 bytes = 34 slots of 8 bytes.
+ *  offset 272: sp_el0
+ * Total = 280 bytes = 35 slots of 8 bytes.
  *
  * run_user() kernel frame layout (128 bytes, 16 slots):
  *  [ksp+  0]: x19      [ksp+  8]: x20
@@ -96,8 +97,12 @@
 
 /*
  * vector_table macro: instantiate AArch64 vector table for a given EL.
- * Lower-EL (EL0) exception entries branch directly to __el0_exception_handler
- * which saves user context to RawUserContext and returns to kernel run_user caller.
+ *
+ * Each slot is exactly 0x80 bytes and contains only a single branch
+ * instruction.  The real save/restore logic is in .text trampolines below.
+ *
+ * Lower-EL (EL0) entries save x0 to the scratch slot in the run_user frame
+ * and branch to __el0_exception_handler.
  */
 .macro vector_table el:req
 .section .vector.vector_table_\el, "ax"
@@ -105,82 +110,127 @@
 .balign 0x800
 vector_table_\el:
 
+/* --- Group 1: Current EL with SP0 -------------------------------------------*/
 .balign 0x80
-sync_cur_sp0_\el:
-    current_exception_sp0 sync_exception_current \el
-
+sync_cur_sp0_\el:   b __tramp_sync_sp0_\el
 .balign 0x80
-irq_cur_sp0_\el:
-    current_exception_sp0 irq_current \el
-
+irq_cur_sp0_\el:    b __tramp_irq_sp0_\el
 .balign 0x80
-fiq_cur_sp0_\el:
-    current_exception_sp0 fiq_current \el
-
+fiq_cur_sp0_\el:    b __tramp_fiq_sp0_\el
 .balign 0x80
-serr_cur_sp0_\el:
-    current_exception_sp0 serr_current \el
+serr_cur_sp0_\el:   b __tramp_serr_sp0_\el
 
+/* --- Group 2: Current EL with SPx -------------------------------------------*/
 .balign 0x80
-sync_cur_spx_\el:
-    current_exception_spx sync_exception_current \el
-
+sync_cur_spx_\el:   b __tramp_sync_spx_\el
 .balign 0x80
-irq_cur_spx_\el:
-    current_exception_spx irq_current \el
-
+irq_cur_spx_\el:    b __tramp_irq_spx_\el
 .balign 0x80
-fiq_cur_spx_\el:
-    current_exception_spx fiq_current \el
-
+fiq_cur_spx_\el:    b __tramp_fiq_spx_\el
 .balign 0x80
-serr_cur_spx_\el:
-    current_exception_spx serr_current \el
+serr_cur_spx_\el:   b __tramp_serr_spx_\el
 
-/* Lower EL (EL0) exceptions: save x0 to frame scratch slot, branch to handler.
- * [sp+112] is a scratch slot in the run_user kernel frame (slot 14).
- */
+/* --- Group 3: Lower EL (AArch64) -------------------------------------------*/
 .balign 0x80
 sync_lower_64_\el:
     str  x0, [sp, #112]
     b __el0_exception_handler
-
 .balign 0x80
 irq_lower_64_\el:
     str  x0, [sp, #112]
     b __el0_exception_handler
-
 .balign 0x80
 fiq_lower_64_\el:
     str  x0, [sp, #112]
     b __el0_exception_handler
-
 .balign 0x80
 serr_lower_64_\el:
     str  x0, [sp, #112]
     b __el0_exception_handler
 
+/* --- Group 4: Lower EL (AArch32) -------------------------------------------*/
 .balign 0x80
 sync_lower_32_\el:
     str  x0, [sp, #112]
     b __el0_exception_handler
-
 .balign 0x80
 irq_lower_32_\el:
     str  x0, [sp, #112]
     b __el0_exception_handler
-
 .balign 0x80
 fiq_lower_32_\el:
     str  x0, [sp, #112]
     b __el0_exception_handler
-
 .balign 0x80
 serr_lower_32_\el:
     str  x0, [sp, #112]
     b __el0_exception_handler
 
 .endm
+
+/* --- Trampoline routines for kernel-mode (EL1→EL1) exceptions ---------------
+ *
+ * These live in .text and may be as large as needed.
+ */
+.section .text
+
+/* SP0 group: switch to SPx, save, call handler, restore, switch back */
+__tramp_sync_sp0_el1:
+    msr  spsel, #1
+    save_volatile_to_stack el1
+    bl   sync_exception_current
+    restore_volatile_from_stack el1
+    msr  spsel, #0
+    eret
+
+__tramp_irq_sp0_el1:
+    msr  spsel, #1
+    save_volatile_to_stack el1
+    bl   irq_current
+    restore_volatile_from_stack el1
+    msr  spsel, #0
+    eret
+
+__tramp_fiq_sp0_el1:
+    msr  spsel, #1
+    save_volatile_to_stack el1
+    bl   fiq_current
+    restore_volatile_from_stack el1
+    msr  spsel, #0
+    eret
+
+__tramp_serr_sp0_el1:
+    msr  spsel, #1
+    save_volatile_to_stack el1
+    bl   serr_current
+    restore_volatile_from_stack el1
+    msr  spsel, #0
+    eret
+
+/* SPx group: already on SPx, just save/call/restore */
+__tramp_sync_spx_el1:
+    save_volatile_to_stack el1
+    bl   sync_exception_current
+    restore_volatile_from_stack el1
+    eret
+
+__tramp_irq_spx_el1:
+    save_volatile_to_stack el1
+    bl   irq_current
+    restore_volatile_from_stack el1
+    eret
+
+__tramp_fiq_spx_el1:
+    save_volatile_to_stack el1
+    bl   fiq_current
+    restore_volatile_from_stack el1
+    eret
+
+__tramp_serr_spx_el1:
+    save_volatile_to_stack el1
+    bl   serr_current
+    restore_volatile_from_stack el1
+    eret
 
 vector_table el1
 
@@ -241,41 +291,9 @@ __el0_exception_handler:
     str  x1, [x0, #8 * 32]
     mrs  x1, esr_el1
     str  x1, [x0, #8 * 33]
-
-    /* Restore kernel callee-saved registers from run_user frame */
-    ldp  x19, x20, [sp, #8 *  0]
-    ldp  x21, x22, [sp, #8 *  2]
-    ldp  x23, x24, [sp, #8 *  4]
-    ldp  x25, x26, [sp, #8 *  6]
-    ldp  x27, x28, [sp, #8 *  8]
-    ldp  x29, x30, [sp, #8 * 10]  /* x30 = return address into run_user caller */
-    ldr  x1,       [sp, #8 * 12]  /* x1 = saved kernel sp before run_user frame */
-    mov  sp, x1
-
-    /* Return to RawUserContext::run() caller in Rust */
-    ret
-    stp  x4, x5,   [x0, #8 *  4]
-    stp  x6, x7,   [x0, #8 *  6]
-    stp  x8, x9,   [x0, #8 *  8]
-    stp  x10, x11, [x0, #8 * 10]
-    stp  x12, x13, [x0, #8 * 12]
-    stp  x14, x15, [x0, #8 * 14]
-    stp  x16, x17, [x0, #8 * 16]
-    stp  x18, x19, [x0, #8 * 18]  /* note: x19 was restored from frame by run_user */
-    stp  x20, x21, [x0, #8 * 20]
-    stp  x22, x23, [x0, #8 * 22]
-    stp  x24, x25, [x0, #8 * 24]
-    stp  x26, x27, [x0, #8 * 26]
-    stp  x28, x29, [x0, #8 * 28]
-    str  x30,      [x0, #8 * 30]  /* user lr */
-
-    /* Save ELR, SPSR, ESR */
-    mrs  x1, elr_el1
-    str  x1, [x0, #8 * 31]
-    mrs  x1, spsr_el1
-    str  x1, [x0, #8 * 32]
-    mrs  x1, esr_el1
-    str  x1, [x0, #8 * 33]
+    /* Save SP_EL0 (user stack pointer) */
+    mrs  x1, sp_el0
+    str  x1, [x0, #8 * 34]
 
     /* Restore kernel callee-saved registers from run_user frame */
     ldp  x19, x20, [sp, #8 *  0]
@@ -322,6 +340,8 @@ run_user:
     msr  elr_el1, x1           /* user PC */
     ldr  x1, [x0, #8 * 32]
     msr  spsr_el1, x1          /* user PSTATE */
+    ldr  x1, [x0, #8 * 34]
+    msr  sp_el0, x1            /* user stack pointer */
 
     /* Load user GP regs x2..x30 (load x0, x1 last) */
     ldp  x2, x3,   [x0, #8 *  2]

@@ -102,7 +102,6 @@ fn panic_handler(info: &core::panic::PanicInfo) -> ! {
     let thread = Thread::current();
     let cpu = preempt_guard.current_cpu();
 
-    // Halt the system if the panic is not caught.
     if let Some(location) = info.location() {
         log::error!(
             "Uncaught panic:\n\t{}\n\tat {}:{}\n\ton CPU {} by thread {:?}",
@@ -122,6 +121,7 @@ fn panic_handler(info: &core::panic::PanicInfo) -> ! {
     }
 
     if info.can_unwind() {
+        #[cfg(not(target_arch = "aarch64"))]
         panic::print_stack_trace();
     } else {
         log::error!("Backtrace is disabled.");

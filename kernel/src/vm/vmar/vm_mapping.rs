@@ -272,7 +272,8 @@ impl VmMapping {
             let mut cursor = vm_space.cursor_mut(
                 &preempt_guard,
                 &(page_aligned_addr..page_aligned_addr + PAGE_SIZE),
-            )?;
+            )?
+;
 
             let (va, item) = cursor.query().unwrap();
             let is_write = required_perms.contains(VmPerms::WRITE);
@@ -281,7 +282,8 @@ impl VmMapping {
                     if VmPerms::from(prop.flags).contains(required_perms) {
                         // The page fault is already handled maybe by other threads.
                         // Just flush the TLB and return.
-                        TlbFlushOp::for_range(va).perform_on_current();
+                        // Use for_all (vmalle1 direct) to avoid QEMU 6.2 per-address TLBI hang.
+                        TlbFlushOp::for_all().perform_on_current();
                         return Ok(());
                     }
                     assert!(is_write);
@@ -305,13 +307,33 @@ impl VmMapping {
                         cursor.protect_next(PAGE_SIZE, |flags, _cache| {
                             *flags |= new_flags;
                         });
-                        cursor.flusher().issue_tlb_flush(TlbFlushOp::for_range(va));
-                        cursor.flusher().dispatch_tlb_flush();
+                        // Use for_all (vmalle1 direct) to avoid QEMU 6.2 per-address TLBI hang.
+                        TlbFlushOp::for_all().perform_on_current();
+                        // Move the locked frame into the flusher's page keeper so the PTE
+                        // update is visible before the cursor is dropped.
+                        cursor.flusher().sync_tlb_flush();
                     } else {
                         let new_frame = duplicate_frame(&frame)?;
                         prop.flags |= new_flags;
-                        cursor.map(new_frame.into(), prop);
+                        // WORKAROUND: QEMU 6.2 hangs on `tlbi vaae1` when the PTE was
+                        // just changed from PA_old to PA_new via cursor.map (remapping).
+                        // Fix: first unmap (PTE→0), which calls dispatch_tlb_flush while
+                        // PTE=0; then re-acquire cursor and map the new frame (PTE=PA_new),
+                        // which creates a fresh TLB entry without needing TLBI.
+                        cursor.unmap(PAGE_SIZE);
+                        cursor.flusher().sync_tlb_flush();
+                        // Re-acquire cursor to map at the same address.
+                        drop(cursor);
+                        drop(preempt_guard);
+                        let preempt_guard2 = disable_preempt();
+                        let mut cursor2 = vm_space.cursor_mut(
+                            &preempt_guard2,
+                            &(page_aligned_addr..page_aligned_addr + PAGE_SIZE),
+                        )?;
+                        cursor2.map(new_frame.into(), prop);
+                        cursor2.flusher().sync_tlb_flush();
                         rss_delta.add(self.rss_type(), 1);
+                        break 'retry;
                     }
                     cursor.flusher().sync_tlb_flush();
                 }
@@ -354,6 +376,8 @@ impl VmMapping {
                     let map_prop = PageProperty::new_user(page_flags, CachePolicy::Writeback);
 
                     cursor.map(frame, map_prop);
+                    // After installing a fresh mapping, invalidate QEMU soft-TLB.
+                    TlbFlushOp::for_all().perform_on_current();
                     rss_delta.add(self.rss_type(), 1);
                 }
             }
@@ -446,7 +470,8 @@ impl VmMapping {
             let operate =
                 move |commit_fn: &mut dyn FnMut()
                     -> core::result::Result<UFrame, VmoCommitError>| {
-                    if let (_, None) = cursor.query().unwrap() {
+                    let (va, qitem) = cursor.query().unwrap();
+                    if qitem.is_none() {
                         // We regard all the surrounding pages as accessed, no matter
                         // if it is really so. Then the hardware won't bother to update
                         // the accessed bit of the page table on following accesses.
@@ -467,7 +492,13 @@ impl VmMapping {
             let start_offset = start_addr - self.map_to_addr;
             let end_offset = end_addr - self.map_to_addr;
             match vmo.try_operate_on_range(&(start_offset..end_offset), operate) {
-                Ok(_) => return Ok(()),
+                Ok(_) => {
+                    // WORKAROUND: QEMU 6.2 AArch64 does not see newly-mapped pages unless
+                    // the softTLB is explicitly invalidated after mapping. Use the TTBR0
+                    // toggle workaround (see tlb_flush_all_excluding_global).
+                    TlbFlushOp::for_all().perform_on_current();
+                    return Ok(());
+                }
                 Err(VmoCommitError::NeedIo(index)) => {
                     drop(preempt_guard);
                     vmo.commit_on(index, CommitFlags::empty())?;

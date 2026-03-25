@@ -294,16 +294,28 @@ impl VirtioPciModernTransport {
             match cap.capability_data() {
                 CapabilityData::Vndr(vendor) => {
                     let data = VirtioPciCapabilityData::new(common_device.bar_manager(), *vendor);
+                    if data.memory_bar().is_none()
+                        && data.typ() != VirtioPciCpabilityType::IsrCfg
+                        && data.typ() != VirtioPciCpabilityType::PciCfg
+                    {
+                        warn!(
+                            "[Virtio-PCI] capability {:?} has no valid BAR, skipping device",
+                            data.typ()
+                        );
+                        return Err((BusProbeError::DeviceNotMatch, common_device));
+                    }
                     match data.typ() {
                         VirtioPciCpabilityType::CommonCfg => {
                             common_cfg = Some(VirtioPciCommonCfg::new(&data));
                         }
                         VirtioPciCpabilityType::NotifyCfg => {
-                            notify = Some(VirtioPciNotify {
-                                offset_multiplier: data.option_value().unwrap(),
-                                offset: data.offset(),
-                                io_memory: data.memory_bar().as_ref().unwrap().io_mem().clone(),
-                            });
+                            if let Some(bar) = data.memory_bar().as_ref() {
+                                notify = Some(VirtioPciNotify {
+                                    offset_multiplier: data.option_value().unwrap(),
+                                    offset: data.offset(),
+                                    io_memory: bar.io_mem().clone(),
+                                });
+                            }
                         }
                         VirtioPciCpabilityType::IsrCfg => {}
                         VirtioPciCpabilityType::DeviceCfg => {
@@ -315,19 +327,43 @@ impl VirtioPciModernTransport {
                 CapabilityData::Msix(data) => {
                     msix = Some(data.clone());
                 }
-                CapabilityData::Unknown(id) => {
-                    panic!("unknown capability: {}", id)
+                CapabilityData::Unknown(_id) => {
+                    // Unknown capabilities are ignored
                 }
                 _ => {
-                    panic!("PCI Virtio device should not have other type of capability")
+                    // Non-vendor, non-MSIX capabilities are ignored
                 }
             }
         }
         // TODO: Support interrupt without MSI-X
-        let msix = msix.unwrap();
-        let notify = notify.unwrap();
-        let common_cfg = common_cfg.unwrap();
-        let device_cfg = device_cfg.unwrap();
+        let msix = match msix {
+            Some(m) => m,
+            None => {
+                warn!("[Virtio-PCI] no MSIX capability found for device, skipping");
+                return Err((BusProbeError::DeviceNotMatch, common_device));
+            }
+        };
+        let notify = match notify {
+            Some(n) => n,
+            None => {
+                warn!("[Virtio-PCI] no notify capability found for device, skipping");
+                return Err((BusProbeError::DeviceNotMatch, common_device));
+            }
+        };
+        let common_cfg = match common_cfg {
+            Some(c) => c,
+            None => {
+                warn!("[Virtio-PCI] no common_cfg capability found for device, skipping");
+                return Err((BusProbeError::DeviceNotMatch, common_device));
+            }
+        };
+        let device_cfg = match device_cfg {
+            Some(d) => d,
+            None => {
+                warn!("[Virtio-PCI] no device_cfg capability found for device, skipping");
+                return Err((BusProbeError::DeviceNotMatch, common_device));
+            }
+        };
         let msix_manager = VirtioMsixManager::new(msix);
         Ok(Self {
             common_device,

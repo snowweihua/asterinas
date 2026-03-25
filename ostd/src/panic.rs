@@ -2,7 +2,7 @@
 
 //! Panic support.
 
-#![cfg_attr(target_arch = "loongarch64", expect(unused_imports))]
+#![cfg_attr(any(target_arch = "loongarch64", target_arch = "aarch64"), expect(unused_imports))]
 
 use core::ffi::c_void;
 
@@ -39,7 +39,11 @@ pub fn __ostd_panic_handler(info: &core::panic::PanicInfo) -> ! {
 
     early_println!("Non-resettable panic! {:#?}", info);
 
+    #[cfg(not(target_arch = "aarch64"))]
     print_stack_trace();
+    #[cfg(target_arch = "aarch64")]
+    early_println!("(stack trace skipped on AArch64 - _Unwind_Backtrace may hang)");
+
     abort();
 }
 
@@ -48,13 +52,13 @@ pub fn abort() -> ! {
     exit_qemu(QemuExitCode::Failed);
 }
 
-#[cfg(not(target_arch = "loongarch64"))]
+#[cfg(not(any(target_arch = "loongarch64", target_arch = "aarch64")))]
 pub use unwinding::panic::{begin_panic, catch_unwind};
 
 /// Prints the stack trace of the current thread to the console.
 ///
 /// The printing procedure is protected by a spin lock to prevent interleaving.
-#[cfg(not(target_arch = "loongarch64"))]
+#[cfg(not(any(target_arch = "loongarch64", target_arch = "aarch64")))]
 pub fn print_stack_trace() {
     use unwinding::abi::{
         UnwindContext, UnwindReasonCode, _Unwind_Backtrace, _Unwind_FindEnclosingFunction,
@@ -113,7 +117,7 @@ pub fn print_stack_trace() {
 }
 
 /// Catches unwinding panics.
-#[cfg(target_arch = "loongarch64")]
+#[cfg(any(target_arch = "loongarch64", target_arch = "aarch64"))]
 pub fn catch_unwind<R, F: FnOnce() -> R>(
     f: F,
 ) -> Result<R, alloc::boxed::Box<dyn core::any::Any + Send>> {
@@ -122,14 +126,14 @@ pub fn catch_unwind<R, F: FnOnce() -> R>(
 }
 
 /// Begins panic handling
-#[cfg(target_arch = "loongarch64")]
+#[cfg(any(target_arch = "loongarch64", target_arch = "aarch64"))]
 pub fn begin_panic<R>(_: alloc::boxed::Box<R>) {
-    // TODO: Support panic context in LoongArch.
+    // TODO: Support panic context in LoongArch/AArch64.
 }
 
 /// Prints the stack trace of the current thread to the console.
-#[cfg(target_arch = "loongarch64")]
+#[cfg(any(target_arch = "loongarch64", target_arch = "aarch64"))]
 pub fn print_stack_trace() {
-    // TODO: Support stack trace print in LoongArch.
+    // TODO: Support stack trace print in LoongArch/AArch64.
     early_println!("Printing stack trace:");
 }

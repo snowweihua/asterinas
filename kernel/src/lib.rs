@@ -86,52 +86,39 @@ mod vm;
 #[ostd::main]
 #[controlled]
 fn main() {
-    #[cfg(not(target_arch = "aarch64"))]
-    ostd::early_println!("[kernel] OSTD initialized. Preparing components.");
 
-    #[cfg(not(target_arch = "aarch64"))]
     component::init_all(InitStage::Bootstrap, component::parse_metadata!()).unwrap();
+
     init();
 
     // Spawn all AP idle threads.
-    #[cfg(not(target_arch = "aarch64"))]
     ostd::boot::smp::register_ap_entry(ap_init);
-    #[cfg(not(target_arch = "aarch64"))]
+
     init_on_each_cpu();
 
     // Spawn the first kernel thread on BSP.
-    #[cfg(not(target_arch = "aarch64"))]
     ThreadOptions::new(first_kthread)
         .cpu_affinity(CpuId::bsp().into())
         .sched_policy(SchedPolicy::Idle)
         .spawn();
 
-    #[cfg(target_arch = "aarch64")]
-    exit_qemu(QemuExitCode::Success);
-
 }
 
 fn init() {
-    #[cfg(not(target_arch = "aarch64"))]
-    {
-        thread::init();
-        util::random::init();
-        driver::init();
-        time::init();
-        net::init();
-        sched::init();
-        process::init();
-        fs::init();
-    }
+    thread::init();
+    util::random::init();
+    driver::init();
+    time::init();
+    net::init();
+    sched::init();
+    process::init();
+    fs::init();
 }
 
 fn init_on_each_cpu() {
-    #[cfg(not(target_arch = "aarch64"))]
-    {
-        sched::init_on_each_cpu();
-        process::init_on_each_cpu();
-        fs::init_on_each_cpu();
-    }
+    sched::init_on_each_cpu();
+    process::init_on_each_cpu();
+    fs::init_on_each_cpu();
 }
 
 fn init_in_first_kthread(fs_resolver: &FsResolver) {
@@ -147,7 +134,6 @@ fn init_in_first_kthread(fs_resolver: &FsResolver) {
 }
 
 fn init_in_first_process(ctx: &Context) {
-    component::init_all(InitStage::Process, component::parse_metadata!()).unwrap();
     device::init_in_first_process(ctx).unwrap();
     fs::init_in_first_process(ctx);
     process::init_in_first_process(ctx);
@@ -181,7 +167,6 @@ fn first_kthread() {
     // TODO: After introducing the mount namespace, use an initial mount namespace to create
     // the `FsResolver`, and the initial mount namespace should be passed to the first process.
     let fs_resolver = FsResolver::new();
-
     init_in_first_kthread(&fs_resolver);
 
     print_banner();
@@ -194,6 +179,7 @@ fn first_kthread() {
         karg.get_initproc_envp().to_vec(),
     )
     .expect("Run init process failed.");
+    // ...existing code...
 
     // Wait till initproc become zombie.
     while !initproc.status().is_zombie() {

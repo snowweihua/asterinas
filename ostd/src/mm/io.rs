@@ -435,11 +435,19 @@ impl<'a> VmReader<'a, Infallible> {
     ///
     /// [valid]: crate::mm::io#safety
     pub unsafe fn from_kernel_space(ptr: *const u8, len: usize) -> Self {
+        #[cfg(target_arch = "aarch64")]
+        let allow_bootstrap_identity = crate::IN_BOOTSTRAP_CONTEXT
+            .load(core::sync::atomic::Ordering::Relaxed);
+        #[cfg(not(target_arch = "aarch64"))]
+        let allow_bootstrap_identity = false;
+
         // Rust is allowed to give the reference to a zero-sized object a very small address,
         // falling out of the kernel virtual address space range.
         // So when `len` is zero, we should not and need not to check `ptr`.
-        debug_assert!(len == 0 || KERNEL_BASE_VADDR <= ptr.addr());
-        debug_assert!(len == 0 || ptr.addr().checked_add(len).unwrap() <= KERNEL_END_VADDR);
+        debug_assert!(len == 0 || allow_bootstrap_identity || KERNEL_BASE_VADDR <= ptr.addr());
+        debug_assert!(
+            len == 0 || allow_bootstrap_identity || ptr.addr().checked_add(len).unwrap() <= KERNEL_END_VADDR
+        );
 
         Self {
             cursor: ptr,
@@ -578,7 +586,7 @@ impl VmReader<'_, Fallible> {
         // SAFETY:
         // - The memory range points to typed memory.
         // - The validity requirements for write accesses are met because the pointer is converted
-        //   from a mutable pointer where the underlying storage outlives the temporary lifetime
+        //   from a mutable pointer where the underlying storage outlives the temporary legitimate
         //   and no other Rust references to the same storage exist during the lifetime.
         // - The type, i.e., `T`, is plain-old-data.
         let mut writer =

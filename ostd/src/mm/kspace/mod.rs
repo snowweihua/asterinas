@@ -68,8 +68,10 @@ const ADDR_WIDTH_SHIFT: isize = PagingConsts::ADDRESS_WIDTH as isize - 48;
 
 /// Start of the kernel address space.
 /// This is the _lowest_ address of the x86-64's _high_ canonical addresses.
-#[cfg(not(target_arch = "loongarch64"))]
+#[cfg(not(any(target_arch = "loongarch64", target_arch = "aarch64")))]
 pub const KERNEL_BASE_VADDR: Vaddr = 0xffff_8000_0000_0000 << ADDR_WIDTH_SHIFT;
+#[cfg(target_arch = "aarch64")]
+pub const KERNEL_BASE_VADDR: Vaddr = 0xffff_0000_0000_0000;
 #[cfg(target_arch = "loongarch64")]
 pub const KERNEL_BASE_VADDR: Vaddr = 0x9000_0000_0000_0000 << ADDR_WIDTH_SHIFT;
 /// End of the kernel address space (non inclusive).
@@ -206,7 +208,8 @@ pub fn init_kernel_page_table(meta_pages: Segment<MetaPageMeta>) {
 
     // Map the metadata pages.
     {
-        let start_va = mapping::frame_to_meta::<PagingConsts>(0);
+        let start_va =
+            mapping::frame_to_meta::<PagingConsts>(crate::arch::mm::frame_paddr_base());
         let from = start_va..start_va + meta_pages.size();
         let prop = PageProperty {
             flags: PageFlags::RW,
@@ -228,7 +231,7 @@ pub fn init_kernel_page_table(meta_pages: Segment<MetaPageMeta>) {
     }
 
     // In LoongArch64, we don't need to do linear mappings for the kernel code because of DMW0.
-    #[cfg(not(target_arch = "loongarch64"))]
+    #[cfg(all(not(target_arch = "loongarch64"), not(target_arch = "aarch64")))]
     // Map for the kernel code itself.
     // TODO: set separated permissions for each segments in the kernel.
     {
@@ -264,9 +267,11 @@ pub unsafe fn activate_kernel_page_table() {
     let kpt = KERNEL_PAGE_TABLE
         .get()
         .expect("The kernel page table is not initialized yet");
+
     // SAFETY: the kernel page table is initialized properly.
     unsafe {
         kpt.first_activate_unchecked();
+
         crate::arch::mm::tlb_flush_all_including_global();
     }
 

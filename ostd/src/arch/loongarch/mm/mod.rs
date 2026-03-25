@@ -133,6 +133,12 @@ pub fn current_page_table_paddr() -> Paddr {
     pgdl
 }
 
+/// Returns the physical address of the current user page table.
+/// On LoongArch, the kernel and user share the same page table.
+pub fn current_user_page_table_paddr() -> Paddr {
+    current_page_table_paddr()
+}
+
 #[derive(Clone, Copy, Pod, Default)]
 #[repr(C)]
 pub struct PageTableEntry(usize);

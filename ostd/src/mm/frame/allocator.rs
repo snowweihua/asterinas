@@ -53,6 +53,7 @@ impl FrameAllocOptions {
     /// Allocates a single frame with additional metadata.
     pub fn alloc_frame_with<M: AnyFrameMeta>(&self, metadata: M) -> Result<Frame<M>> {
         let single_layout = Layout::from_size_align(PAGE_SIZE, PAGE_SIZE).unwrap();
+
         let frame = get_global_frame_allocator()
             .alloc(single_layout)
             .map(|paddr| Frame::from_unused(paddr, metadata).unwrap())
@@ -60,6 +61,7 @@ impl FrameAllocOptions {
 
         if self.zeroed {
             let addr = paddr_to_vaddr(frame.paddr()) as *mut u8;
+
             // SAFETY: The newly allocated frame is guaranteed to be valid.
             unsafe { core::ptr::write_bytes(addr, 0, PAGE_SIZE) }
         }

@@ -8,7 +8,7 @@ use core::{
     ops::{Deref, DerefMut},
     sync::atomic::{
         AtomicUsize,
-        Ordering::{AcqRel, Acquire, Relaxed, Release},
+        Ordering::{AcqRel, Acquire, Release},
     },
 };
 
@@ -263,14 +263,14 @@ impl<T: ?Sized, G: SpinGuardian> RwLock<T, G> {
     ///
     /// This function will never spin-wait and will return immediately.
     pub fn try_write(&self) -> Option<RwLockWriteGuard<T, G>> {
+        // WORKAROUND: QEMU 6.2 AArch64 compare_exchange (LDAXR/STXR exclusive monitor)
+        // fails spuriously. Use fetch_or + verify pattern instead.
         let guard = G::guard();
-        if self
-            .lock
-            .compare_exchange(0, WRITER, Acquire, Relaxed)
-            .is_ok()
-        {
+        let prev = self.lock.fetch_or(WRITER, Acquire);
+        if prev == 0 {
             Some(RwLockWriteGuard { inner: self, guard })
         } else {
+            self.lock.fetch_and(!WRITER, Release);
             None
         }
     }
@@ -282,17 +282,17 @@ impl<T: ?Sized, G: SpinGuardian> RwLock<T, G> {
     ///
     /// [`try_write`]: Self::try_write
     fn try_write_arc(self: &Arc<Self>) -> Option<ArcRwLockWriteGuard<T, G>> {
+        // WORKAROUND: QEMU 6.2 AArch64 compare_exchange (LDAXR/STXR exclusive monitor)
+        // fails spuriously. Use fetch_or + verify pattern instead.
         let guard = G::guard();
-        if self
-            .lock
-            .compare_exchange(0, WRITER, Acquire, Relaxed)
-            .is_ok()
-        {
+        let prev = self.lock.fetch_or(WRITER, Acquire);
+        if prev == 0 {
             Some(ArcRwLockWriteGuard {
                 inner: self.clone(),
                 guard,
             })
         } else {
+            self.lock.fetch_and(!WRITER, Release);
             None
         }
     }
@@ -481,18 +481,16 @@ impl<T: ?Sized, R: Deref<Target = RwLock<T, G>> + Clone, G: SpinGuardian>
     /// This is not exposed as a public method to prevent intermediate lock states from affecting the
     /// downgrade process.
     fn try_downgrade(mut self) -> Result<RwLockUpgradeableGuard_<T, R, G>, Self> {
+        // WORKAROUND: QEMU 6.2 AArch64 compare_exchange (LDAXR/STXR exclusive monitor)
+        // fails spuriously. Use atomic operations that don't rely on CAS.
+        // We hold the WRITER lock exclusively, so we can clear WRITER and set
+        // UPGRADEABLE_READER atomically step-by-step (no races possible).
         let inner = self.inner.clone();
-        let res = self
-            .inner
-            .lock
-            .compare_exchange(WRITER, UPGRADEABLE_READER, AcqRel, Relaxed);
-        if res.is_ok() {
-            let guard = self.guard.transfer_to();
-            drop(self);
-            Ok(RwLockUpgradeableGuard_ { inner, guard })
-        } else {
-            Err(self)
-        }
+        self.inner.lock.fetch_and(!WRITER, Release);
+        self.inner.lock.fetch_or(UPGRADEABLE_READER, Acquire);
+        let guard = self.guard.transfer_to();
+        drop(self);
+        Ok(RwLockUpgradeableGuard_ { inner, guard })
     }
 }
 
@@ -565,18 +563,18 @@ impl<T: ?Sized, R: Deref<Target = RwLock<T, G>> + Clone, G: SpinGuardian>
     ///
     /// This function will never spin-wait and will return immediately.
     pub fn try_upgrade(mut self) -> Result<RwLockWriteGuard_<T, R, G>, Self> {
-        let res = self.inner.lock.compare_exchange(
-            UPGRADEABLE_READER | BEING_UPGRADED,
-            WRITER | UPGRADEABLE_READER,
-            AcqRel,
-            Relaxed,
-        );
-        if res.is_ok() {
+        // WORKAROUND: QEMU 6.2 AArch64 compare_exchange (LDAXR/STXR exclusive monitor)
+        // fails spuriously. Use fetch_or + verify pattern instead.
+        let prev = self.inner.lock.fetch_or(WRITER, AcqRel);
+        if prev == UPGRADEABLE_READER | BEING_UPGRADED {
+            // Clear BEING_UPGRADED to match the clean state the original CAS produced.
+            self.inner.lock.fetch_and(!BEING_UPGRADED, Release);
             let inner = self.inner.clone();
             let guard = self.guard.transfer_to();
             drop(self);
             Ok(RwLockWriteGuard_ { inner, guard })
         } else {
+            self.inner.lock.fetch_and(!WRITER, Release);
             Err(self)
         }
     }

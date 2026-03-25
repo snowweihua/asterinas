@@ -124,10 +124,9 @@ impl<T: ?Sized, G: SpinGuardian> SpinLock<T, G> {
     }
 
     fn try_acquire_lock(&self) -> bool {
-        self.inner
-            .lock
-            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-            .is_ok()
+        // WORKAROUND: QEMU 6.2 AArch64 compare_exchange (LDAXR/STXR) fails spuriously.
+        // Use swap instead: if the lock was false (unlocked), swap returns false (success).
+        !self.inner.lock.swap(true, Ordering::Acquire)
     }
 
     fn release_lock(&self) {

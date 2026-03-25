@@ -496,13 +496,9 @@ impl RamInode {
             return_errno_with_message!(Errno::ENOTDIR, "self is not dir");
         }
 
-        let (_, inode) = self
-            .inner
-            .as_direntry()
-            .unwrap()
-            .read()
-            .get_entry(name)
-            .ok_or(Error::new(Errno::ENOENT))?;
+        let dir_lock = self.inner.as_direntry().unwrap();
+        let guard = dir_lock.read();
+        let (_, inode) = guard.get_entry(name).ok_or(Error::new(Errno::ENOENT))?;
         Ok(inode)
     }
 }

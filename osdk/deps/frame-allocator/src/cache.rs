@@ -124,6 +124,7 @@ pub(super) fn alloc(guard: &DisabledLocalIrqGuard, layout: Layout) -> Option<Pad
     }
 
     let cache_cell = CACHE.get_with(guard);
+
     let mut cache = cache_cell.borrow_mut();
 
     match nr_frames {

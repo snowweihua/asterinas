@@ -69,10 +69,12 @@ impl<C: PageTableConfig> PageTableNode<C> {
     /// Allocates a new empty page table node.
     pub(super) fn alloc(level: PagingLevel) -> Self {
         let meta = PageTablePageMeta::new(level);
+
         let frame = FrameAllocOptions::new()
             .zeroed(true)
             .alloc_frame_with(meta)
             .expect("Failed to allocate a page table node");
+
         // The allocated frame is zeroed. Make sure zero is absent PTE.
         debug_assert_eq!(C::E::new_absent().as_usize(), 0);
 
@@ -141,13 +143,12 @@ impl<'a, C: PageTableConfig> PageTableNodeRef<'a, C> {
     where
         'a: 'rcu,
     {
-        while self
-            .meta()
-            .lock
-            .compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed)
-            .is_err()
-        {
-            core::hint::spin_loop();
+        // WORKAROUND: QEMU 6.2 AArch64 compare_exchange fails spuriously (broken STXR).
+        // Use swap(1) which internally retries STXR on failure, avoiding infinite spin.
+        while self.meta().lock.swap(1, Ordering::Acquire) != 0 {
+            while self.meta().lock.load(Ordering::Relaxed) != 0 {
+                core::hint::spin_loop();
+            }
         }
 
         PageTableGuard::<'rcu, C> { inner: self }

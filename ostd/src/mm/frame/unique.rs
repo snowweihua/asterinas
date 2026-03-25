@@ -8,7 +8,7 @@ use super::{
     meta::{GetFrameError, REF_COUNT_UNIQUE},
     AnyFrameMeta, Frame, MetaSlot,
 };
-use crate::mm::{frame::mapping, HasPaddr, HasSize, Paddr, PagingConsts, PagingLevel, PAGE_SIZE};
+use crate::mm::{HasPaddr, HasSize, Paddr, PagingLevel, PAGE_SIZE};
 
 /// An owning frame pointer.
 ///
@@ -111,6 +111,7 @@ impl<M: AnyFrameMeta + ?Sized> UniqueFrame<M> {
         let this = ManuallyDrop::new(self);
 
         this.slot().ref_count.store(0, Ordering::Release);
+
         // SAFETY: We are the sole owner and the reference count is 0.
         // The slot is initialized.
         unsafe { this.slot().drop_last_in_place() };
@@ -129,8 +130,9 @@ impl<M: AnyFrameMeta + ?Sized> UniqueFrame<M> {
     /// The caller must ensure that the physical address is valid and points to
     /// a forgotten frame that was previously casted by [`Self::into_raw`].
     pub(crate) unsafe fn from_raw(paddr: Paddr) -> Self {
-        let vaddr = mapping::frame_to_meta::<PagingConsts>(paddr);
-        let ptr = vaddr as *const MetaSlot;
+        let ptr = super::meta::get_slot(paddr)
+            .expect("raw unique frame address should always resolve to a metadata slot")
+            as *const MetaSlot;
 
         Self {
             ptr,

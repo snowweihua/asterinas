@@ -41,9 +41,13 @@ pub(super) fn switch_to_task(next_task: Arc<Task>) {
 
     // SAFETY: RCU read-side critical sections disables preemption. By the time
     // we reach this point, we have already checked that preemption is enabled.
+    #[cfg(target_arch = "aarch64")]
+    unsafe { crate::arch::uart_probe(b'<') };
     unsafe {
         crate::sync::finish_grace_period();
     }
+    #[cfg(target_arch = "aarch64")]
+    unsafe { crate::arch::uart_probe(b'>') };
 
     let irq_guard = crate::irq::disable_local();
 
@@ -53,10 +57,16 @@ pub(super) fn switch_to_task(next_task: Arc<Task>) {
     // CPU, its context can be used exclusively.
     let next_task_ctx_ptr = next_task.ctx().get().cast_const();
 
+    #[cfg(target_arch = "aarch64")]
+    unsafe { crate::arch::uart_probe(b'1') };
+
     let current_task_ptr = CURRENT_TASK_PTR.load();
     CURRENT_TASK_PTR.store(Arc::into_raw(next_task));
     debug_assert!(PREVIOUS_TASK_PTR.load().is_null());
     PREVIOUS_TASK_PTR.store(current_task_ptr);
+
+    #[cfg(target_arch = "aarch64")]
+    unsafe { crate::arch::uart_probe(b'2') };
 
     // We must disable IRQs when switching, see `after_switching_to`.
     core::mem::forget(irq_guard);
@@ -78,13 +88,14 @@ pub(super) fn switch_to_task(next_task: Arc<Task>) {
         unreachable!("`first_context_switch` should never return");
     };
 
+    #[cfg(target_arch = "aarch64")]
+    unsafe { crate::arch::uart_probe(b'3') };
+
     // SAFETY:
     // 1. We have exclusive access to both the current context and the next context (see above).
     // 2. The next context is valid (because it is either correctly initialized or written by a
     //    previous `context_switch`).
     unsafe {
-        // This function may not return, for example, when the current task exits. So make sure
-        // that all variables on the stack can be forgotten without causing resource leakage.
         context_switch(next_task_ctx_ptr, current_task_ctx_ptr);
     }
 
@@ -100,12 +111,16 @@ fn before_switching_to(next_task: &Task, irq_guard: &DisabledLocalIrqGuard) {
     // Ensure that the mapping to the kernel stack is valid.
     next_task.kstack.flush_tlb(irq_guard);
 
+    let mut spin_count = 0u32;
     // Ensure that we are not switching to a task that is already running.
+    // WORKAROUND: QEMU 6.2 AArch64 compare_exchange fails spuriously. Use swap instead.
     while next_task
         .switched_to_cpu
-        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
-        .is_err()
+        .swap(true, Ordering::AcqRel)
     {
+        spin_count += 1;
+        if spin_count == 1 {
+        }
         log::warn!("Switching to a task already running in the foreground");
         core::hint::spin_loop();
     }

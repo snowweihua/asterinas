@@ -162,7 +162,8 @@ impl CpuException {
             Self::Unknown | Self::PCAlignmentFault | Self::SPAlignmentFault => CpuExceptionType::FaultOrTrap,
             Self::AsyncCurrentEL | Self::AsyncLowerEL | Self::Svc64 => CpuExceptionType::Interrupt,
             Self::TrappedMcrMrc | Self::TrappedLdcStc | Self::TrappedSysReg | Self::TrappedSimdFpSve => CpuExceptionType::Trap,
-            Self::InstructionAbortLowerEL | Self::InstructionAbortCurrentEL | Self::DataAbortLowerEL | Self::DataAbortCurrentEL => CpuExceptionType::Abort,
+            Self::InstructionAbortLowerEL | Self::DataAbortLowerEL => CpuExceptionType::Fault,
+            Self::InstructionAbortCurrentEL | Self::DataAbortCurrentEL => CpuExceptionType::Abort,
 
             _ => CpuExceptionType::Fault,
         }
@@ -364,12 +365,11 @@ impl UserContextApi for UserContext {
     }
 
     fn stack_pointer(&self) -> usize {
-        self.user_context.general.x29
+        self.user_context.sp_el0
     }
 
     fn set_stack_pointer(&mut self, sp: usize) {
-        // use FP as stack pointer ?
-        self.set_x29(sp);
+        self.user_context.sp_el0 = sp;
     }
 }
 

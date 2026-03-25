@@ -25,12 +25,19 @@ pub(crate) unsafe fn init() {
 extern "C" fn sync_exception_current(f: &mut TrapFrame) {
     // Kernel-mode exceptions (e.g. data abort) - for now panic.
     // TODO: handle kernel-mode page faults.
+    crate::early_println!(
+        "[sec] sync_exception_current: ESR={:#x} ELR={:#x} SPSR={:#x} LR={:#x}",
+        f.esr_el1, f.elr_el1, f.spsr_el1, f.lr
+    );
+    panic!("Kernel synchronous exception! ESR={:#x} ELR={:#x}", f.esr_el1, f.elr_el1);
 }
 
 /// Handle IRQ from current EL.
 #[unsafe(no_mangle)]
 extern "C" fn irq_current(f: &mut TrapFrame) {
-    call_irq_callback_functions(f, 0, PrivilegeLevel::Kernel);
+    if let Some(irq_num) = super::gic::acknowledge_interrupt() {
+        call_irq_callback_functions(f, irq_num, PrivilegeLevel::Kernel);
+    }
 }
 
 /// Handle FIQ from current EL.
@@ -58,7 +65,9 @@ extern "C" fn sync_lower(f: &mut TrapFrame) {
 /// Handle IRQ from lower EL.
 #[unsafe(no_mangle)]
 extern "C" fn irq_lower(f: &mut TrapFrame) {
-    call_irq_callback_functions(f, 0, PrivilegeLevel::User);
+    if let Some(irq_num) = super::gic::acknowledge_interrupt() {
+        call_irq_callback_functions(f, irq_num, PrivilegeLevel::User);
+    }
 }
 
 /// Handle FIQ from lower EL.

@@ -214,22 +214,21 @@ pub(super) fn get_slot(paddr: Paddr) -> Result<&'static MetaSlot, GetFrameError>
         return Err(GetFrameError::OutOfBound);
     }
 
-    let ptr = if frame_paddr_base == 0 {
+    let ptr = if frame_paddr_base == 0 || !crate::IN_BOOTSTRAP_CONTEXT.load(Ordering::Relaxed) {
+        // After KPT activation (or when frame_paddr_base == 0), use the
+        // FRAME_METADATA_RANGE virtual address which is properly mapped in the KPT.
         let vaddr = mapping::frame_to_meta::<PagingConsts>(paddr);
         vaddr as *mut MetaSlot
     } else {
+        // During bootstrap with non-zero frame_paddr_base, use the physical address
+        // directly (identity-mapped via boot page tables).
         let meta_paddr_base = FRAME_META_PADDR_BASE.load(Ordering::Relaxed);
         if meta_paddr_base == 0 {
             return Err(GetFrameError::OutOfBound);
         }
-
         let frame_idx = (paddr - frame_paddr_base) / PAGE_SIZE;
         let slot_paddr = meta_paddr_base + frame_idx * size_of::<MetaSlot>();
-        if crate::IN_BOOTSTRAP_CONTEXT.load(Ordering::Relaxed) {
-            slot_paddr as *mut MetaSlot
-        } else {
-            paddr_to_vaddr(slot_paddr) as *mut MetaSlot
-        }
+        slot_paddr as *mut MetaSlot
     };
 
     // SAFETY: `ptr` points to a valid `MetaSlot` that will never be
@@ -252,15 +251,23 @@ impl MetaSlot {
     ) -> Result<*const Self, GetFrameError> {
         let slot = get_slot(paddr)?;
 
-        // `Acquire` pairs with the `Release` in `drop_last_in_place` and ensures the metadata
-        // initialization won't be reordered before this memory compare-and-exchange.
-        slot.ref_count
-            .compare_exchange(REF_COUNT_UNUSED, 0, Ordering::Acquire, Ordering::Relaxed)
-            .map_err(|val| match val {
-                REF_COUNT_UNIQUE => GetFrameError::Unique,
-                0 => GetFrameError::Busy,
-                _ => GetFrameError::InUse,
-            })?;
+        // WORKAROUND: QEMU 6.2 AArch64 compare_exchange fails spuriously (broken STXR).
+        // Retry on spurious failure (Err(REF_COUNT_UNUSED) = expected value observed but STXR failed).
+        // `Acquire` pairs with the `Release` in `drop_last_in_place`.
+        loop {
+            match slot.ref_count.compare_exchange(
+                REF_COUNT_UNUSED,
+                0,
+                Ordering::Acquire,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => break,
+                Err(val) if val == REF_COUNT_UNUSED => continue, // spurious failure, retry
+                Err(REF_COUNT_UNIQUE) => return Err(GetFrameError::Unique),
+                Err(0) => return Err(GetFrameError::Busy),
+                Err(_) => return Err(GetFrameError::InUse),
+            }
+        }
 
         // SAFETY: The slot now has a reference count of `0`, other threads will
         // not access the metadata slot so it is safe to have a mutable reference.
@@ -336,7 +343,29 @@ impl MetaSlot {
 
     /// Gets the corresponding frame's physical address.
     pub(super) fn frame_paddr(&self) -> Paddr {
-        mapping::meta_to_frame::<PagingConsts>(self as *const MetaSlot as Vaddr)
+        let frame_paddr_base = crate::arch::mm::frame_paddr_base();
+        let meta_va = self as *const MetaSlot as usize;
+        // If frame_paddr_base is zero, DRAM starts at 0 and FRAME_METADATA_RANGE
+        // base is also 0, so meta_to_frame always applies.
+        // If frame_paddr_base is non-zero (e.g., AArch64 where DRAM starts at 0x4000_0000),
+        // MetaSlot pointers from bootstrap time are physical addresses (low addresses),
+        // while post-bootstrap VAs are in FRAME_METADATA_RANGE (high kernel addresses).
+        // Use the VA range check to decide which calculation to use.
+        if frame_paddr_base == 0
+            || meta_va >= crate::mm::kspace::FRAME_METADATA_RANGE.start
+        {
+            return mapping::meta_to_frame::<PagingConsts>(meta_va);
+        }
+
+        // During bootstrap with non-zero frame_paddr_base, the MetaSlot is at its
+        // physical address directly (identity-mapped). Reverse the PA calculation.
+        let meta_paddr_base = FRAME_META_PADDR_BASE.load(Ordering::Relaxed);
+        let offset = meta_va
+            .checked_sub(meta_paddr_base)
+            .expect("metadata slot address is below metadata base")
+            / size_of::<MetaSlot>();
+
+        frame_paddr_base + offset * PAGE_SIZE
     }
 
     /// Gets a dynamically typed pointer to the stored metadata.

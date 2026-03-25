@@ -3,6 +3,7 @@
 //! Interrupts.
 use core::arch::asm;
 
+use super::gic;
 use crate::cpu::PinCurrentCpu;
 
 pub(crate) const IRQ_NUM_MIN: u8 = 0;
@@ -21,7 +22,9 @@ impl IrqRemapping {
     ///
     /// This will do nothing if the entry is already initialized or interrupt
     /// remapping is disabled or not supported by the architecture.
-    pub(crate) fn init(&self, _irq_num: u8) {}
+    pub(crate) fn init(&self, irq_num: u8) {
+        gic::init_interrupt(irq_num);
+    }
 
     /// Gets the remapping index of the IRQ line.
     ///

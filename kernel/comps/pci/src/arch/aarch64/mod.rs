@@ -67,7 +67,10 @@ pub(crate) fn init() {
 
     let addr_start = region.starting_address as usize;
     let addr_end = addr_start.checked_add(region.size.unwrap()).unwrap();
-    PCI_ECAM_CFG_SPACE.call_once(|| IoMem::acquire(addr_start..addr_end).unwrap());
+    PCI_ECAM_CFG_SPACE.call_once(|| {
+        let mem = IoMem::acquire(addr_start..addr_end).unwrap();
+        mem
+    });
 }
 
 // GICv3 ITS (Interrupt Translation Service) base on QEMU virt for MSI-X.

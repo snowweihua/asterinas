@@ -67,7 +67,10 @@ impl CalleeRegs {
 
 impl TaskContextApi for TaskContext {
     fn set_instruction_pointer(&mut self, ip: usize) {
-        self.ra = ip;
+        // AArch64 context switch uses `ret` to jump to x30 (lr).
+        // The assembly restores x30 from offset 88 (regs.x30), so we must
+        // write the task entry address there, not to the `ra` field.
+        self.regs.x30 = ip as u64;
     }
 
     fn set_stack_pointer(&mut self, sp: usize) {

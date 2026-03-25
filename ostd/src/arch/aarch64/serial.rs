@@ -33,7 +33,7 @@ pub(crate) fn init() {
 }
 
 /// Sends a byte on the serial port.
-pub(crate) fn send(data: u8) {
+pub fn send(data: u8) {
     // Wait until TX FIFO is not full.
     while (read_fr() & FR_TXFF) != 0 {}
     // SAFETY: PL011_DR is a valid MMIO address.

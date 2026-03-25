@@ -149,6 +149,12 @@ pub fn current_page_table_paddr() -> Paddr {
         .as_u64() as Paddr
 }
 
+/// Returns the physical address of the current user page table.
+/// On x86, the kernel and user page table are the same CR3-based table.
+pub fn current_user_page_table_paddr() -> Paddr {
+    current_page_table_paddr()
+}
+
 impl PageTableEntry {
     cfg_if! {
         if #[cfg(feature = "cvm_guest")] {

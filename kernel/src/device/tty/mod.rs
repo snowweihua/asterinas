@@ -30,7 +30,7 @@ mod termio;
 pub use device::TtyDevice;
 pub use driver::{PushCharError, TtyDriver};
 pub(super) use n_tty::init;
-pub use n_tty::{iter_n_tty, system_console};
+pub use n_tty::{iter_n_tty, system_console, system_console_opt};
 
 const IO_CAPACITY: usize = 4096;
 

@@ -221,12 +221,25 @@ impl<P: NonNullPtr + Send> RcuReadGuardInner<'_, P> {
             core::ptr::null_mut()
         };
 
-        if self
-            .rcu
-            .ptr
-            .compare_exchange(self.obj_ptr, new_ptr, AcqRel, Acquire)
-            .is_err()
-        {
+        // WORKAROUND: QEMU 6.2 AArch64 compare_exchange fails spuriously (broken STXR).
+        // Retry when the observed value equals the expected value (true spurious failure).
+        let result = loop {
+            match self
+                .rcu
+                .ptr
+                .compare_exchange(self.obj_ptr, new_ptr, AcqRel, Acquire)
+            {
+                Ok(prev) => break Ok(prev),
+                Err(observed) if core::ptr::eq(observed, self.obj_ptr) => {
+                    // Spurious failure: the pointer IS the expected value, but STXR failed.
+                    core::hint::spin_loop();
+                    continue;
+                }
+                Err(observed) => break Err(observed),
+            }
+        };
+
+        if result.is_err() {
             let Some(new_ptr) = NonNull::new(new_ptr) else {
                 return Err(None);
             };

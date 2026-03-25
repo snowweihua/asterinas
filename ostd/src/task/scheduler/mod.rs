@@ -405,7 +405,7 @@ pub(crate) fn might_preempt() {
         } else {
             ReschedAction::DoNothing
         }
-    })
+    });
 }
 
 /// Blocks the current task unless `has_unparked()` returns `true`.

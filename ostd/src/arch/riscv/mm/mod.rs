@@ -114,6 +114,12 @@ pub fn current_page_table_paddr() -> Paddr {
     riscv::register::satp::read().ppn() << 12
 }
 
+/// Returns the physical address of the current user page table.
+/// On RISC-V, the kernel and user page table share the same SATP.
+pub fn current_user_page_table_paddr() -> Paddr {
+    current_page_table_paddr()
+}
+
 impl PageTableEntry {
     const PHYS_ADDR_MASK: usize = 0x003F_FFFF_FFFF_FC00;
 

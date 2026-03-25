@@ -31,13 +31,9 @@ pub fn spawn_init_process(
 ) -> Result<Arc<Process>> {
     // Ensure the path for init process executable is absolute.
     debug_assert!(executable_path.starts_with('/'));
-
     let process = create_init_process(executable_path, argv, envp)?;
-
     set_session_and_group(&process);
-
     process.run();
-
     Ok(process)
 }
 
@@ -115,7 +111,8 @@ fn create_init_task(
         let program_to_load =
             ProgramToLoad::build_from_file(elf_file, &fs_resolver, argv, envp, 1)?;
         process_vm.clear_and_map();
-        program_to_load.load_to_vm(process_vm, &fs_resolver)?
+        let r = program_to_load.load_to_vm(process_vm, &fs_resolver)?;
+        r
     };
 
     let mut user_ctx = UserContext::default();

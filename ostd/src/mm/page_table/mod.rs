@@ -286,6 +286,20 @@ impl PageTable<UserPtConfig> {
     pub fn activate(&self) {
         // SAFETY: The user mode page table is safe to activate since the kernel
         // mappings are shared.
+        #[cfg(target_arch = "aarch64")]
+        {
+            use crate::arch::mm::{
+                activate_user_page_table, current_user_page_table_paddr,
+            };
+            let root_pa = self.root_paddr();
+            let cur_ttbr0 = current_user_page_table_paddr();
+            if cur_ttbr0 != root_pa {
+                // SAFETY: This is a valid user page table with proper mappings.
+                unsafe { activate_user_page_table(root_pa) };
+            } else {
+            }
+        }
+        #[cfg(not(target_arch = "aarch64"))]
         unsafe {
             self.root.activate();
         }
@@ -305,6 +319,28 @@ impl PageTable<KernelPtConfig> {
             for i in KernelPtConfig::TOP_LEVEL_INDEX_RANGE {
                 let mut root_entry = root_node.entry(i);
                 let _ = root_entry.alloc_if_none(&preempt_guard).unwrap();
+            }
+
+            // On AArch64 the kernel code is mapped at VA 0xffff_0000_xxxx (L4 slot 0),
+            // which is outside TOP_LEVEL_INDEX_RANGE (256..512). Copy slot 0 from the
+            // bootstrap TTBR1 root (boot_l4pt_kern) so that after activation the CPU
+            // can still fetch kernel instructions. The L3 table pointed to by that PTE
+            // is a static array in the kernel image and is never freed.
+            #[cfg(target_arch = "aarch64")]
+            {
+                let boot_root_pa = crate::arch::mm::current_page_table_paddr();
+                // Safety: boot_l4pt_kern is a valid 4KB-aligned page table in DRAM,
+                // accessible via the identity (bootstrap) TTBR0 mapping (PA == VA in
+                // bootstrap context).
+                let boot_slot0_pte = unsafe {
+                    let ptr = boot_root_pa as *const PageTableEntry;
+                    ptr.read_volatile()
+                };
+                // Safety: idx 0 is within the 512-entry root node; the PTE is a valid
+                // table descriptor pointing to a permanently live static L3 table.
+                // We do NOT increment nr_children here because the cursor never unmaps
+                // slot 0 (it is outside TOP_LEVEL_INDEX_RANGE), so no ref-count issue.
+                unsafe { root_node.write_pte(0, boot_slot0_pte) };
             }
         }
 

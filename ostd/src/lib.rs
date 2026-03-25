@@ -128,6 +128,7 @@ unsafe fn init() {
         arch::serial::init();
     });
 
+    #[cfg(not(target_arch = "aarch64"))]
     smp::init();
 
     // SAFETY: This function is called only once on the BSP.
@@ -135,11 +136,16 @@ unsafe fn init() {
         mm::kspace::activate_kernel_page_table();
     }
 
+    // The kernel page table is now active and the linear mapping is set up.
+    // From this point on, paddr_to_vaddr() must use LINEAR_MAPPING_BASE_VADDR,
+    // not the identity mapping. Set the flag before enabling IRQs or running
+    // any component initializers (invoke_ffi_init_funcs) so that DMA/frame
+    // allocations inside those init functions get valid kernel virtual addresses.
+    IN_BOOTSTRAP_CONTEXT.store(false, Ordering::Relaxed);
+
     arch::irq::enable_local();
 
     invoke_ffi_init_funcs();
-
-    IN_BOOTSTRAP_CONTEXT.store(false, Ordering::Relaxed);
 }
 
 /// Indicates whether the kernel is in bootstrap context.

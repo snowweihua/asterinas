@@ -7,6 +7,7 @@ use core::{
     sync::atomic::{AtomicU64, AtomicU8, Ordering},
 };
 
+
 use spin::Once;
 
 use crate::{
@@ -17,6 +18,8 @@ use crate::{
 
 static TIMER_IRQ: Once<IrqLine> = Once::new();
 pub(super) static TIMER_IRQ_NUM: AtomicU8 = AtomicU8::new(0);
+
+const AARCH64_VIRT_TIMER_PPI_IRQ: u8 = 27;
 
 static TIMEBASE_FREQ: AtomicU64 = AtomicU64::new(0);
 static TIMER_INTERVAL: AtomicU64 = AtomicU64::new(0);
@@ -29,27 +32,34 @@ static TIMER_INTERVAL: AtomicU64 = AtomicU64::new(0);
 /// 1. It is called once and at most once at a proper timing in the boot context.
 /// 2. It is called before any other public functions of this module is called.
 pub(super) unsafe fn init() {
-    #[cfg(target_arch = "aarch64")]
-    {
-        return;
-    }
+    let timebase_freq = {
+        #[cfg(target_arch = "aarch64")]
+        {
+            let freq: u64;
+            unsafe {
+                asm!("mrs {0}, cntfrq_el0", out(reg) freq, options(nostack, nomem, preserves_flags));
+            }
+            freq
+        }
+        #[cfg(not(target_arch = "aarch64"))]
+        {
+            DEVICE_TREE
+                .get()
+                .unwrap()
+                .cpus()
+                .next()
+                .unwrap()
+                .timebase_frequency() as u64
+        }
+    };
 
-    TIMEBASE_FREQ.store(
-        DEVICE_TREE
-            .get()
-            .unwrap()
-            .cpus()
-            .next()
-            .unwrap()
-            .timebase_frequency() as u64,
-        Ordering::Relaxed,
-    );
+    TIMEBASE_FREQ.store(timebase_freq, Ordering::Relaxed);
     TIMER_INTERVAL.store(
         TIMEBASE_FREQ.load(Ordering::Relaxed) / TIMER_FREQ,
         Ordering::Relaxed,
     );
     TIMER_IRQ.call_once(|| {
-        let mut timer_irq = IrqLine::alloc().unwrap();
+        let mut timer_irq = IrqLine::alloc_specific(AARCH64_VIRT_TIMER_PPI_IRQ).unwrap();
         TIMER_IRQ_NUM.store(timer_irq.num(), Ordering::Relaxed);
         timer_irq.on_active(timer_callback);
 

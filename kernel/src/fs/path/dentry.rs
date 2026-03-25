@@ -175,13 +175,21 @@ impl Dentry {
 
     /// Lookups a target `Dentry` from the file system.
     pub(super) fn lookup_via_fs(&self, name: &str) -> Result<Arc<Dentry>> {
-        let children = self.children.upread();
+        // First, check the cache with a read lock only.
+        {
+            let children = self.children.read();
+            if let Some(target) = children.find(name)? {
+                return Ok(target);
+            }
+        }
 
+        // Not found in cache; look up in the filesystem.
         let inode = match self.inode.lookup(name) {
             Ok(inode) => inode,
             Err(e) => {
                 if e.error() == Errno::ENOENT && self.is_dentry_cacheable() {
-                    children.upgrade().insert_negative(String::from(name));
+                    let mut children = self.children.write();
+                    children.insert_negative(String::from(name));
                 }
                 return Err(e);
             }
@@ -190,7 +198,8 @@ impl Dentry {
         let target = Self::new(inode, DentryOptions::Leaf((name.clone(), self.this())));
 
         if target.is_dentry_cacheable() {
-            children.upgrade().insert(name, target.clone());
+            let mut children = self.children.write();
+            children.insert(name, target.clone());
         }
 
         Ok(target)

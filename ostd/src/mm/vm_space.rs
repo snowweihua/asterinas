@@ -12,7 +12,7 @@ use core::{ops::Range, sync::atomic::Ordering};
 
 use super::{page_table::PageTableConfig, AnyUFrameMeta, PagingLevel};
 use crate::{
-    arch::mm::{current_page_table_paddr, PageTableEntry, PagingConsts},
+    arch::mm::{current_user_page_table_paddr, PageTableEntry, PagingConsts},
     cpu::{
         set::{AtomicCpuSet, CpuSet},
         PinCurrentCpu,
@@ -160,7 +160,7 @@ impl VmSpace {
     /// Users must ensure that no other page table is activated in the current task during the
     /// lifetime of the created `VmReader`. This guarantees that the `VmReader` can operate correctly.
     pub fn reader(&self, vaddr: Vaddr, len: usize) -> Result<VmReader<'_, Fallible>> {
-        if current_page_table_paddr() != self.pt.root_paddr() {
+        if current_user_page_table_paddr() != self.pt.root_paddr() {
             return Err(Error::AccessDenied);
         }
 
@@ -180,7 +180,7 @@ impl VmSpace {
     /// Users must ensure that no other page table is activated in the current task during the
     /// lifetime of the created `VmWriter`. This guarantees that the `VmWriter` can operate correctly.
     pub fn writer(&self, vaddr: Vaddr, len: usize) -> Result<VmWriter<'_, Fallible>> {
-        if current_page_table_paddr() != self.pt.root_paddr() {
+        if current_user_page_table_paddr() != self.pt.root_paddr() {
             return Err(Error::AccessDenied);
         }
 
@@ -212,7 +212,7 @@ impl VmSpace {
         vaddr: Vaddr,
         len: usize,
     ) -> Result<(VmReader<'_, Fallible>, VmWriter<'_, Fallible>)> {
-        if current_page_table_paddr() != self.pt.root_paddr() {
+        if current_user_page_table_paddr() != self.pt.root_paddr() {
             return Err(Error::AccessDenied);
         }
 

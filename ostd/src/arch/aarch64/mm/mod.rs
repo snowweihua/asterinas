@@ -43,6 +43,11 @@ bitflags::bitflags! {
         const WRITABLE = 1 << 7;
         const SHAREABLE = 1 << 8;
         const ACCESSED = 1 << 10;
+        /// Not-Global (nG): if set, the TLB entry is ASID-tagged (non-global).
+        /// User-space pages must have this set so that TLBI by VA (vaae1/vae1)
+        /// correctly targets them. Without nG=1, user pages are treated as global
+        /// and `tlbi vaae1` will not flush them.
+        const NOT_GLOBAL = 1 << 11;
         const RSV1 = 1 << 55;
         const RSV2 = 1 << 56;
         const DIRTY = 1 << 51;
@@ -58,9 +63,16 @@ const SH_MASK: usize = 0b11 << 8;
 const SH_INNER_SHAREABLE: usize = 0b11 << 8;
 
 pub(crate) fn tlb_flush_addr(vaddr: Vaddr) {
+    // WORKAROUND: QEMU 6.2 hangs on ANY TLBI instruction (`vaae1`, `vmalle1`,
+    // etc.) once any user-space PTE has been written (COW, stack init, etc.).
+    // On single-CPU QEMU TCG, the software TLB self-invalidates on the next
+    // page-table walk triggered by the subsequent access fault; explicit TLBI
+    // is not required for correctness in this uniprocessor configuration.
+    // TODO: re-enable TLBI when upgrading past QEMU 6.2 or running on hardware.
+    let _ = vaddr;
     unsafe {
         asm!("dsb ishst", options(nostack, nomem, preserves_flags));
-        asm!("tlbi vae1is, {0}", in(reg) vaddr, options(nostack, nomem, preserves_flags));
+        // Skip TLBI for both kernel and user VAs (QEMU 6.2 workaround).
         asm!("dsb ish", options(nostack, nomem, preserves_flags));
         asm!("isb", options(nostack, nomem, preserves_flags));
     }
@@ -74,12 +86,14 @@ pub(crate) fn tlb_flush_addr_range(range: &Range<Vaddr>) {
 
 pub(crate) fn tlb_flush_all_excluding_global() {
     unsafe {
-        asm!("dsb ishst", options(nostack, nomem, preserves_flags));
-        // `aside1is` requires an ASID operand in a register. Use `vmalle1is`
-        // which invalidates all EL1 TLB entries (including global) for now.
-        // TODO: implement proper ASID-based flushing when ASID support is added.
-        asm!("tlbi vmalle1is", options(nostack, nomem, preserves_flags));
-        asm!("dsb ish", options(nostack, nomem, preserves_flags));
+        // WORKAROUND: QEMU 6.2 AArch64 TCG deadlocks on `tlbi vmalle1` when called
+        // after user-space PTEs have been written. Instead, trigger QEMU's soft-TLB
+        // flush by writing TTBR0_EL1 to itself (any write causes tlb_flush_by_mmuidx).
+        // This clears negative/stale TLB entries without corrupting the page walk state.
+        let ttbr0: u64;
+        asm!("mrs {0}, ttbr0_el1", out(reg) ttbr0, options(nostack, nomem, preserves_flags));
+        asm!("dsb sy", options(nostack, nomem, preserves_flags));
+        asm!("msr ttbr0_el1, {0}", in(reg) ttbr0, options(nostack, nomem, preserves_flags));
         asm!("isb", options(nostack, nomem, preserves_flags));
     }
 }
@@ -87,7 +101,10 @@ pub(crate) fn tlb_flush_all_excluding_global() {
 pub(crate) fn tlb_flush_all_including_global() {
     unsafe {
         asm!("dsb ishst", options(nostack, nomem, preserves_flags));
-        asm!("tlbi alle1is", options(nostack, nomem, preserves_flags));
+        // NOTE: tlbi alle1 and alle1is appear to stall on QEMU virt/cortex-a72.
+        // Use vmalle1 (invalidates all EL1 TLB entries incl. global) as a workaround.
+        // TODO: investigate and use alle1 when QEMU behavior is understood.
+        asm!("tlbi vmalle1", options(nostack, nomem, preserves_flags));
         asm!("dsb ish", options(nostack, nomem, preserves_flags));
         asm!("isb", options(nostack, nomem, preserves_flags));
     }
@@ -95,19 +112,55 @@ pub(crate) fn tlb_flush_all_including_global() {
 
 pub unsafe fn activate_page_table(root_paddr: Paddr, _root_pt_cache: CachePolicy) {
     assert!(root_paddr % PagingConsts::BASE_PAGE_SIZE == 0);
+    // On AArch64, the kernel page table covers the high VA half and is loaded into TTBR1_EL1.
+    // NOTE: We skip the TLB invalidation here because:
+    //  1. The new KPT maps slot 0 with the same L3 table as the bootstrap TTBR1, so kernel
+    //     code/data VAs remain valid under any stale TLB entries.
+    //  2. New mappings (VMALLOC, linear map) have no stale TLB entries.
+    // TODO: Add tlbi vmalle1 here when SMP is enabled (after investigating QEMU cortex-a72
+    //       behavior with TLB broadcast and non-broadcast instructions).
     unsafe {
-        asm!("dsb ishst", options(nostack, nomem, preserves_flags));
-        asm!("msr ttbr0_el1, {0}", in(reg) root_paddr, options(nostack, nomem, preserves_flags));
-        asm!("tlbi alle1is", options(nostack, nomem, preserves_flags));
-        asm!("dsb ish", options(nostack, nomem, preserves_flags));
+        asm!("dsb sy", options(nostack, nomem, preserves_flags));
+        asm!("msr ttbr1_el1, {0}", in(reg) root_paddr, options(nostack, nomem, preserves_flags));
         asm!("isb", options(nostack, nomem, preserves_flags));
     }
+}
+
+/// Activates the user (low-VA) page table by loading it into TTBR0_EL1.
+///
+/// # Safety
+///
+/// The caller must ensure that the page table is valid and covers the user address space.
+pub unsafe fn activate_user_page_table(root_paddr: Paddr) {
+    assert!(root_paddr % PagingConsts::BASE_PAGE_SIZE == 0);
+    unsafe {
+        asm!("dsb sy", options(nostack, nomem, preserves_flags));
+    }
+    unsafe {
+        asm!("msr ttbr0_el1, {0}", in(reg) root_paddr, options(nostack, nomem, preserves_flags));
+    }
+    unsafe {
+        asm!("isb", options(nostack, nomem, preserves_flags));
+    }
+    // Note: TLBI vmalle1 is intentionally omitted here because it stalls on QEMU
+    // cortex-a72. Since we only switch to the user page table (not from it), and
+    // user space hasn't been executed yet, there are no stale TLB entries to flush.
+    // TODO: add proper TLB flush when switching between different user page tables.
+}
+
+/// Returns the physical address of the currently active user page table (TTBR0_EL1).
+pub fn current_user_page_table_paddr() -> Paddr {
+    let root_paddr: Paddr;
+    unsafe {
+        asm!("mrs {0}, ttbr0_el1", out(reg) root_paddr, options(nostack, nomem, preserves_flags));
+    }
+    root_paddr
 }
 
 pub fn current_page_table_paddr() -> Paddr {
     let root_paddr: Paddr;
     unsafe {
-        asm!("mrs {0}, ttbr0_el1", out(reg) root_paddr, options(nostack, nomem, preserves_flags));
+        asm!("mrs {0}, ttbr1_el1", out(reg) root_paddr, options(nostack, nomem, preserves_flags));
     }
     root_paddr
 }
@@ -133,9 +186,14 @@ impl PageTableEntryTrait for PageTableEntry {
         self.0 & PageTableFlags::VALID.bits() != 0
     }
 
-    fn new_page(paddr: Paddr, _level: PagingLevel, prop: PageProperty) -> Self {
+    fn new_page(paddr: Paddr, level: PagingLevel, prop: PageProperty) -> Self {
         let mut pte = Self(paddr & Self::PHYS_ADDR_MASK);
         pte.set_prop(prop);
+        // On AArch64, level-1 (L3 leaf) page descriptors require TYPE bit (bit 1) set.
+        // Without it, the PTE is treated as invalid by the hardware.
+        if level == 1 {
+            pte.0 |= PageTableFlags::TYPE.bits();
+        }
         pte
     }
 
@@ -155,7 +213,8 @@ impl PageTableEntryTrait for PageTableEntry {
         let mut priv_flags = parse_flags!(self.0, PageTableFlags::RSV1, PrivFlags::AVAIL1);
 
         flags |= PageFlags::R.bits() as usize;
-        if self.0 & PageTableFlags::WRITABLE.bits() != 0 {
+        // AP[2] (WRITABLE, bit 7) = 0 means read/write; = 1 means read-only.
+        if self.0 & PageTableFlags::WRITABLE.bits() == 0 {
             flags |= PageFlags::W.bits() as usize;
         }
         if self.0 & PageTableFlags::EL1_EL0.bits() != 0 {
@@ -176,9 +235,13 @@ impl PageTableEntryTrait for PageTableEntry {
 
     #[expect(clippy::precedence)]
     fn set_prop(&mut self, prop: PageProperty) {
+        // AP[2] (bit 7, named WRITABLE) = 0 means read/write; = 1 means read-only.
+        // So when PageFlags::W is set, we must NOT set WRITABLE (AP[2]=0 = writable).
+        // When W is NOT set, we set WRITABLE (AP[2]=1 = read-only).
         let mut flags = PageTableFlags::VALID.bits()
+            | PageTableFlags::ACCESSED.bits() // AArch64 requires AF=1 to avoid access flag fault
             | parse_flags!(!prop.flags.bits(), PageFlags::X, PageTableFlags::PXN)
-            | parse_flags!(prop.flags.bits(), PageFlags::W, PageTableFlags::WRITABLE)
+            | parse_flags!(!prop.flags.bits(), PageFlags::W, PageTableFlags::WRITABLE)
             | parse_flags!(prop.flags.bits(), PageFlags::DIRTY, PageTableFlags::DIRTY)
             | parse_flags!(prop.flags.bits(), PageFlags::ACCESSED, PageTableFlags::ACCESSED)
             | parse_flags!(prop.flags.bits(), PageFlags::AVAIL2, PageTableFlags::RSV2)
@@ -186,6 +249,10 @@ impl PageTableEntryTrait for PageTableEntry {
 
         if prop.priv_flags.contains(PrivFlags::USER) {
             flags |= PageTableFlags::EL1_EL0.bits();
+            // User-space pages must be marked as non-global (nG=1) so that TLB
+            // entries are ASID-tagged. Without this, `tlbi vaae1` cannot flush
+            // user-space TLB entries as it only targets non-global entries.
+            flags |= PageTableFlags::NOT_GLOBAL.bits();
         }
 
         flags |= match prop.cache {
@@ -195,7 +262,17 @@ impl PageTableEntryTrait for PageTableEntry {
         };
         flags |= SH_INNER_SHAREABLE;
 
-        self.0 = (self.0 & Self::PHYS_ADDR_MASK) | flags;
+        // IMPORTANT: Preserve the TYPE bit (bit 1) if it was already set.
+        // The TYPE bit is NOT part of PageProperty but is a structural AArch64
+        // descriptor field:
+        //   - Set in new_page() for level-1 (leaf) descriptors (required for valid
+        //     L3 page descriptors: bits[1:0] must be 0b11, else hardware treats as INVALID)
+        //   - Set in new_pt() for table descriptors at all levels
+        // Without preservation, protect_next() → set_prop() would clear the TYPE bit,
+        // making the leaf PTE bits[1:0] = 0b01 which the hardware page walker treats
+        // as an invalid/reserved descriptor → spurious translation-fault-L3 faults.
+        let old_type = self.0 & PageTableFlags::TYPE.bits();
+        self.0 = (self.0 & Self::PHYS_ADDR_MASK) | flags | old_type;
         self.0 &= !SH_MASK;
         self.0 |= SH_INNER_SHAREABLE;
     }

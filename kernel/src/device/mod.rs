@@ -30,7 +30,6 @@ pub fn init_in_first_process(ctx: &Context) -> Result<()> {
 
     let null = Arc::new(null::Null);
     add_node(null, "null", &fs_resolver)?;
-
     let zero = Arc::new(zero::Zero);
     add_node(zero, "zero", &fs_resolver)?;
 
@@ -39,8 +38,10 @@ pub fn init_in_first_process(ctx: &Context) -> Result<()> {
     let tty = Arc::new(tty::TtyDevice);
     add_node(tty, "tty", &fs_resolver)?;
 
-    let console = tty::system_console().clone();
-    add_node(console, "console", &fs_resolver)?;
+    if let Some(console) = tty::system_console_opt() {
+        add_node(console.clone(), "console", &fs_resolver)?;
+    } else {
+    }
 
     for (index, tty) in tty::iter_n_tty().enumerate() {
         add_node(tty.clone(), &format!("tty{}", index), &fs_resolver)?;
