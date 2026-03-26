@@ -22,6 +22,16 @@ Changed `serial.rs` to use the kernel linear map VA instead of the raw PA:
 
 This fix is essential for real hardware (e.g., Raspberry Pi 3B) where physical addresses won't work after kernel starts.
 
+## Notes on P1.3 (Panic Backtrace)
+
+The panic handler is implemented in `ostd/src/panic.rs` and `kernel/src/thread/oops.rs`. On AArch64:
+- Basic panic handler works (prints panic message, file, line)
+- Stack trace is disabled: `_Unwind_Backtrace` may hang on AArch64
+- The `print_stack_trace()` function is stubbed out for AArch64
+- This is a known limitation documented in the code
+
+To enable full panic backtrace on AArch64, the unwinding library would need to be tested and verified safe.
+
 ## Build Environment
 
 - Requires: `OSDK_LOCAL_DEV=1`
@@ -53,7 +63,7 @@ AMVRB[a2-boot] ...
 ### Phase 1 — OSTD Single-Core Bring-Up
 - [x] P1.1 Boot banner appears (QEMU) - **NOW WORKING**
 - [x] P1.2 Timer IRQ liveness - **WORKING** (85 ticks in 90s, continuous without panic)
-- [ ] P1.3 Panic backtrace sanity
+- [P1.3] Panic backtrace sanity - **PARTIAL**: Basic panic handler works, but stack trace is disabled on AArch64 (`_Unwind_Backtrace` may hang)
 
 ### Phase 2 — EL0/EL1 Transition + Trap/Syscall
 - [x] P2.1 User transition round-trip - **NOW WORKING** (context switch confirmed)
@@ -78,6 +88,6 @@ AMVRB[a2-boot] ...
 
 ## Next Steps
 1. ~~Test timer interrupts (P1.2)~~ - DONE
-2. Add panic backtrace test (P1.3)
+2. ~~Panic backtrace (P1.3)~~ - PARTIAL: Stack trace disabled on AArch64 (see notes)
 3. Verify poweroff/exit works cleanly
 4. Test page fault handling (P2.3)
