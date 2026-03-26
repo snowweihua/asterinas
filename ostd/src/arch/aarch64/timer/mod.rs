@@ -57,6 +57,7 @@ pub(super) unsafe fn init() {
         TIMEBASE_FREQ.load(Ordering::Relaxed) / TIMER_FREQ,
         Ordering::Relaxed,
     );
+
     TIMER_IRQ.call_once(|| {
         let mut timer_irq = IrqLine::alloc_specific(AARCH64_VIRT_TIMER_PPI_IRQ).unwrap();
         TIMER_IRQ_NUM.store(timer_irq.num(), Ordering::Relaxed);

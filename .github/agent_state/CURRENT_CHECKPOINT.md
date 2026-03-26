@@ -52,7 +52,7 @@ AMVRB[a2-boot] ...
 
 ### Phase 1 — OSTD Single-Core Bring-Up
 - [x] P1.1 Boot banner appears (QEMU) - **NOW WORKING**
-- [ ] P1.2 Timer IRQ liveness
+- [x] P1.2 Timer IRQ liveness - **WORKING** (85 ticks in 90s, continuous without panic)
 - [ ] P1.3 Panic backtrace sanity
 
 ### Phase 2 — EL0/EL1 Transition + Trap/Syscall
@@ -77,7 +77,7 @@ AMVRB[a2-boot] ...
 - `kernel/src/device/tty/n_tty.rs` - Clean implementation
 
 ## Next Steps
-1. Test timer interrupts (P1.2)
+1. ~~Test timer interrupts (P1.2)~~ - DONE
 2. Add panic backtrace test (P1.3)
 3. Verify poweroff/exit works cleanly
 4. Test page fault handling (P2.3)
