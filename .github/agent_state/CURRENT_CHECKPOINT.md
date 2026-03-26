@@ -35,7 +35,13 @@ AMVRB[a2-boot] ...
 [kernel] unpacking the initramfs.cpio.gz to rootfs ...
 [kernel] rootfs is ready
 [ASCII art banner]
-~ #                              <-- USER SPACE SHELL WORKING
+[kernel] about to spawn init process
+[init] spawn_init_process: creating process
+...
+[init] spawn_init_process: running process
+<>123ABCD![]tf111X~ #       <-- USER SPACE SHELL WORKING
+[kernel] init process spawned, waiting...
+[kernel] waiting for init (count=1)
 ```
 
 ## Phase Status (from plan-aarch64Support.prompt.md)
