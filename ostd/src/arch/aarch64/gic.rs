@@ -62,7 +62,8 @@ pub(crate) fn init_interrupt(irq_num: u8) {
 pub(crate) fn acknowledge_interrupt() -> Option<usize> {
     let gic = GIC.get().expect("GICv2 is not initialized");
     let mut gic = gic.lock();
-    gic.get_and_acknowledge_interrupt().and_then(intid_to_irq_num)
+    gic.get_and_acknowledge_interrupt()
+        .and_then(intid_to_irq_num)
 }
 
 pub(crate) fn end_interrupt(irq_num: usize) {

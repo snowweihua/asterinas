@@ -42,12 +42,16 @@ pub(super) fn switch_to_task(next_task: Arc<Task>) {
     // SAFETY: RCU read-side critical sections disables preemption. By the time
     // we reach this point, we have already checked that preemption is enabled.
     #[cfg(target_arch = "aarch64")]
-    unsafe { crate::arch::uart_probe(b'<') };
+    unsafe {
+        crate::arch::uart_probe(b'<')
+    };
     unsafe {
         crate::sync::finish_grace_period();
     }
     #[cfg(target_arch = "aarch64")]
-    unsafe { crate::arch::uart_probe(b'>') };
+    unsafe {
+        crate::arch::uart_probe(b'>')
+    };
 
     let irq_guard = crate::irq::disable_local();
 
@@ -58,7 +62,9 @@ pub(super) fn switch_to_task(next_task: Arc<Task>) {
     let next_task_ctx_ptr = next_task.ctx().get().cast_const();
 
     #[cfg(target_arch = "aarch64")]
-    unsafe { crate::arch::uart_probe(b'1') };
+    unsafe {
+        crate::arch::uart_probe(b'1')
+    };
 
     let current_task_ptr = CURRENT_TASK_PTR.load();
     CURRENT_TASK_PTR.store(Arc::into_raw(next_task));
@@ -66,7 +72,9 @@ pub(super) fn switch_to_task(next_task: Arc<Task>) {
     PREVIOUS_TASK_PTR.store(current_task_ptr);
 
     #[cfg(target_arch = "aarch64")]
-    unsafe { crate::arch::uart_probe(b'2') };
+    unsafe {
+        crate::arch::uart_probe(b'2')
+    };
 
     // We must disable IRQs when switching, see `after_switching_to`.
     core::mem::forget(irq_guard);
@@ -89,7 +97,9 @@ pub(super) fn switch_to_task(next_task: Arc<Task>) {
     };
 
     #[cfg(target_arch = "aarch64")]
-    unsafe { crate::arch::uart_probe(b'3') };
+    unsafe {
+        crate::arch::uart_probe(b'3')
+    };
 
     // SAFETY:
     // 1. We have exclusive access to both the current context and the next context (see above).
@@ -114,13 +124,9 @@ fn before_switching_to(next_task: &Task, irq_guard: &DisabledLocalIrqGuard) {
     let mut spin_count = 0u32;
     // Ensure that we are not switching to a task that is already running.
     // WORKAROUND: QEMU 6.2 AArch64 compare_exchange fails spuriously. Use swap instead.
-    while next_task
-        .switched_to_cpu
-        .swap(true, Ordering::AcqRel)
-    {
+    while next_task.switched_to_cpu.swap(true, Ordering::AcqRel) {
         spin_count += 1;
-        if spin_count == 1 {
-        }
+        if spin_count == 1 {}
         log::warn!("Switching to a task already running in the foreground");
         core::hint::spin_loop();
     }

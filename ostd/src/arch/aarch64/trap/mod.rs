@@ -5,12 +5,11 @@
 #[expect(clippy::module_inception)]
 mod trap;
 
-
 use spin::Once;
 pub(super) use trap::RawUserContext;
 pub use trap::TrapFrame;
 
-use super::{cpu::context::{CpuException, CpuExceptionInfo}};
+use super::cpu::context::{CpuException, CpuExceptionInfo};
 use crate::{cpu::PrivilegeLevel, irq::call_irq_callback_functions};
 
 /// Initializes interrupt handling on AArch64.
@@ -27,9 +26,15 @@ extern "C" fn sync_exception_current(f: &mut TrapFrame) {
     // TODO: handle kernel-mode page faults.
     crate::early_println!(
         "[sec] sync_exception_current: ESR={:#x} ELR={:#x} SPSR={:#x} LR={:#x}",
-        f.esr_el1, f.elr_el1, f.spsr_el1, f.lr
+        f.esr_el1,
+        f.elr_el1,
+        f.spsr_el1,
+        f.lr
     );
-    panic!("Kernel synchronous exception! ESR={:#x} ELR={:#x}", f.esr_el1, f.elr_el1);
+    panic!(
+        "Kernel synchronous exception! ESR={:#x} ELR={:#x}",
+        f.esr_el1, f.elr_el1
+    );
 }
 
 /// Handle IRQ from current EL.
@@ -59,7 +64,10 @@ extern "C" fn sync_lower(f: &mut TrapFrame) {
     // User-mode exceptions are handled by UserContextApiInternal::execute().
     // This handler should never be reached during normal operation because
     // run_user() returns via eret and the kernel re-examines the ESR.
-    panic!("Unexpected sync_lower: esr={:#x} elr={:#x}", f.esr_el1, f.elr_el1);
+    panic!(
+        "Unexpected sync_lower: esr={:#x} elr={:#x}",
+        f.esr_el1, f.elr_el1
+    );
 }
 
 /// Handle IRQ from lower EL.

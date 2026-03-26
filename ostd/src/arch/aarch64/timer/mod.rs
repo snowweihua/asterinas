@@ -7,7 +7,6 @@ use core::{
     sync::atomic::{AtomicU64, AtomicU8, Ordering},
 };
 
-
 use spin::Once;
 
 use crate::{
@@ -67,7 +66,6 @@ pub(super) unsafe fn init() {
     });
 
     set_next_timer();
-
 }
 
 fn timer_callback(trapframe: &TrapFrame) {

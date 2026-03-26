@@ -27,7 +27,8 @@ global_asm!(include_str!("boot.S"));
 //   x0 = pointer to first byte
 //   x1 = byte count
 //   Clobbers x2-x5; preserves everything else (including lr via ret).
-global_asm!(r#"
+global_asm!(
+    r#"
     .text
     .align 2
     .globl pl011_puts_asm
@@ -44,8 +45,8 @@ pl011_puts_asm:
     bne     1b
 2:
     ret
-"#);
-
+"#
+);
 
 /// The Flattened Device Tree of the platform.
 pub static DEVICE_TREE: Once<Fdt> = Once::new();
@@ -82,19 +83,53 @@ fn parse_initramfs() -> Option<&'static [u8]> {
     let length = end - start;
     // Debug: print first 4 bytes at initramfs address
     unsafe {
-        fn nibble(n: u8) -> u8 { if n < 10 { b'0' + n } else { b'a' + n - 10 } }
+        fn nibble(n: u8) -> u8 {
+            if n < 10 {
+                b'0' + n
+            } else {
+                b'a' + n - 10
+            }
+        }
         let ptr = base_va as *const u8;
         let b0 = *ptr;
         let b1 = *ptr.add(1);
         let b2 = *ptr.add(2);
         let b3 = *ptr.add(3);
         let msg = [
-            b'[', b'a', b'2', b'-', b'b', b'o', b'o', b't', b']', b' ',
-            b'i', b'n', b'i', b't', b'r', b'd', b'[', b'0', b'.', b'.', b'3', b']', b'=',
-            nibble(b0 >> 4), nibble(b0 & 0xf), b' ',
-            nibble(b1 >> 4), nibble(b1 & 0xf), b' ',
-            nibble(b2 >> 4), nibble(b2 & 0xf), b' ',
-            nibble(b3 >> 4), nibble(b3 & 0xf),
+            b'[',
+            b'a',
+            b'2',
+            b'-',
+            b'b',
+            b'o',
+            b'o',
+            b't',
+            b']',
+            b' ',
+            b'i',
+            b'n',
+            b'i',
+            b't',
+            b'r',
+            b'd',
+            b'[',
+            b'0',
+            b'.',
+            b'.',
+            b'3',
+            b']',
+            b'=',
+            nibble(b0 >> 4),
+            nibble(b0 & 0xf),
+            b' ',
+            nibble(b1 >> 4),
+            nibble(b1 & 0xf),
+            b' ',
+            nibble(b2 >> 4),
+            nibble(b2 & 0xf),
+            b' ',
+            nibble(b3 >> 4),
+            nibble(b3 & 0xf),
             b'\n',
         ];
         pl011_puts(&msg);
@@ -164,8 +199,8 @@ fn parse_memory_regions() -> MemoryRegionArray {
 
     if let Some((dtb_base, dtb_size)) = DEVICE_TREE_REGION.get().copied() {
         let aligned_base = dtb_base & !(crate::mm::PAGE_SIZE - 1);
-        let aligned_end = (dtb_base + dtb_size + crate::mm::PAGE_SIZE - 1)
-            & !(crate::mm::PAGE_SIZE - 1);
+        let aligned_end =
+            (dtb_base + dtb_size + crate::mm::PAGE_SIZE - 1) & !(crate::mm::PAGE_SIZE - 1);
         regions
             .push(MemoryRegion::new(
                 aligned_base,

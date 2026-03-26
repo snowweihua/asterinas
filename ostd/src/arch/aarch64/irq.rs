@@ -57,20 +57,14 @@ pub(crate) fn enable_local_and_halt() {
     // `0b0011` corresponds to clearing the I (IRQ) and F (FIQ) bits.
     // The `nomem` option tells the compiler this instruction has no memory side effects.
     unsafe {
-        asm!(
-            "msr DAIFClr, #0b0011",
-            options(nomem, nostack)
-        );
+        asm!("msr DAIFClr, #0b0011", options(nomem, nostack));
     }
 
     // Enter a low-power, idle state and wait for an interrupt.
     // The `wfi` instruction pauses execution until an event occurs (e.g., an interrupt).
     // The `nomem` and `nostack` options are also applicable here.
     unsafe {
-        asm!(
-            "wfi",
-            options(nomem, nostack)
-        );
+        asm!("wfi", options(nomem, nostack));
     }
 }
 

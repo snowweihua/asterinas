@@ -272,8 +272,7 @@ impl VmMapping {
             let mut cursor = vm_space.cursor_mut(
                 &preempt_guard,
                 &(page_aligned_addr..page_aligned_addr + PAGE_SIZE),
-            )?
-;
+            )?;
 
             let (va, item) = cursor.query().unwrap();
             let is_write = required_perms.contains(VmPerms::WRITE);

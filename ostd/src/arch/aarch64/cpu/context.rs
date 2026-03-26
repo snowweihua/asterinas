@@ -2,14 +2,12 @@
 
 //! CPU execution context control.
 
-use core::{fmt::Debug};
+use core::fmt::Debug;
 
-use aarch64_cpu::registers::{FAR_EL1, Readable, TPIDR_EL1, Writeable};
+use aarch64_cpu::registers::{Readable, Writeable, FAR_EL1, TPIDR_EL1};
 
 use crate::{
-    arch::{
-        trap::{RawUserContext, TrapFrame},        
-    },
+    arch::trap::{RawUserContext, TrapFrame},
     cpu::PrivilegeLevel,
     irq::call_irq_callback_functions,
     task::scheduler,
@@ -37,7 +35,7 @@ pub struct GeneralRegs {
     pub x5: usize,
     pub x6: usize,
     pub x7: usize,
-    pub x8: usize,  // TP
+    pub x8: usize, // TP
     pub x9: usize,
     pub x10: usize,
     pub x11: usize,
@@ -58,7 +56,7 @@ pub struct GeneralRegs {
     pub x26: usize,
     pub x27: usize,
     pub x28: usize,
-    pub x29: usize // FP
+    pub x29: usize, // FP
 }
 
 /// CPU exception information.
@@ -107,7 +105,6 @@ pub enum CpuException {
     Other(u8),
 }
 
-
 impl CpuException {
     pub(crate) fn from_esr(esr_el1: usize) -> Self {
         let ec = ((esr_el1 >> 26) & 0x3f) as usize;
@@ -150,7 +147,6 @@ impl CpuException {
             0x08 => Self::AsyncCurrentEL,
             0x1c => Self::AsyncLowerEL,
 
-       
             _ => Self::Other(trap_num as u8),
         };
 
@@ -159,9 +155,14 @@ impl CpuException {
 
     const fn type_(&self) -> CpuExceptionType {
         match self {
-            Self::Unknown | Self::PCAlignmentFault | Self::SPAlignmentFault => CpuExceptionType::FaultOrTrap,
+            Self::Unknown | Self::PCAlignmentFault | Self::SPAlignmentFault => {
+                CpuExceptionType::FaultOrTrap
+            }
             Self::AsyncCurrentEL | Self::AsyncLowerEL | Self::Svc64 => CpuExceptionType::Interrupt,
-            Self::TrappedMcrMrc | Self::TrappedLdcStc | Self::TrappedSysReg | Self::TrappedSimdFpSve => CpuExceptionType::Trap,
+            Self::TrappedMcrMrc
+            | Self::TrappedLdcStc
+            | Self::TrappedSysReg
+            | Self::TrappedSimdFpSve => CpuExceptionType::Trap,
             Self::InstructionAbortLowerEL | Self::DataAbortLowerEL => CpuExceptionType::Fault,
             Self::InstructionAbortCurrentEL | Self::DataAbortCurrentEL => CpuExceptionType::Abort,
 
@@ -210,9 +211,7 @@ impl UserContext {
     }
 
     /// Activates the thread-local storage pointer for the current task.
-    pub fn activate_tls_pointer(&self) {
-
-    }
+    pub fn activate_tls_pointer(&self) {}
 }
 
 impl UserContextApiInternal for UserContext {
@@ -220,12 +219,11 @@ impl UserContextApiInternal for UserContext {
     where
         F: FnMut() -> bool,
     {
-
         // Return when it is syscall or cpu exception type is Fault or Trap.
         let ret = loop {
             scheduler::might_preempt();
             self.user_context.run();
-            
+
             let cpu_exception = CpuException::from_esr(self.user_context.esr_el1);
             match cpu_exception {
                 exception if exception.type_().is_fault_or_trap() => {
@@ -345,8 +343,6 @@ impl CpuExceptionType {
     }
 }
 
-
-
 impl UserContextApi for UserContext {
     fn trap_number(&self) -> usize {
         (self.user_context.esr_el1 >> 26) & 0x3f
@@ -425,7 +421,6 @@ cpu_context_impl_getter_setter!(
     [x28, set_x28],
     [x29, set_x29]
 );
-
 
 /// The FPU context of user task.
 ///

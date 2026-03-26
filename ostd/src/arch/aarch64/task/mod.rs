@@ -37,8 +37,8 @@ struct CalleeRegs {
     x26: u64,
     x27: u64,
     x28: u64,
-    x29: u64,  // fp
-    x30: u64,  // lr
+    x29: u64, // fp
+    x30: u64, // lr
     tpidr_el0: u64,
     sp: u64,
 }

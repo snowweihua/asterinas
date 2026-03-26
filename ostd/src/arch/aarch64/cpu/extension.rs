@@ -51,4 +51,3 @@ define_isa_extensions! {
     SVE,        "sve",        "Scalable Vector Extension";
     ASIMD,    "asimd",     "Advanced SIMD";
 }
-

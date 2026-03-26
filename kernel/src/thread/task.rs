@@ -76,7 +76,6 @@ pub fn create_new_user_task(
         }
 
         while !current_thread.is_exited() {
-            // Execute the user code
             ctx.thread_local.fpu().activate();
             let return_reason = user_mode.execute(has_kernel_event_fn);
             ctx.thread_local.fpu().deactivate();
@@ -118,7 +117,9 @@ pub fn create_new_user_task(
         }
     };
 
-    let user_task_func = move || user_task_entry(*user_ctx);
+    let user_task_func = move || {
+        user_task_entry(*user_ctx);
+    };
 
     TaskOptions::new(move || {
         // TODO: If a kernel "oops" is caught, we should kill the entire

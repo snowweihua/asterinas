@@ -86,7 +86,6 @@ mod vm;
 #[ostd::main]
 #[controlled]
 fn main() {
-
     component::init_all(InitStage::Bootstrap, component::parse_metadata!()).unwrap();
 
     init();
@@ -101,7 +100,6 @@ fn main() {
         .cpu_affinity(CpuId::bsp().into())
         .sched_policy(SchedPolicy::Idle)
         .spawn();
-
 }
 
 fn init() {
@@ -172,6 +170,7 @@ fn first_kthread() {
     print_banner();
 
     let karg: KCmdlineArg = boot_info().kernel_cmdline.as_str().into();
+    println!("[kernel] about to spawn init process");
 
     let initproc = spawn_init_process(
         karg.get_initproc_path().unwrap(),
@@ -179,12 +178,19 @@ fn first_kthread() {
         karg.get_initproc_envp().to_vec(),
     )
     .expect("Run init process failed.");
+    println!("[kernel] init process spawned, waiting...");
     // ...existing code...
 
     // Wait till initproc become zombie.
+    let mut count = 0;
     while !initproc.status().is_zombie() {
+        count += 1;
+        if count == 1 || count % 1000000 == 0 {
+            println!("[kernel] waiting for init (count={})", count);
+        }
         ostd::task::halt_cpu();
     }
+    println!("[kernel] init process became zombie!");
 
     // TODO: exit via qemu isa debug device should not be the only way.
     let exit_code = if initproc.status().exit_code() == 0 {

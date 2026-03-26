@@ -22,9 +22,9 @@ use aarch64_cpu::registers::*;
 
 /// Write a single byte to the PL011 UART via linear map (for low-level probing).
 /// Safe to call with IRQs disabled. Does NOT use any locks.
+/// The address is the known, pre-validated PL011 UART MMIO address.
 #[inline(always)]
-pub(crate) unsafe fn uart_probe(c: u8) {
-    // PL011 UART base PA: 0x0900_0000 → linear-map VA: 0xffff_8000_0900_0000
+pub fn uart_probe(c: u8) {
     let uart_va: usize = 0xffff_8000_0900_0000;
     unsafe {
         core::arch::asm!(
@@ -35,7 +35,6 @@ pub(crate) unsafe fn uart_probe(c: u8) {
         );
     }
 }
-
 
 #[cfg(feature = "cvm_guest")]
 pub(crate) fn init_cvm_guest() {

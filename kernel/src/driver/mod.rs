@@ -19,10 +19,7 @@ pub fn init() {
     {
         // On AArch64 there is no framebuffer or virtio-console; register a minimal
         // PL011 UART console so that the TTY subsystem has at least one device.
-        aster_console::register_device(
-            "pl011-uart".to_string(),
-            Arc::new(Pl011Console),
-        );
+        aster_console::register_device("pl011-uart".to_string(), Arc::new(Pl011Console));
     }
 }
 

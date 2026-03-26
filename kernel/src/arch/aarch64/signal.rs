@@ -27,11 +27,15 @@ impl From<&CpuExceptionInfo> for FaultSignal {
                 // bit 6 in ISS is WnR for data aborts; DFSC[5:0] = fault status code
                 let fsc = trap_info.error_code & 0x3f;
                 let is_perm_fault = fsc >= 0x0c && fsc <= 0x0f; // 0x0c..0x0f = permission fault LSB
-                let code = if is_perm_fault { SEGV_ACCERR } else { SEGV_MAPERR };
+                let code = if is_perm_fault {
+                    SEGV_ACCERR
+                } else {
+                    SEGV_MAPERR
+                };
                 (SIGSEGV, code)
             }
             CpuException::SPAlignmentFault | CpuException::PCAlignmentFault => (SIGBUS, 1), // BUS_ADRALN
-            CpuException::TrappedSimdFpSve => (SIGILL, 1),                                  // ILL_ILLOPC
+            CpuException::TrappedSimdFpSve => (SIGILL, 1), // ILL_ILLOPC
             _ => (SIGSEGV, SEGV_MAPERR),
         };
         FaultSignal::new(num, code, addr)
