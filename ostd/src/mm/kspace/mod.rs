@@ -208,8 +208,7 @@ pub fn init_kernel_page_table(meta_pages: Segment<MetaPageMeta>) {
 
     // Map the metadata pages.
     {
-        let start_va =
-            mapping::frame_to_meta::<PagingConsts>(crate::arch::mm::frame_paddr_base());
+        let start_va = mapping::frame_to_meta::<PagingConsts>(crate::arch::mm::frame_paddr_base());
         let from = start_va..start_va + meta_pages.size();
         let prop = PageProperty {
             flags: PageFlags::RW,

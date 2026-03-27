@@ -436,8 +436,8 @@ impl<'a> VmReader<'a, Infallible> {
     /// [valid]: crate::mm::io#safety
     pub unsafe fn from_kernel_space(ptr: *const u8, len: usize) -> Self {
         #[cfg(target_arch = "aarch64")]
-        let allow_bootstrap_identity = crate::IN_BOOTSTRAP_CONTEXT
-            .load(core::sync::atomic::Ordering::Relaxed);
+        let allow_bootstrap_identity =
+            crate::IN_BOOTSTRAP_CONTEXT.load(core::sync::atomic::Ordering::Relaxed);
         #[cfg(not(target_arch = "aarch64"))]
         let allow_bootstrap_identity = false;
 
@@ -446,7 +446,9 @@ impl<'a> VmReader<'a, Infallible> {
         // So when `len` is zero, we should not and need not to check `ptr`.
         debug_assert!(len == 0 || allow_bootstrap_identity || KERNEL_BASE_VADDR <= ptr.addr());
         debug_assert!(
-            len == 0 || allow_bootstrap_identity || ptr.addr().checked_add(len).unwrap() <= KERNEL_END_VADDR
+            len == 0
+                || allow_bootstrap_identity
+                || ptr.addr().checked_add(len).unwrap() <= KERNEL_END_VADDR
         );
 
         Self {

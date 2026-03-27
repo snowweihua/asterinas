@@ -327,8 +327,8 @@ pub(in crate::mm) unsafe fn inc_frame_ref_count(paddr: Paddr) {
     debug_assert!(paddr % PAGE_SIZE == 0);
     debug_assert!(paddr < max_paddr());
 
-    let slot = meta::get_slot(paddr)
-        .expect("frame address should always resolve to a metadata slot");
+    let slot =
+        meta::get_slot(paddr).expect("frame address should always resolve to a metadata slot");
 
     // SAFETY: We have already held a reference to the frame.
     unsafe { slot.inc_ref_count() };

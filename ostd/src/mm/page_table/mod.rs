@@ -288,9 +288,7 @@ impl PageTable<UserPtConfig> {
         // mappings are shared.
         #[cfg(target_arch = "aarch64")]
         {
-            use crate::arch::mm::{
-                activate_user_page_table, current_user_page_table_paddr,
-            };
+            use crate::arch::mm::{activate_user_page_table, current_user_page_table_paddr};
             let root_pa = self.root_paddr();
             let cur_ttbr0 = current_user_page_table_paddr();
             if cur_ttbr0 != root_pa {

@@ -100,7 +100,6 @@ impl<'a, G: PinCurrentCpu> TlbFlusher<'a, G> {
             need_flush_on_self = true;
         }
 
-
         for cpu in target_cpus.iter() {
             {
                 let mut flush_ops = FLUSH_OPS.get_on_cpu(cpu).lock();

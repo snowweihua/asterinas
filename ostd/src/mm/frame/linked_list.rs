@@ -16,10 +16,7 @@ use super::{
     unique::UniqueFrame,
     MetaSlot,
 };
-use crate::{
-    mm::Paddr,
-    panic::abort,
-};
+use crate::{mm::Paddr, panic::abort};
 
 /// A linked list of frames.
 ///

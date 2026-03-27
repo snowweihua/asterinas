@@ -55,7 +55,10 @@ use crate::{
     boot::memory_region::MemoryRegionType,
     const_assert,
     mm::{
-        frame::{allocator::{self, EarlyAllocatedFrameMeta}, Frame},
+        frame::{
+            allocator::{self, EarlyAllocatedFrameMeta},
+            Frame,
+        },
         paddr_to_vaddr, page_size,
         page_table::boot_pt,
         CachePolicy, Infallible, Paddr, PageFlags, PageProperty, PrivilegedPageFlags, Segment,
@@ -351,9 +354,7 @@ impl MetaSlot {
         // MetaSlot pointers from bootstrap time are physical addresses (low addresses),
         // while post-bootstrap VAs are in FRAME_METADATA_RANGE (high kernel addresses).
         // Use the VA range check to decide which calculation to use.
-        if frame_paddr_base == 0
-            || meta_va >= crate::mm::kspace::FRAME_METADATA_RANGE.start
-        {
+        if frame_paddr_base == 0 || meta_va >= crate::mm::kspace::FRAME_METADATA_RANGE.start {
             return mapping::meta_to_frame::<PagingConsts>(meta_va);
         }
 

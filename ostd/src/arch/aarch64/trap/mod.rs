@@ -5,12 +5,13 @@
 #[expect(clippy::module_inception)]
 mod trap;
 
+use aarch64_cpu::registers::{Readable, ESR_EL1, FAR_EL1};
 use spin::Once;
 pub(super) use trap::RawUserContext;
 pub use trap::TrapFrame;
 
 use super::cpu::context::{CpuException, CpuExceptionInfo};
-use crate::{cpu::PrivilegeLevel, irq::call_irq_callback_functions};
+use crate::{cpu::PrivilegeLevel, irq::call_irq_callback_functions, mm::MAX_USERSPACE_VADDR};
 
 /// Initializes interrupt handling on AArch64.
 pub(crate) unsafe fn init() {
@@ -22,19 +23,54 @@ pub(crate) unsafe fn init() {
 /// Handle synchronous exceptions from current EL (kernel exceptions).
 #[unsafe(no_mangle)]
 extern "C" fn sync_exception_current(f: &mut TrapFrame) {
-    // Kernel-mode exceptions (e.g. data abort) - for now panic.
-    // TODO: handle kernel-mode page faults.
-    crate::early_println!(
-        "[sec] sync_exception_current: ESR={:#x} ELR={:#x} SPSR={:#x} LR={:#x}",
-        f.esr_el1,
-        f.elr_el1,
-        f.spsr_el1,
-        f.lr
-    );
-    panic!(
-        "Kernel synchronous exception! ESR={:#x} ELR={:#x}",
-        f.esr_el1, f.elr_el1
-    );
+    let esr = ESR_EL1.get() as usize;
+    let ec = (esr >> 26) & 0x3f;
+
+    match ec {
+        0x24 | 0x25 => {
+            let far = FAR_EL1.get() as usize;
+            if far < MAX_USERSPACE_VADDR {
+                let cpu_exception = CpuExceptionInfo {
+                    code: if ec == 0x24 {
+                        CpuException::DataAbortLowerEL
+                    } else {
+                        CpuException::DataAbortCurrentEL
+                    },
+                    page_fault_addr: far,
+                    error_code: esr,
+                };
+                if let Some(handler) = USER_PAGE_FAULT_HANDLER.get() {
+                    if handler(&cpu_exception).is_ok() {
+                        return;
+                    }
+                }
+            }
+            crate::early_println!(
+                "[sec] sync_exception_current: ESR={:#x} FAR={:#x} ELR={:#x} SPSR={:#x}",
+                esr,
+                far,
+                f.elr_el1,
+                f.spsr_el1
+            );
+            panic!(
+                "Kernel synchronous exception! ESR={:#x} FAR={:#x} ELR={:#x}",
+                esr, far, f.elr_el1
+            );
+        }
+        _ => {
+            crate::early_println!(
+                "[sec] sync_exception_current: ESR={:#x} ELR={:#x} SPSR={:#x} LR={:#x}",
+                esr,
+                f.elr_el1,
+                f.spsr_el1,
+                f.lr
+            );
+            panic!(
+                "Kernel synchronous exception! ESR={:#x} ELR={:#x}",
+                esr, f.elr_el1
+            );
+        }
+    }
 }
 
 /// Handle IRQ from current EL.
