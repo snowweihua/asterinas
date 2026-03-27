@@ -67,74 +67,12 @@ fn parse_bootloader_name() -> &'static str {
 }
 
 fn parse_kernel_commandline() -> &'static str {
-    let cmdline = DEVICE_TREE.get().unwrap().chosen().bootargs().unwrap_or("");
-    if cmdline.is_empty() {
-        unsafe { pl011_puts(b"[a2-boot] cmdline: (empty)\n") };
-    } else {
-        unsafe { pl011_puts(b"[a2-boot] cmdline: non-empty\n") };
-    }
-    cmdline
+    DEVICE_TREE.get().unwrap().chosen().bootargs().unwrap_or("")
 }
 
 fn parse_initramfs() -> Option<&'static [u8]> {
     let (start, end) = parse_initramfs_range()?;
-
-    let base_va = paddr_to_vaddr(start);
-    let length = end - start;
-    // Debug: print first 4 bytes at initramfs address
-    unsafe {
-        fn nibble(n: u8) -> u8 {
-            if n < 10 {
-                b'0' + n
-            } else {
-                b'a' + n - 10
-            }
-        }
-        let ptr = base_va as *const u8;
-        let b0 = *ptr;
-        let b1 = *ptr.add(1);
-        let b2 = *ptr.add(2);
-        let b3 = *ptr.add(3);
-        let msg = [
-            b'[',
-            b'a',
-            b'2',
-            b'-',
-            b'b',
-            b'o',
-            b'o',
-            b't',
-            b']',
-            b' ',
-            b'i',
-            b'n',
-            b'i',
-            b't',
-            b'r',
-            b'd',
-            b'[',
-            b'0',
-            b'.',
-            b'.',
-            b'3',
-            b']',
-            b'=',
-            nibble(b0 >> 4),
-            nibble(b0 & 0xf),
-            b' ',
-            nibble(b1 >> 4),
-            nibble(b1 & 0xf),
-            b' ',
-            nibble(b2 >> 4),
-            nibble(b2 & 0xf),
-            b' ',
-            nibble(b3 >> 4),
-            nibble(b3 & 0xf),
-            b'\n',
-        ];
-        pl011_puts(&msg);
-    }
-    Some(unsafe { core::slice::from_raw_parts(base_va as *const u8, length) })
+    Some(unsafe { core::slice::from_raw_parts(paddr_to_vaddr(start) as *const u8, end - start) })
 }
 
 fn parse_acpi_arg() -> BootloaderAcpiArg {
@@ -239,11 +177,8 @@ fn parse_memory_regions() -> MemoryRegionArray {
 
 fn parse_initramfs_range() -> Option<(usize, usize)> {
     let chosen = DEVICE_TREE.get().unwrap().find_node("/chosen").unwrap();
-    let initrd_start_prop = chosen.property("linux,initrd-start");
-    if initrd_start_prop.is_none() {
-        unsafe { pl011_puts(b"[a2-boot] no initrd-start in /chosen\n") };
-    }
-    let initrd_start = initrd_start_prop?.as_usize()?;
+    let initrd_start_prop = chosen.property("linux,initrd-start")?;
+    let initrd_start = initrd_start_prop.as_usize()?;
     let initrd_end = chosen.property("linux,initrd-end")?.as_usize()?;
     Some((initrd_start, initrd_end))
 }
@@ -295,18 +230,10 @@ fn discover_dtb_paddr(device_tree_paddr: usize) -> Option<usize> {
     let scan_end = QEMU_VIRT_RAM_BASE + QEMU_VIRT_RAM_SCAN_SIZE;
 
     if device_tree_paddr != 0 && is_valid_dtb_paddr(device_tree_paddr, scan_end) {
-        unsafe { pl011_puts(b"[a2-boot] using x0 dtb\n") };
         return Some(device_tree_paddr);
     }
 
-    if device_tree_paddr == 0 {
-        unsafe { pl011_puts(b"[a2-boot] x0=0, skipping\n") };
-    } else {
-        unsafe { pl011_puts(b"[a2-boot] x0 dtb invalid\n") };
-    }
-
     if is_valid_dtb_paddr(QEMU_LOADER_DTB_PADDR, scan_end) {
-        unsafe { pl011_puts(b"[a2-boot] using loader dtb\n") };
         return Some(QEMU_LOADER_DTB_PADDR);
     }
 
@@ -333,7 +260,6 @@ pub unsafe extern "C" fn aarch64_boot(device_tree_paddr: usize, _reserved: usize
     use crate::boot::{call_ostd_main, EarlyBootInfo, EARLY_INFO};
 
     let discovered_dtb_paddr = discover_dtb_paddr(device_tree_paddr).unwrap_or(0);
-    unsafe { pl011_puts(b"[a2-boot] dtb discovery done\n") };
     if discovered_dtb_paddr != 0 {
         let device_tree_ptr = discovered_dtb_paddr as *const u8;
         let device_tree_size = parse_fdt_total_size(device_tree_ptr);
@@ -341,11 +267,6 @@ pub unsafe extern "C" fn aarch64_boot(device_tree_paddr: usize, _reserved: usize
         DEVICE_TREE.call_once(|| fdt);
         DEVICE_TREE_REGION.call_once(|| (discovered_dtb_paddr, device_tree_size));
         let initramfs_info = parse_initramfs();
-        if initramfs_info.is_some() {
-            unsafe { pl011_puts(b"[a2-boot] initramfs found\n") };
-        } else {
-            unsafe { pl011_puts(b"[a2-boot] initramfs NOT found\n") };
-        }
         EARLY_INFO.call_once(|| EarlyBootInfo {
             bootloader_name: parse_bootloader_name(),
             kernel_cmdline: parse_kernel_commandline(),

@@ -41,17 +41,9 @@ pub(super) fn switch_to_task(next_task: Arc<Task>) {
 
     // SAFETY: RCU read-side critical sections disables preemption. By the time
     // we reach this point, we have already checked that preemption is enabled.
-    #[cfg(target_arch = "aarch64")]
-    unsafe {
-        crate::arch::uart_probe(b'<')
-    };
     unsafe {
         crate::sync::finish_grace_period();
     }
-    #[cfg(target_arch = "aarch64")]
-    unsafe {
-        crate::arch::uart_probe(b'>')
-    };
 
     let irq_guard = crate::irq::disable_local();
 
@@ -61,20 +53,10 @@ pub(super) fn switch_to_task(next_task: Arc<Task>) {
     // CPU, its context can be used exclusively.
     let next_task_ctx_ptr = next_task.ctx().get().cast_const();
 
-    #[cfg(target_arch = "aarch64")]
-    unsafe {
-        crate::arch::uart_probe(b'1')
-    };
-
     let current_task_ptr = CURRENT_TASK_PTR.load();
     CURRENT_TASK_PTR.store(Arc::into_raw(next_task));
     debug_assert!(PREVIOUS_TASK_PTR.load().is_null());
     PREVIOUS_TASK_PTR.store(current_task_ptr);
-
-    #[cfg(target_arch = "aarch64")]
-    unsafe {
-        crate::arch::uart_probe(b'2')
-    };
 
     // We must disable IRQs when switching, see `after_switching_to`.
     core::mem::forget(irq_guard);
@@ -94,11 +76,6 @@ pub(super) fn switch_to_task(next_task: Arc<Task>) {
         unsafe { first_context_switch(next_task_ctx_ptr) };
         // We've switched to the first task on the current CPU.
         unreachable!("`first_context_switch` should never return");
-    };
-
-    #[cfg(target_arch = "aarch64")]
-    unsafe {
-        crate::arch::uart_probe(b'3')
     };
 
     // SAFETY:

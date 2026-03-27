@@ -34,23 +34,14 @@ pub fn init_in_first_kthread(fs_resolver: &FsResolver) -> Result<()> {
     let initramfs_buf = boot_info().initramfs.expect("No initramfs found!");
 
     let reader = {
-        let mut initramfs_suffix = "";
         let reader = match &initramfs_buf[..4] {
-            // Gzip magic number: 0x1F 0x8B
             &[0x1F, 0x8B, _, _] => {
-                initramfs_suffix = ".gz";
                 let gzip_decoder = GZipDecoder::new(initramfs_buf)
                     .map_err(|_| Error::with_message(Errno::EINVAL, "invalid gzip buffer"))?;
                 BoxedReader::new(Box::new(gzip_decoder))
             }
             _ => BoxedReader::new(Box::new(Cursor::new(initramfs_buf))),
         };
-
-        println!(
-            "[kernel] unpacking the initramfs.cpio{} to rootfs ...",
-            initramfs_suffix
-        );
-
         reader
     };
     let mut decoder = CpioDecoder::new(reader);
@@ -109,7 +100,6 @@ pub fn init_in_first_kthread(fs_resolver: &FsResolver) -> Result<()> {
     let dev_path = fs_resolver.lookup(&FsPath::try_from("/dev")?)?;
     dev_path.mount(RamFs::new())?;
 
-    println!("[kernel] rootfs is ready");
     Ok(())
 }
 

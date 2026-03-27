@@ -27,37 +27,23 @@ context_switch: # (nxt: *const TaskContext, cur: *mut TaskContext)
     mrs     x19, tpidr_el0
     mov     x20, sp
     stp     x19, x20, [x1, #16*6]
-    /* saved cur regs - write 'A' */
-    uart_write_char #65
   # Fallthrough
 
 first_context_switch: # (nxt: *const TaskContext)
   # Restore nxt's registers
     ldp     x23, x24, [x0, #16*6]
     msr     tpidr_el0, x23
-    /* write 'B' before mov sp */
-    uart_write_char #66
     mov     sp, x24
-    /* write 'C' after mov sp */
-    uart_write_char #67
     ldp     x19, x20, [x0, #16*0]
     ldp     x21, x22, [x0, #16*1]
     ldp     x23, x24, [x0, #16*2]
     ldp     x25, x26, [x0, #16*3]
     ldp     x27, x28, [x0, #16*4]
     ldp     x29, x30, [x0, #16*5]
-    /* write 'D' right before ret */
-    uart_write_char #68
   ret
 
 kernel_task_entry_wrapper:
   .cfi_startproc
   .cfi_undefined lr /* mark return address as undefined to indicate end of call stack */
-  /* Raw UART probe: write '!' to PL011 linear-map VA 0xffff_8000_0900_0000 */
-  movz    x0, #0xffff, lsl #48
-  movk    x0, #0x8000, lsl #32
-  movk    x0, #0x0900, lsl #16
-  mov     w1, #33       /* '!' */
-  str     w1, [x0]
   bl kernel_task_entry
   .cfi_endproc

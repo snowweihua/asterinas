@@ -160,8 +160,6 @@ fn ap_init() {
 }
 
 fn first_kthread() {
-    println!("[kernel] Spawn init thread");
-
     // TODO: After introducing the mount namespace, use an initial mount namespace to create
     // the `FsResolver`, and the initial mount namespace should be passed to the first process.
     let fs_resolver = FsResolver::new();
@@ -170,27 +168,17 @@ fn first_kthread() {
     print_banner();
 
     let karg: KCmdlineArg = boot_info().kernel_cmdline.as_str().into();
-    println!("[kernel] about to spawn init process");
-
     let initproc = spawn_init_process(
         karg.get_initproc_path().unwrap(),
         karg.get_initproc_argv().to_vec(),
         karg.get_initproc_envp().to_vec(),
     )
     .expect("Run init process failed.");
-    println!("[kernel] init process spawned, waiting...");
-    // ...existing code...
 
     // Wait till initproc become zombie.
-    let mut count = 0;
     while !initproc.status().is_zombie() {
-        count += 1;
-        if count == 1 || count % 1000000 == 0 {
-            println!("[kernel] waiting for init (count={})", count);
-        }
         ostd::task::halt_cpu();
     }
-    println!("[kernel] init process became zombie!");
 
     // TODO: exit via qemu isa debug device should not be the only way.
     let exit_code = if initproc.status().exit_code() == 0 {

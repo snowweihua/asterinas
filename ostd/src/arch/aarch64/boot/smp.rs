@@ -17,7 +17,6 @@ pub(crate) fn count_processors() -> Option<u32> {
     if count == 0 {
         count = 1;
     }
-    crate::early_println!("[a2-smp] count_processors found {} CPUs", count);
     Some(count)
 }
 
@@ -26,8 +25,4 @@ pub(crate) unsafe fn bringup_all_aps(
     _pr_ptr: Paddr,
     _num_cpus: u32,
 ) {
-    crate::early_println!(
-        "[a2-smp] bringup_all_aps called for {} CPUs (not implemented)",
-        _num_cpus
-    );
 }

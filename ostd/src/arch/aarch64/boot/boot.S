@@ -122,7 +122,6 @@ _start_real:
      * Save to callee-saved registers before any debug macros clobber them. */
     mov     x19, x0
     mov     x20, x1
-    early_uart_putchar 'A'          /* debug: reached _start */
     mov     x0, x19
     mov     x1, x20
     /* Detect current exception level [3:2] of CurrentEL */
@@ -138,7 +137,6 @@ _start_real:
  * EL3 -> EL2 -> EL1
  * -------------------------------------------------------------------------- */
 switch_to_el1_from_el3:
-    early_uart_putchar '3'          /* debug: EL3 path */
     ldr     x1, =SCR_VALUE
     msr     scr_el3, x1
     ldr     x2, =SPSR_EL3_VALUE
@@ -151,7 +149,6 @@ switch_to_el1_from_el3:
  * EL2 -> EL1
  * -------------------------------------------------------------------------- */
 switch_to_el1_from_el2:
-    early_uart_putchar '2'          /* debug: EL2 path */
     /* Allow EL1/EL0 access to physical counter/timer registers */
     mrs     x0, cnthctl_el2
     orr     x0, x0, #3
@@ -177,7 +174,6 @@ switch_to_el1_from_el2:
  * EL1: configure paging, enable MMU, jump to virtual addresses
  * -------------------------------------------------------------------------- */
 jump_to_main:
-    early_uart_putchar 'M'          /* debug: reached EL1 jump_to_main */
     /* Load boot page tables */
     /* TTBR0: identity map (low VA == PA, covers boot code at 0x40080000) */
     adr     x2, boot_l4pt
@@ -210,7 +206,6 @@ jump_to_main:
     mov     sp, x7
 
     /* Jump to virtual-address _start_virt */
-    early_uart_putchar 'V'          /* debug: about to jump to _start_virt */
     ldr     x8, =_start_virt
     blr     x8
 
@@ -320,8 +315,6 @@ boot_stack_top:
 .text
 .globl _start_virt
 _start_virt:
-    early_uart_putchar 'R'          /* debug: reached _start_virt in high VMA */
-
     /* Fix up SP: before enabling the MMU we set SP from an `adr` instruction,
      * which gives the physical / identity-mapped address of boot_stack_top
      * (somewhere around 0x400cXXXX).  Now that TTBR1 maps PA 0x40000000..
@@ -353,8 +346,6 @@ _start_virt:
     cmp     x10, x11
     blt     1b
 2:
-
-    early_uart_putchar 'B'          /* debug: TPIDR_EL1 set, about to call Rust */
 
     /* Restore x0 (DTB paddr, per AArch64 boot protocol) and x1 (reserved=0)
      * that were saved in x19/x20 at _start before debug macros clobbered them. */
