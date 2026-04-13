@@ -1,0 +1,11 @@
+[package]
+name = "pagefault_test"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+
+[profile.release]
+opt-level = "z"
+lto = false
+codegen-units = 1
