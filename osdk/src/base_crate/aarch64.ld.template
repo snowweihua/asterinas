@@ -32,6 +32,13 @@ SECTIONS
         PROVIDE(__etext = .);
     }
 
+    . = ALIGN(4096);
+    .ap_boot                : AT(ADDR(.ap_boot) - KERNEL_VMA_OFFSET) {
+        __ap_boot_start = .;
+        KEEP(*(.ap_boot))
+        __ap_boot_end = .;
+    }
+
     # AArch64 vector table: must be 2KB (0x800) aligned.
     # Placed in the high VMA range so ADR/ADRP from .text can reach it.
     . = ALIGN(0x800);

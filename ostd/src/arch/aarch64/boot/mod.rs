@@ -18,6 +18,7 @@ use crate::{
 };
 
 global_asm!(include_str!("boot.S"));
+global_asm!(include_str!("ap_boot.S"));
 
 // Pure-assembly PL011 helpers that live entirely outside Rust's debug
 // machinery.  No volatile-wrapper calls, no ptr::add precondition checks,

@@ -45,8 +45,8 @@ struct PerApInfo {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub(crate) struct PerApRawInfo {
-    stack_top: *mut u8,
-    cpu_local: *mut u8,
+    pub(crate) stack_top: *mut u8,
+    pub(crate) cpu_local: *mut u8,
 }
 
 // SAFETY: This information (i.e., the pointer addresses) can be shared safely
