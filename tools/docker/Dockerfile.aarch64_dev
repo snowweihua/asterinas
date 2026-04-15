@@ -1,0 +1,133 @@
+# SPDX-License-Identifier: MPL-2.0
+#
+# Asterinas AArch64 Development Environment
+# Includes: Rust nightly-2025-02-01 + aarch64 target, QEMU aarch64-softmmu, osdk
+#
+
+FROM ubuntu:22.04 AS build-base
+
+SHELL ["/bin/bash", "-c"]
+ARG DEBIAN_FRONTEND=noninteractive
+
+#= Stage 1: Install build dependencies =========================================
+
+RUN apt update && apt-get install -y --no-install-recommends \
+    build-essential \
+    ca-certificates \
+    curl \
+    git \
+    libgcrypt-dev \
+    libglib2.0-dev \
+    libpixman-1-dev \
+    libusb-dev \
+    meson \
+    ninja-build \
+    python3-pip \
+    python-is-python3 \
+    wget \
+    clang \
+    gdb \
+    grub-efi-amd64 \
+    grub2-common \
+    mtools \
+    xorriso
+
+RUN apt clean && rm -rf /var/lib/apt/lists/*
+
+#= Stage 2: Build QEMU with aarch64-softmmu =====================================
+
+FROM build-base AS build-qemu
+
+RUN apt update && apt-get install -y --no-install-recommends \
+    libgcrypt-dev   `# optional build dependency` \
+    libglib2.0-dev  `# build dependency` \
+    libpixman-1-dev `# build dependency` \
+    libusb-dev      `# optional build dependency` \
+    meson \
+    ninja-build
+RUN apt clean && rm -rf /var/lib/apt/lists/*
+
+# Install Python tomli required by QEMU configure
+RUN pip3 install tomli
+
+FROM build-qemu AS qemu
+
+# Fetch and install QEMU from the official source
+#
+# The QEMU version in the Ubuntu 22.04 repository is 6.*, which has a bug to cause OVMF debug to fail.
+# The libslirp dependency is for QEMU's network backend.
+WORKDIR /root
+
+# FIXME: Update the QEMU version to the latest stable release when available.
+RUN wget -O qemu.tar.xz https://download.qemu.org/qemu-10.1.0-rc2.tar.xz \
+    && mkdir /root/qemu \
+    && tar xf qemu.tar.xz --strip-components=1 -C /root/qemu \
+    && rm qemu.tar.xz
+WORKDIR /root/qemu
+RUN ./configure --target-list=x86_64-softmmu,riscv64-softmmu,loongarch64-softmmu,aarch64-softmmu --prefix=/usr/local/qemu \
+    && make -j$(nproc) \
+    && make install
+WORKDIR /root
+RUN rm -rf /root/qemu
+
+#= Stage 3: Install Rust =========================================================
+
+FROM build-base AS rust
+
+ENV PATH="/root/.cargo/bin:${PATH}"
+ARG ASTER_RUST_VERSION="nightly-2025-02-01"
+
+RUN curl https://sh.rustup.rs -sSf | \
+        sh -s -- --default-toolchain ${ASTER_RUST_VERSION} -y \
+    && rm -rf /root/.cargo/registry && rm -rf /root/.cargo/git \
+    && cargo -V
+
+RUN rustup component add rust-src rustc-dev llvm-tools-preview
+
+RUN rustup target add aarch64-unknown-none \
+    && rustup target add aarch64-unknown-none-softfloat \
+    && rustup target add x86_64-unknown-none
+
+#= Stage 4: Build osdk from asterinas workspace =================================
+
+FROM rust AS build-osdk
+
+ENV OSDK_LOCAL_DEV=1
+
+# Copy the entire asterinas workspace for building osdk
+COPY . /root/asterinas
+WORKDIR /root/asterinas
+
+RUN cargo install --path osdk --locked
+
+#= Final image ================================================================
+
+FROM build-base
+
+# Install runtime dependencies for QEMU
+RUN apt update && apt-get install -y --no-install-recommends \
+    libpixman-1-0 \
+    && apt clean && rm -rf /var/lib/apt/lists/*
+
+# Install Rust (same toolchain as build stage)
+ENV PATH="/root/.cargo/bin:${PATH}"
+COPY --from=rust /root/.cargo /root/.cargo
+COPY --from=rust /root/.rustup /root/.rustup
+
+# Install QEMU
+COPY --from=qemu /usr/local/qemu /usr/local/qemu
+ENV PATH="/usr/local/qemu/bin:${PATH}"
+ENV LD_LIBRARY_PATH="/usr/local/qemu/lib/aarch64-linux-gnu:${LD_LIBRARY_PATH}"
+
+# Install osdk
+COPY --from=build-osdk /root/.cargo/bin/cargo-osdk /usr/local/bin/cargo-osdk
+
+# Install asterinas source (for building the kernel)
+COPY . /root/asterinas
+WORKDIR /root/asterinas
+
+# Default: use local dev mode for AArch64
+ENV OSDK_LOCAL_DEV=1
+ENV PATH="/root/asterinas/target/bin:${PATH}"
+
+VOLUME [ "/root/asterinas" ]
