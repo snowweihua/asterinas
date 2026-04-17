@@ -544,7 +544,7 @@ pub(crate) unsafe fn init() -> Segment<MetaPageMeta> {
         init_slots(slots, tot_nr_frames);
     } else {
         FRAME_META_PADDR_BASE.store(meta_pages, Ordering::Relaxed);
-        let slots = meta_pages as *mut MetaSlot;
+        let slots = paddr_to_vaddr(meta_pages) as *mut MetaSlot;
         init_slots(slots, tot_nr_frames);
     }
 
