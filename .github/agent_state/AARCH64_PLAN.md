@@ -4,8 +4,9 @@
 
 ### Completed ✅
 - P0.1 Reproducible check
-- P0.2 Trap path coherence  
+- P0.2 Trap path coherence
 - P1.1 Boot banner appears
+- P1.1 Restore Debug Output ✅ (2026-04-17)
 - P1.2 Timer IRQ liveness
 - P1.3 Panic handler (basic - stack trace disabled)
 - P2.1 User transition round-trip
@@ -17,6 +18,7 @@
 - Build fixes (edition, arm-gic)
 - .gitignore updates
 - Documentation
+- Initramfs hang fix (paddr_to_vaddr bug)
 
 ---
 
@@ -26,8 +28,7 @@
 
 #### P1.1 Restore Debug Output
 - **Priority:** HIGH
-- **Status:** Commit 05ea31fd removed all debug UART probes
-- **Impact:** Hard to debug issues without output
+- **Status:** ✅ DONE - Commits 961467f87, 39fa1ba87
 - **Task:** Add configurable debug flags/markers
 - **Files:** `ostd/src/arch/aarch64/boot/*.rs`
 
