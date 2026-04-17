@@ -260,14 +260,26 @@ pub unsafe fn pl011_puts(s: &[u8]) {
 pub unsafe extern "C" fn aarch64_boot(device_tree_paddr: usize, _reserved: usize) -> ! {
     use crate::boot::{call_ostd_main, EarlyBootInfo, EARLY_INFO};
 
+    unsafe { pl011_puts(b"[a2-boot] entry\n") };
+
     let discovered_dtb_paddr = discover_dtb_paddr(device_tree_paddr).unwrap_or(0);
     if discovered_dtb_paddr != 0 {
+        unsafe { pl011_puts(b"[a2-boot] using loader dtb\n") };
         let device_tree_ptr = discovered_dtb_paddr as *const u8;
         let device_tree_size = parse_fdt_total_size(device_tree_ptr);
         let fdt = unsafe { fdt::Fdt::from_ptr(device_tree_ptr).unwrap() };
         DEVICE_TREE.call_once(|| fdt);
         DEVICE_TREE_REGION.call_once(|| (discovered_dtb_paddr, device_tree_size));
+        unsafe { pl011_puts(b"[a2-boot] dtb discovery done\n") };
         let initramfs_info = parse_initramfs();
+        if initramfs_info.is_some() {
+            unsafe { pl011_puts(b"[a2-boot] initramfs found\n") };
+        } else {
+            unsafe { pl011_puts(b"[a2-boot] initramfs NOT found\n") };
+        }
+        unsafe { pl011_puts(b"[a2-boot] cmdline: ") };
+        unsafe { pl011_puts(parse_kernel_commandline().as_bytes()) };
+        unsafe { pl011_puts(b"\n") };
         EARLY_INFO.call_once(|| EarlyBootInfo {
             bootloader_name: parse_bootloader_name(),
             kernel_cmdline: parse_kernel_commandline(),
@@ -283,5 +295,6 @@ pub unsafe extern "C" fn aarch64_boot(device_tree_paddr: usize, _reserved: usize
         }
     }
 
+    unsafe { pl011_puts(b"[a2-boot] calling ostd_main\n") };
     call_ostd_main();
 }
