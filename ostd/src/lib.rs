@@ -128,7 +128,6 @@ unsafe fn init() {
         arch::serial::init();
     });
 
-    #[cfg(not(target_arch = "aarch64"))]
     smp::init();
 
     // SAFETY: This function is called only once on the BSP.
