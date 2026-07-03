@@ -34,12 +34,14 @@ docker run --rm -v /home/snow/asterinas:/root/asterinas asterinas/aarch64-dev:la
 - Use `.github/agent_state/` for recovery checkpoints
 - Use `target/agent_logs/` for run logs
 
-## Current Status (2026-06-23)
+## Current Status (2026-07-03)
 
 **Completed:** P0.1, P0.2, P1.1, P1.2, P1.3, P2.2, P3.1, P4.1, P4.2, P5.1 (RPi3 hardware),
-initramfs hang fix, VirtIO init fix, user-space shell (QEMU + RPi3), timer IRQs (QEMU + RPi3)
+initramfs hang fix, VirtIO init fix, user-space shell (QEMU + RPi3), timer IRQs (QEMU + RPi3),
+PL011 UART RX interrupt (QEMU + RPi3), exception table for fallible user-memory access
 
-**Latest commits (2026-06-23):**
+**Latest commits (2026-07-03):**
+- `462cc567` — aarch64: implement PL011 UART RX interrupt for interactive shell
 - `806511eba` — aarch64: fix RPi3 timer regression — restore CNTV in set_next_timer_rpi3()
 - `a5c9f5c8c` — aarch64: fix GIC timer IRQs — set GICC_CTLR ACK_CTL bit (bit 2)
 - `7d7d857ed` — aarch64: implement exception table for fallible user-memory access
@@ -85,11 +87,11 @@ initramfs hang fix, VirtIO init fix, user-space shell (QEMU + RPi3), timer IRQs 
 - `sync_exception_current` checks `.ex_table` for EL1 DABTs from user-space addresses.
 - Without this, `write()` with an invalid user buf caused EL1 DABT hang.
 
-**Current boot status (2026-06-23):**
+**Current boot status (2026-07-03):**
 
 | Platform | Boot | Timer | Shell prompt | Interactive input | Notes |
 |----------|------|-------|-------------|------------------|-------|
-| QEMU virt (cortex-a72) | ✅ | ✅ CNTP IRQ 30 | ✅ `/ #` | ❌ stdin EOF | |
+| QEMU virt (cortex-a72) | ✅ | ✅ CNTP IRQ 30 | ✅ `/ #` | ❌ stdin multiplexing issue | RX interrupt implemented |
 | RPi3 3B (hardware) | ✅ | ✅ CNTV IRQ 16 | ✅ `/ #` | ✅ works | first-boot PSCI reset |
 
 **Remaining diagnostic probes in tree (to remove):**
@@ -103,7 +105,7 @@ initramfs hang fix, VirtIO init fix, user-space shell (QEMU + RPi3), timer IRQs 
 - `ostd/src/panic.rs`: panic handler loops instead of reset on AArch64
 
 **Known remaining bugs:**
-1. QEMU stdin EOF — shell exits after `ppoll(stdin)` because no TTY input is provided
+1. QEMU stdin multiplexing — `-nographic` multiplexes serial+monitor on stdio; in headless/PTY environments, commands sent to stdin don't reach the guest serial console. RX interrupt is implemented but cannot be automated-test verified in QEMU. Works on real RPi3 hardware.
 2. `/bin/busybox ls /bin` → SIGSEGV (stat/lstat ABI issue, not TLS)
 3. First-boot PSCI reset on RPi3 (D-cache coherency gap during CPIO extraction / ELF load)
 4. P2.1 SMP deferred (QEMU PSCI CPU_ON returns success but AP never starts)
@@ -325,10 +327,15 @@ qemu-system-aarch64 \
 
 ## Known AArch64 Issues and Fixes
 
-- **CRITICAL: Use AArch64 initramfs, not x86-64**: `test/build/initramfs.cpio.gz` is the
+- **CRITICAL: Use AArch64 initramfs, not x86-64**: `test/build/init.cpio.gz` is the
   x86-64 CI initramfs — using it on AArch64 QEMU causes a silent hang in `spawn_init_process`
   because ELF header machine check fails (Machine::X86_64 ≠ Machine::AArch64). Always use
-  `test/build/init.cpio.gz` + `test/build/virt-init.dtb` for AArch64 QEMU tests.
+  `test/build/aarch64-shell-initramfs.cpio.gz` + `test/build/virt-init.dtb` for AArch64 QEMU tests.
+
+- **PL011 UART RX interrupt** (`ostd/src/arch/aarch64/serial.rs`, `kernel/src/driver/mod.rs`):
+  Added RX MMIO registers (DR, FR, IM) and `has_data()`, `receive()`, `init_rx_irq()` functions.
+  UART IRQ 33 handler reads bytes from UART DR and calls console callback. Works on RPi3 hardware.
+  QEMU has stdin multiplexing issue unrelated to kernel code (commands don't reach serial in headless mode).
 
 - **PL011 UART virtual address**: After MMU is enabled, use kernel linear map VA (`0xffff_8000_0900_0000`) not raw PA (`0x0900_0000`). See `ostd/src/arch/aarch64/serial.rs`.
 - **`arm-gic` version**: Pin to `=0.6.0` in `ostd/Cargo.toml` to avoid compatibility issues.
@@ -365,7 +372,9 @@ qemu-system-aarch64 \
 - Task: `ostd/src/arch/aarch64/task/`
 - Serial: `ostd/src/arch/aarch64/serial.rs`
 - IRQ: `ostd/src/arch/aarch64/irq.rs`
+- Exception table: `ostd/src/arch/aarch64/ex_table.rs`
 - Kernel syscall: `kernel/src/syscall/`
+- Driver: `kernel/src/driver/mod.rs`
 - VirtIO MMIO: `kernel/comps/virtio/src/transport/mmio/`
 
 ## Bring-up Phases
