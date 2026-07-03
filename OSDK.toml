@@ -21,7 +21,7 @@ kcmd_args = [
     "PATH=/bin:/benchmark",
     "init=/usr/bin/busybox",
 ]
-init_args = ["sh", "-c", "/test_bin/pagefault_test; echo 'exit:' $?"]
+init_args = ["sh"]
 initramfs = "test/build/initramfs.cpio.gz"
 
 # Special options for testing
@@ -102,5 +102,10 @@ qemu.args = """\
     -device loader,file=test/build/initramfs.cpio.gz,addr=0x48000000,force-raw=on \
     --no-reboot \
     -nographic \
+    -display none \
     -serial file:/tmp/qemu_serial.log
 """
+
+[scheme."aarch64-rpi3"]
+boot.method = "qemu-direct"
+build.strip_elf = false

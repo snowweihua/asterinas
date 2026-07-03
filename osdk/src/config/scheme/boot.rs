@@ -29,6 +29,8 @@ pub enum BootMethod {
     /// to boot the kernel with QEMU's built-in Seabios and Coreboot utilities.
     #[default]
     QemuDirect,
+    /// Convert the kernel ELF to a raw binary (kernel8.img for Raspberry Pi).
+    RawBinary,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

@@ -11,7 +11,7 @@ use std::{
     time::SystemTime,
 };
 
-use bin::make_elf_for_qemu;
+use bin::{make_elf_for_qemu, make_raw_binary};
 
 use super::util::{cargo, profile_name_adapter, COMMON_CARGO_ARGS, DEFAULT_TARGET_RELPATH};
 use crate::{
@@ -184,6 +184,10 @@ pub fn do_cached_build(
             let qemu_elf = make_elf_for_qemu(&osdk_output_directory, &aster_elf, build.strip_elf);
             bundle.consume_aster_bin(qemu_elf);
         }
+        BootMethod::RawBinary => {
+            let raw_bin = make_raw_binary(&osdk_output_directory, &aster_elf);
+            bundle.consume_aster_bin(raw_bin);
+        }
     }
 
     bundle
@@ -224,6 +228,16 @@ fn build_kernel_elf(
         // It makes running on Intel CPUs after Ivy Bridge (2012) faster, but much slower
         // on older CPUs.
         rustflags.push("-C target-feature=+ermsb");
+    }
+
+    if matches!(arch, Arch::Aarch64) {
+        // Cortex-A53 Erratum 843419: ADRP instruction at certain page-end
+        // offsets may compute a wrong address.  This affects all Cortex-A53
+        // parts (e.g. Raspberry Pi 3) and causes random crashes whose
+        // location shifts when the binary layout changes (e.g. when debug
+        // prints are added/removed).  Pass the linker workaround flag so
+        // lld inserts compensating veneer stubs.
+        rustflags.push("-C link-arg=--fix-cortex-a53-843419");
     }
 
     let mut command = cargo();

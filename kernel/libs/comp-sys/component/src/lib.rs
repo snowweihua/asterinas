@@ -206,12 +206,19 @@ fn match_and_call(
     if !components.is_empty() {
         info!("Exists components that are not initialized");
     }
-    info!("[mac-1] after for-loop, before sort, infos.len={}", infos.len());
+    info!(
+        "[mac-1] after for-loop, before sort, infos.len={}",
+        infos.len()
+    );
 
     infos.sort();
     info!("[mac-2] after sort");
     debug!("component infos: {infos:?}");
-    info!("[mac-pre] match_and_call: {} components in stage {:?}", infos.len(), stage);
+    info!(
+        "[mac-pre] match_and_call: {} components in stage {:?}",
+        infos.len(),
+        stage
+    );
     info!("Components initializing in {stage:?} stage...");
     info!("[mac-post] info printed ok");
 

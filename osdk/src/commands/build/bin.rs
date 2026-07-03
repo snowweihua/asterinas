@@ -80,6 +80,31 @@ pub fn make_install_bzimage(
     )
 }
 
+pub fn make_raw_binary(install_dir: impl AsRef<Path>, elf: &AsterBin) -> AsterBin {
+    let result_img_path = install_dir.as_ref().join("kernel8.img");
+
+    let status = new_command_checked_exists("aarch64-linux-gnu-objcopy")
+        .args([
+            "-O",
+            "binary",
+            elf.path().to_str().unwrap(),
+            result_img_path.to_str().unwrap(),
+        ])
+        .status()
+        .unwrap();
+    if !status.success() {
+        panic!("Failed to convert ELF to raw binary with aarch64-linux-gnu-objcopy");
+    }
+
+    AsterBin::new(
+        &result_img_path,
+        elf.arch(),
+        AsterBinType::RawBinary,
+        elf.version().clone(),
+        false,
+    )
+}
+
 pub fn make_elf_for_qemu(install_dir: impl AsRef<Path>, elf: &AsterBin, strip: bool) -> AsterBin {
     let result_elf_path = {
         let elf_name = elf

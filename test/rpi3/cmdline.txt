@@ -1,0 +1,18 @@
+# Kernel command line arguments for Asterinas on RPi3
+# Console on PL011 UART (ttyAMA0) at 115200 baud
+console=serial0,115200
+
+# No framebuffer console
+consoleblank=0
+
+# Log level
+loglevel=3
+
+# Root filesystem - will be overridden for SD card boot
+# For now, use initramfs
+root=/dev/ram0
+
+# Initialize with busybox shell
+init=/usr/bin/busybox
+
+# Busybox init

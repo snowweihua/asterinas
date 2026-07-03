@@ -1,0 +1,14 @@
+arm_64bit=1
+
+# PL011 UART configuration (GPIO 14/15, 115200 baud)
+# enable_uart=1 activates PL011; disable-bt frees PL011 from Bluetooth
+enable_uart=1
+dtoverlay=disable-bt
+init_uart_clock=48000000
+
+# Freeze VPU/core frequency so PL011 baud rate stays stable
+# (mini-UART baud depends on core_freq; PL011 uses init_uart_clock above)
+core_freq=250
+
+# Boot U-Boot (which will load Asterinas via TFTP or from SD card)
+kernel=u-boot.bin

@@ -65,6 +65,12 @@ panic = "unwind"
 lto = "thin"
 panic = "unwind"
 
+# miniz_oxide at -O3 with AArch64 nightly generates code that hangs in
+# inflate_core() at a specific deflate block boundary.  Drop to -O1 until
+# the root cause (compiler or library bug) is identified and fixed upstream.
+[profile.release.package.miniz_oxide]
+opt-level = 1
+
 # Release profile configuration with Link Time Optimization (LTO) enabled.
 #
 # This profile is optimized for maximum runtime performance, 
@@ -77,6 +83,3 @@ lto = true
 # lto can only be enabled when panic strategy is abort
 panic = "abort"
 # set codegen-units as the smallest number
-codegen-units = 1
-
-

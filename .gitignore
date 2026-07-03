@@ -30,21 +30,7 @@ aster-nix-profile-*.json
 aster-nix-profile-*.folded
 aster-nix-profile-*.svg
 
-# Build artifacts
-kernel/Cargo.lock
-
-# Initramfs extract (from debug)
-nix/
-Cargo.lock.backup
-
-# Docker image backup
-asterinas-aarch64-dev.tar
-
-# Agent state session files
-.github/agent_state/checkpoint.py
-.github/agent_state/session_logger.sh
-.github/agent_state/2026-04-15-boot-crash-debug.md
-.github/agent_state/2026-04-16-build-blocked.md
-.github/agent_state/2026-04-16-working-checkpoint.md
-.github/agent_state/2026-04-17-fully-verified.md
-.github/agent_state/README_session_logger.md
+# Binary artifacts (not for git)
+usr/busybox
+rust_out
+test_swap.s
