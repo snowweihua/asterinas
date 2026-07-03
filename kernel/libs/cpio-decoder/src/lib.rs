@@ -26,7 +26,7 @@ use alloc::{
 };
 use core::cmp::min;
 
-use core2::io::{Read, Write};
+use core3::io::{Read, Write};
 use int_to_c_enum::TryFromInt;
 use lending_iterator::prelude::*;
 

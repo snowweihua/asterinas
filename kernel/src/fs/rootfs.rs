@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-use core2::io::{Cursor, Read};
+use core3::io::{Cursor, Read};
 use cpio_decoder::{CpioDecoder, FileType};
 use lending_iterator::LendingIterator;
 use libflate::gzip::Decoder as GZipDecoder;
@@ -15,17 +15,37 @@ use super::{
 };
 use crate::{fs::path::is_dot, prelude::*};
 
-struct BoxedReader<'a>(Box<dyn Read + 'a>);
+struct BoxedReader<'a>(Box<dyn core3::io::Read + 'a>);
 
 impl<'a> BoxedReader<'a> {
-    pub fn new(reader: Box<dyn Read + 'a>) -> Self {
+    pub fn new(reader: Box<dyn core3::io::Read + 'a>) -> Self {
         BoxedReader(reader)
     }
 }
 
-impl Read for BoxedReader<'_> {
-    fn read(&mut self, buf: &mut [u8]) -> core2::io::Result<usize> {
+impl<'a> core3::io::Read for BoxedReader<'a> {
+    fn read(&mut self, buf: &mut [u8]) -> core3::io::Result<usize> {
         self.0.read(buf)
+    }
+}
+
+struct LibflateDecoderAdapter<'a> {
+    decoder: libflate::gzip::Decoder<&'a [u8]>,
+}
+
+impl<'a> core3::io::Read for LibflateDecoderAdapter<'a> {
+    fn read(&mut self, buf: &mut [u8]) -> core3::io::Result<usize> {
+        match core2::io::Read::read(&mut self.decoder, buf) {
+            Ok(n) => Ok(n),
+            Err(e) => Err(core3::io::Error::new(
+                match e.kind() {
+                    core2::io::ErrorKind::UnexpectedEof => core3::io::ErrorKind::UnexpectedEof,
+                    core2::io::ErrorKind::WouldBlock => core3::io::ErrorKind::WouldBlock,
+                    _ => core3::io::ErrorKind::Other,
+                },
+                "libflate error",
+            )),
+        }
     }
 }
 
@@ -34,15 +54,16 @@ pub fn init_in_first_kthread(fs_resolver: &FsResolver) -> Result<()> {
     let initramfs_buf = boot_info().initramfs.expect("No initramfs found!");
 
     let reader = {
-        let reader = match &initramfs_buf[..4] {
+        match &initramfs_buf[..4] {
             &[0x1F, 0x8B, _, _] => {
                 let gzip_decoder = GZipDecoder::new(initramfs_buf)
                     .map_err(|_| Error::with_message(Errno::EINVAL, "invalid gzip buffer"))?;
-                BoxedReader::new(Box::new(gzip_decoder))
+                BoxedReader::new(Box::new(LibflateDecoderAdapter {
+                    decoder: gzip_decoder,
+                }))
             }
             _ => BoxedReader::new(Box::new(Cursor::new(initramfs_buf))),
-        };
-        reader
+        }
     };
     let mut decoder = CpioDecoder::new(reader);
 

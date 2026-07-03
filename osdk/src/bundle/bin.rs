@@ -24,6 +24,7 @@ pub struct AsterBin {
 pub enum AsterBinType {
     Elf(AsterElfMeta),
     BzImage(AsterBzImageMeta),
+    RawBinary,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

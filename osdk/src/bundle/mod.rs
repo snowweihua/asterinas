@@ -164,6 +164,7 @@ impl Bundle {
                     return Err("VM image in the bundle is not a Qcow2 image".to_owned());
                 }
             }
+            BootMethod::RawBinary => {}
         }
 
         // Compare the initramfs.
@@ -250,6 +251,7 @@ impl Bundle {
                     bootdev_opts,
                 ));
             }
+            BootMethod::RawBinary => {}
         };
 
         match shlex::split(&action.qemu.args) {

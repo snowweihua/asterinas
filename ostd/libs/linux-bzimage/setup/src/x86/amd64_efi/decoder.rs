@@ -7,7 +7,7 @@ extern crate alloc;
 use alloc::vec::Vec;
 use core::convert::TryFrom;
 
-use core2::io::Read;
+use core3::io::Read;
 use libflate::{gzip, zlib};
 
 enum MagicNumber {
