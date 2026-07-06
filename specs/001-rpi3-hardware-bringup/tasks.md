@@ -102,7 +102,7 @@
 
 - [ ] T025 [P] Remove all debug `[unpack]`, `[rootfs]`, `[task-loop]`, `[drv]`, `[kt1]` probe print statements added during bring-up
 - [ ] T026 [P] Remove any temporary debug putchars added in `ap_boot.S` and `smp_rpi3.rs` (T014, T015)
-- [ ] T027 Run QEMU virt boot test to verify no regression: `qemu-system-aarch64 -machine virt -cpu cortex-a72 -smp 1 -m 512M -kernel target/osdk/aster-nix/aster-nix-osdk-bin.qemu_elf -dtb test/nix/aarch64-virt.dtb -device loader,file=test/build/virt-init.dtb,addr=0x47000000,force-raw=on -device loader,file=test/build/init.cpio.gz,addr=0x48000000,force-raw=on -append "console=ttyAMA0" -nographic -display none`
+- [ ] T027 Run QEMU virt boot test to verify no regression: `qemu-system-aarch64 -machine virt -cpu cortex-a72 -smp 1 -m 512M -kernel target/osdk/aster-nix/aster-nix-osdk-bin.qemu_elf -dtb test/nix/aarch64-virt.dtb -device loader,file=test/build/virt-init.dtb,addr=0x47000000,force-raw=on -device loader,file=test/build/aarch64-shell-initramfs.cpio.gz,addr=0x48000000,force-raw=on -append "console=ttyAMA0" -nographic -display none`
 - [ ] T028 Run `./tools/format_all.sh --check` and fix any formatting issues
 - [ ] T029 Document final RPi3 boot procedure in The Asterinas Book (`book/src/`) or as a README in `test/rpi3/`
 
