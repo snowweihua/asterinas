@@ -119,9 +119,9 @@ The reboot syscall terminates all processes cleanly and reboots the hardware wit
 
 - Two-stage boot: VideoCore firmware (start.elf, etc.) on the SD card loads `kernel8.img` (U-Boot binary) and executes it; U-Boot then loads `asterina.img` (raw AArch64 binary from `llvm-objcopy -O binary`) via TFTP and boots it with `booti`
 - The SD card FAT partition contains VideoCore firmware files, `kernel8.img` (U-Boot), `config.txt`, and `boot.scr`
-- U-Boot is pre-configured with TFTP boot commands; the boot script (`boot.scr`) loads `asterina.img` and `aarch64-shell-initramfs.cpio.gz` via TFTP and passes them via DTB `linux,initrd-start/end`
+- U-Boot is pre-configured with TFTP boot commands; the boot script (`boot.scr`) loads `asterina.img` and `initramfs.cpio.gz` via TFTP and passes them via DTB `linux,initrd-start/end`
 - Serial console is connected via PL011 UART at 115200 baud, 8N1, to a host machine
-- A TFTP server is running on the host machine serving `asterina.img` and `aarch64-shell-initramfs.cpio.gz`
+- A TFTP server is running on the host machine serving `asterina.img` and `initramfs.cpio.gz`
 - `config.txt` on the SD card has `arm_64bit=1` and `kernel=kernel8.img` (VideoCore loads U-Boot as first-stage kernel)
 - RPi3 3B revision (BCM2837) is used — not RPi 4 or later
 - The existing QEMU virt emulation is the primary development iteration target; RPi3 hardware is the final validation step
