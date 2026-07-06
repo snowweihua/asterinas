@@ -4,7 +4,7 @@
 
 1. **Hardware**: Raspberry Pi 3 Model B (BCM2837, not RPi 4)
 2. **SD card**: FAT-formatted with VideoCore firmware, U-Boot as `kernel8.img`, `config.txt`, `boot.scr`
-3. **TFTP server**: Running on host machine, serving `asterina.img` and `aarch64-shell-initramfs.cpio.gz`
+3. **TFTP server**: Running on host machine, serving `asterina.img` and `initramfs.cpio.gz`
 4. **Serial console**: PL011 UART connection at 115200 baud, 8N1, to host `/dev/ttyUSB0`
 5. **Build tools**: Docker with Asterinas aarch64-dev image
 
@@ -22,9 +22,9 @@ docker run --rm -v $(pwd):/root/asterinas asterinas/aarch64-dev:latest bash -c \
     /root/asterinas/target/osdk/aster-nix/aster-nix-osdk-bin.qemu_elf \
     /root/asterinas/target/osdk/aster-nix/asterina.img'
 
-# 3. Deploy to TFTP root
+# 3. Deploy to TFTP root (rename to initramfs.cpio.gz — boot.cmd TFTP command expects this name)
 cp target/osdk/aster-nix/asterina.img /mnt/d/pi_sd/
-cp test/build/aarch64-shell-initramfs.cpio.gz /mnt/d/pi_sd/
+cp test/build/aarch64-shell-initramfs.cpio.gz /mnt/d/pi_sd/initramfs.cpio.gz
 ```
 
 ## Boot Test (Manual)
@@ -113,7 +113,7 @@ qemu-system-aarch64 \
 | Symptom | Likely Cause |
 |---------|-------------|
 | No serial output after power-on | U-Boot not loading; check SD card, config.txt |
-| Boot hangs at `[kt1] init in first kthread` | Using wrong initramfs (x86-64 instead of AArch64); check QEMU uses `aarch64-shell-initramfs.cpio.gz` |
+| Boot hangs at `[kt1] init in first kthread` | Using wrong initramfs (x86-64 instead of AArch64); for QEMU use `aarch64-shell-initramfs.cpio.gz`; for RPi3 TFTP ensure `initramfs.cpio.gz` is the AArch64 build |
 | `ls /bin` causes SIGSEGV | stat struct layout mismatch (FR-002); NOTE: fix was reverted due to userspace ABI regression — see plan.md |
 | Reboot hangs | reboot syscall not implemented (was syscall 88, now implemented in commit 5e2313ba) |
 | APs not coming online | BCM2836 spin-table SMP issue (FR-006) |
