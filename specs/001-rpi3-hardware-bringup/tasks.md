@@ -17,9 +17,9 @@
 
 **Purpose**: Confirm current RPi3 boot state and understand which issues are present
 
-- [ ] T001 [P] Build kernel and verify QEMU virt boot still works after any changes
+- [x] T001 [P] Build kernel and verify QEMU virt boot still works after any changes
 - [ ] T002 [P] Boot RPi3 hardware and verify which issues are reproducible: D-cache hang, stat SIGSEGV, reboot hang, SMP failure
-- [ ] T003 Verify initramfs is being loaded correctly by checking for `[unpack]` and `[rootfs]` probes in serial log
+- [x] T003 Verify initramfs is being loaded correctly by checking for `[unpack]` and `[rootfs]` probes in serial log
 
 ---
 
