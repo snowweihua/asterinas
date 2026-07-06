@@ -39,7 +39,7 @@ Asterinas on RPi3 3B hardware boots to a shell prompt but suffers from first-boo
 | Principle | Status | Notes |
 |-----------|--------|-------|
 | I. Memory Safety Through Rust | ✅ PASS | All new code uses safe Rust; unsafe only in arch modules; cache maintenance via inline asm |
-| II. Linux ABI Compatibility | ✅ PASS (after fix) | stat struct `__pad0` placement wrong for AArch64; research.md §3 has exact fix |
+| II. Linux ABI Compatibility | ⚠️ Needs resolution | stat struct `__pad0` placement wrong for AArch64; initial fix reverted due to userspace ABI regression — busybox binary expects wrong layout; see quickstart.md troubleshooting |
 | III. Small and Sound TCB | ✅ PASS | No new TCB additions; existing arch modules only |
 | IV. AArch64 Architecture Support | ✅ PASS | Code lives in ostd/src/arch/aarch64/; CNTV timer, BCM2836 IRQ, PL011 UART already implemented |
 | V. Rigorous Testing and CI | ✅ PASS | Manual RPi3 hardware testing in quickstart.md; QEMU regression documented |
@@ -95,7 +95,7 @@ kernel/src/driver/mod.rs # Driver framework
 
 1. **D-cache coherency**: U-Boot uses cached DRAM writes; `dc cvac` + `ic iallu` needed before kernel parses initramfs (research.md §1)
 2. **BCM2836 SMP**: Two-phase spin-table protocol correct in code; AP never wakes — likely BCM2836 mailbox IRQ not reaching AP (research.md §2)
-3. **stat struct**: `__pad0` placed AFTER `st_rdev` in Asterinas vs BEFORE in Linux — shifts all fields by 12 bytes (research.md §3)
+3. **stat struct**: `__pad0` placed AFTER `st_rdev` in Asterinas vs BEFORE in Linux — shifts all fields by 12 bytes. Initial fix caused userspace ABI regression (stack smashing); fix reverted. The stat struct issue remains open and needs resolution. See quickstart.md troubleshooting.
 4. **reboot syscall**: Syscall 142 not mapped; needs new `reboot.rs` using PSCI `SYSTEM_RESET` (research.md §4)
 
 ---
@@ -121,5 +121,5 @@ No constitution violations requiring justification.
 |------|------------|--------------------------------------|
 | BCM2836 spin-table protocol | RPi3 doesn't support PSCI for SMP; hardware-level spin-table is the only way | No alternative — PSCI not available on RPi3 |
 | D-cache maintenance before initramfs parse | U-Boot uses cached DRAM writes; without explicit `dc cvac`, initramfs data may be stale when kernel reads it | Can't disable D-cache on U-Boot; would destroy performance |
-| AArch64 stat struct fix | Must match Linux kernel struct stat layout exactly, or musl busybox will read/write wrong offsets | No alternative — Linux ABI compatibility requires correct struct layout |
+| AArch64 stat struct fix | Must match Linux kernel struct stat layout exactly, or musl busybox will read/write wrong offsets | No alternative — Linux ABI compatibility requires correct struct layout. NOTE: initial fix caused stack smashing regression and was reverted. The stat struct issue remains unresolved. |
 | PSCI reboot | RPi3 has no PMIC; only way to reset is via ARM Trusted Firmware PSCI call | No alternative — hardware reset requires PSCI |

@@ -4,7 +4,7 @@
 
 1. **Hardware**: Raspberry Pi 3 Model B (BCM2837, not RPi 4)
 2. **SD card**: FAT-formatted with VideoCore firmware, U-Boot as `kernel8.img`, `config.txt`, `boot.scr`
-3. **TFTP server**: Running on host machine, serving `asterina.img` and `initramfs.cpio.gz`
+3. **TFTP server**: Running on host machine, serving `asterina.img` and `aarch64-shell-initramfs.cpio.gz`
 4. **Serial console**: PL011 UART connection at 115200 baud, 8N1, to host `/dev/ttyUSB0`
 5. **Build tools**: Docker with Asterinas aarch64-dev image
 
@@ -24,7 +24,7 @@ docker run --rm -v $(pwd):/root/asterinas asterinas/aarch64-dev:latest bash -c \
 
 # 3. Deploy to TFTP root
 cp target/osdk/aster-nix/asterina.img /mnt/d/pi_sd/
-cp test/build/initramfs.cpio.gz /mnt/d/pi_sd/
+cp test/build/aarch64-shell-initramfs.cpio.gz /mnt/d/pi_sd/
 ```
 
 ## Boot Test (Manual)
@@ -44,15 +44,18 @@ cat /dev/ttyUSB0 &
 ## Expected Boot Log
 
 ```
-[asterinas] boot
-[kernel] rootfs is ready
-[drv] setup uart irq=57
-[kernel] sched init
-/task-loop/ top-of-loop
-[kt1] init in first kthread
-... boot messages ...
+[a2-boot] entry
+[a2-boot] using loader dtb
+[a2-boot] dtb discovery done
+[a2-boot] initramfs found
+[a2-boot] cmdline: init=/init console=ttyAMA0
+[a2-boot] calling ostd_main
+[a2-smp] boot_all_aps: num_cpus=
+[a2-smp] only 1 CPU, skipping SMP
 / #
 ```
+
+Note: The `/ #` shell prompt is the **correct and expected result**. If the kernel reaches `/ #` without crashing or hanging, the boot is successful. If QEMU exits immediately (exit code 0) without reaching `/ #`, the initramfs may be the wrong architecture (x86-64 instead of AArch64).
 
 ## Test Scenarios
 
@@ -98,10 +101,11 @@ qemu-system-aarch64 \
   -kernel target/osdk/aster-nix/aster-nix-osdk-bin.qemu_elf \
   -dtb test/nix/aarch64-virt.dtb \
   -device loader,file=test/build/virt-init.dtb,addr=0x47000000,force-raw=on \
-  -device loader,file=test/build/init.cpio.gz,addr=0x48000000,force-raw=on \
+  -device loader,file=test/build/aarch64-shell-initramfs.cpio.gz,addr=0x48000000,force-raw=on \
   -append "console=ttyAMA0" -nographic -display none
 
-# Expected: / # prompt within 60 seconds
+# Expected: / # shell prompt within 60 seconds
+# NOTE: Always use aarch64-shell-initramfs.cpio.gz — init.cpio.gz is x86-64 and causes silent hang
 ```
 
 ## Troubleshooting
@@ -109,7 +113,7 @@ qemu-system-aarch64 \
 | Symptom | Likely Cause |
 |---------|-------------|
 | No serial output after power-on | U-Boot not loading; check SD card, config.txt |
-| Boot hangs at `[kt1] init in first kthread` | Initramfs CPIO extraction failed; D-cache coherency issue |
-| `ls /bin` causes SIGSEGV | stat struct layout mismatch (FR-002) |
-| Reboot hangs | reboot syscall 169 not implemented |
+| Boot hangs at `[kt1] init in first kthread` | Using wrong initramfs (x86-64 instead of AArch64); check QEMU uses `aarch64-shell-initramfs.cpio.gz` |
+| `ls /bin` causes SIGSEGV | stat struct layout mismatch (FR-002); NOTE: fix was reverted due to userspace ABI regression — see plan.md |
+| Reboot hangs | reboot syscall not implemented (was syscall 88, now implemented in commit 5e2313ba) |
 | APs not coming online | BCM2836 spin-table SMP issue (FR-006) |
