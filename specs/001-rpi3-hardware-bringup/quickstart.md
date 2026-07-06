@@ -117,3 +117,14 @@ qemu-system-aarch64 \
 | `ls /bin` causes SIGSEGV | stat struct layout mismatch (FR-002); NOTE: fix was reverted due to userspace ABI regression — see plan.md |
 | Reboot hangs | reboot syscall not implemented (was syscall 88, now implemented in commit 5e2313ba) |
 | APs not coming online | BCM2836 spin-table SMP issue (FR-006) |
+
+## Further Documentation
+
+Detailed documentation for RPi3 hardware bringup:
+
+| Document | Description |
+|----------|-------------|
+| `test/rpi3/TFTP_BOOT_GUIDE.md` | Full TFTP boot procedure, SD card setup, U-Boot configuration |
+| `test/rpi3/HARDWARE_TESTING_GUIDE.md` | Hardware testing procedures, serial console setup |
+| `test/rpi3/TROUBLESHOOTING.md` | RPi3-specific troubleshooting |
+| `test/rpi3/QEMU_RASPI3B_LIMITATIONS.md` | QEMU emulated RPi3 limitations vs real hardware |
