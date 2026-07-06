@@ -24,10 +24,11 @@ global_asm!(include_str!("ap_boot.S"));
 // machinery.  No volatile-wrapper calls, no ptr::add precondition checks,
 // no panic paths — just plain AArch64 instructions.
 //
-// pl011_puts_asm(ptr: *const u8, len: usize)
+// pl011_puts_asm(ptr: *const u8, len: usize, uart_base: usize)
 //   x0 = pointer to first byte
 //   x1 = byte count
-//   Clobbers x2-x5; preserves everything else (including lr via ret).
+//   x2 = UART base PA
+//   Clobbers x3-x5; preserves everything else (including lr via ret).
 global_asm!(
     r#"
     .text
@@ -35,7 +36,6 @@ global_asm!(
     .globl pl011_puts_asm
 pl011_puts_asm:
     cbz     x1, 2f
-    mov     x2, #0x09000000
 1:
     ldrb    w3, [x0], #1
 3:
@@ -243,14 +243,20 @@ fn discover_dtb_paddr(device_tree_paddr: usize) -> Option<usize> {
 
 // Declared here; defined in the global_asm! block above.
 unsafe extern "C" {
-    fn pl011_puts_asm(ptr: *const u8, len: usize);
+    fn pl011_puts_asm(ptr: *const u8, len: usize, uart_base: usize);
 }
 
-/// Write a byte slice to the PL011 UART.  Safe to call before any Rust
-/// runtime infrastructure (no panics, no volatile wrappers, no alloc).
+fn early_uart_base() -> usize {
+    if crate::arch::board::BoardType::cached() == 2 {
+        0x3F215030
+    } else {
+        0x09000000
+    }
+}
+
 #[inline(always)]
 pub unsafe fn pl011_puts(s: &[u8]) {
-    unsafe { pl011_puts_asm(s.as_ptr(), s.len()) };
+    unsafe { pl011_puts_asm(s.as_ptr(), s.len(), early_uart_base()) };
 }
 
 /// The entry point of the Rust code portion of Asterinas.

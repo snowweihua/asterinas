@@ -75,13 +75,17 @@ PTE_NORMAL_2M  = ( MM_TYPE_BLOCK | PTE_AIDX_MEMORY | PTE_SH_INNER | PTE_AF )
  * Boot section
  * -------------------------------------------------------------------------- */
 
-/* Macro: write character in w0 to PL011 at 0x09000000 (no MMU, polled). */
+UART_BASE_QEMU  = 0x09000000
+UART_BASE_RPI3  = 0x3F215030
+
 .macro  early_uart_putchar char
     mov     w0, #\char
-    ldr     x1, =0x09000000
-1:  ldr     w2, [x1, #0x18]         /* FR register */
-    tbnz    w2, #5, 1b              /* wait while TXFF=1 */
-    str     w0, [x1, #0x00]         /* write to DR */
+    movz    x1, #0x3F21, lsl #16
+    movk    x1, #0x5030
+1:  ldr     w2, [x1, #0x18]
+    tbnz    w2, #5, 1b
+    str     w0, [x1]
+    dsb     sy
 .endm
 
 .section ".boot", "awx", @progbits
@@ -118,6 +122,11 @@ _start:
     .long   0                        /* [0x3c] res5 */
 
 _start_real:
+    movz    x0, #0x3F21, lsl #16
+    movk    x0, #0x5030
+    mov     w1, #0x4B
+    str     w1, [x0]
+    dsb     sy
     /* AArch64 Linux boot protocol: x0 = DTB physical address, x1 = 0 (reserved).
      * Save to callee-saved registers before any debug macros clobber them. */
     mov     x19, x0

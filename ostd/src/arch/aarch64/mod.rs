@@ -17,6 +17,7 @@ pub mod serial;
 pub(crate) mod task;
 mod timer;
 pub mod trap;
+pub(crate) mod board;
 
 use aarch64_cpu::registers::*;
 
