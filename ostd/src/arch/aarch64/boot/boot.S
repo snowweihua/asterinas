@@ -89,6 +89,26 @@ PTE_NORMAL_2M  = ( MM_TYPE_BLOCK | PTE_AIDX_MEMORY | PTE_SH_INNER | PTE_AF )
     str     w0, [x1, #0x00]         /* write to DR */
 .endm
 
+/* Macro: write a single ASCII character to BOTH RPi3 UARTs unconditionally.
+ * Tries PL011 (0x3F201000) AND mini-UART (0x3F215040) to discover which
+ * one is wired to the serial adapter.  No polling — never hangs.
+ * Uses movz/movk to build addresses without any literal pool.
+ * Only executes when x21 == 0 (RPi3). */
+.macro  rpi3_putch char
+    cbnz    x21, 9998f
+    /* PL011 DR at 0x3F201000 */
+    movz    x26, #0x3F20, lsl #16
+    movk    x26, #0x1000
+    mov     w27, #\char
+    str     w27, [x26]
+    /* mini-UART IO_REG at 0x3F215040 */
+    movz    x26, #0x3F21, lsl #16
+    movk    x26, #0x5040
+    mov     w27, #\char
+    str     w27, [x26]
+9998:
+.endm
+
 .section ".boot", "awx", @progbits
 .globl _start
 _start:
@@ -139,6 +159,14 @@ _start_real:
     cmp     x21, x22
     csel    x21, xzr, x22, lo              /* RPi3: x21 = 0; QEMU: x21 = 0x40000000 */
 
+    /* DEBUG MARKER 'A': verify _start_real executes on RPi3.
+     * First re-enable the PL011 UART (U-Boot cleanup may have disabled it),
+     * then output 'A'.  Only runs when x21=0 (RPi3). */
+    /* No UART init needed — U-Boot left both UARTs enabled.
+     * rpi3_putch writes to both PL011 and mini-UART. */
+.Lno_rpi3_uart_init:
+    rpi3_putch 'A'
+
     /* Detect current exception level [3:2] of CurrentEL */
     mrs     x2, CurrentEL
     and     x2, x2, #0b1100
@@ -179,6 +207,19 @@ switch_to_el1_from_el2:
     ldr     x3, =SCTLR_MMU_DISABLED
     msr     sctlr_el1, x3
 
+    /* CPACR_EL1: FPEN=0b11 → no FP/SIMD trap at EL0 or EL1.
+     * Must set this before EL1 code runs; Rust release builds can
+     * emit SIMD/FP instructions, which otherwise fault with EC=0x07. */
+    mov     x3, #(3 << 20)
+    msr     cpacr_el1, x3
+    isb
+
+    /* CPTR_EL2: clear TFP (bit 10) so FP/SIMD from EL1 is not trapped to EL2. */
+    mrs     x3, cptr_el2
+    bic     x3, x3, #(1 << 10)
+    msr     cptr_el2, x3
+    isb
+
     ldr     x4, =SPSR_EL2_VALUE
     msr     spsr_el2, x4
     adr     x4, jump_to_main
@@ -189,24 +230,75 @@ switch_to_el1_from_el2:
  * EL1: configure paging, enable MMU, jump to virtual addresses
  * -------------------------------------------------------------------------- */
 jump_to_main:
-    /* Dynamically patch boot_l3pt_high[0] so that VA 0xffff000000000000+X → PA DRAM_BASE+X.
-     * PTE_NORMAL_1G flags = MM_TYPE_BLOCK | PTE_AIDX_MEMORY | PTE_SH_INNER | PTE_AF = 0x705.
-     * For QEMU: DRAM_BASE=0x40000000 → PTE = 0x40000705 (PA 0x40000000 1 GB block)
-     * For RPi3: DRAM_BASE=0x00000000 → PTE = 0x00000705 (PA 0x00000000 1 GB block) */
-    ldr     x9, =0x705              /* PTE_NORMAL_1G flags */
-    add     x9, x9, x21             /* add DRAM_BASE (x21 from _start_real) */
+    /* DEBUG MARKER 'B': at EL1, before page-table patching or MMU enable. */
+    rpi3_putch 'B'
+
+    /* -----------------------------------------------------------------------
+     * Patch ALL page-table pointer entries with runtime physical addresses.
+     *
+     * The static .quad entries in the page tables below use LINKER-TIME
+     * addresses (≈ LMA + offset).  With the QEMU linker script LMA=0x40080000
+     * but the RPi3 loading the image at 0x80000, those linker-time addresses
+     * point 0x40000000 bytes past the actual runtime location — outside RPi3
+     * DRAM.  We use ADR (PC-relative, always gives the RUNTIME PA) to compute
+     * each table's actual physical address and store it into the parent entry.
+     *
+     * x21 = DRAM_BASE (0x00000000 for RPi3, 0x40000000 for QEMU virt)
+     *        set in _start_real by PC-range comparison.
+     *
+     * Tables patched:
+     *   boot_l4pt[0]      → runtime PA of boot_l3pt_low   (TTBR0 identity PGD)
+     *   boot_l4pt[256]    → runtime PA of boot_l3pt_high  (TTBR0 high-half PGD)
+     *   boot_l4pt_kern[0] → runtime PA of boot_l3pt_high  (TTBR1 kernel PGD)
+     *   boot_l4pt_kern[256]→ runtime PA of boot_l3pt_linear(TTBR1 linear PGD)
+     *   boot_l3pt_low[0]  → runtime PA of boot_l2pt_gb0   (identity PMD for GB0)
+     *   boot_l3pt_high[0] → PTE_NORMAL_1G | DRAM_BASE     (kernel high-half → DRAM)
+     * ----------------------------------------------------------------------- */
+
+    /* boot_l4pt[0] = runtime PA(boot_l3pt_low) | MM_TYPE_TABLE */
+    adr     x9,  boot_l3pt_low
+    add     x9,  x9, #MM_TYPE_TABLE
+    adr     x10, boot_l4pt
+    str     x9,  [x10]
+
+    /* boot_l4pt[256] = runtime PA(boot_l3pt_high) | MM_TYPE_TABLE */
+    adr     x9,  boot_l3pt_high
+    add     x9,  x9, #MM_TYPE_TABLE
+    add     x10, x10, #(256 * 8)
+    str     x9,  [x10]
+
+    /* boot_l4pt_kern[0] = same boot_l3pt_high PA (x9 still valid) */
+    adr     x10, boot_l4pt_kern
+    str     x9,  [x10]
+
+    /* boot_l4pt_kern[256] = runtime PA(boot_l3pt_linear) | MM_TYPE_TABLE */
+    adr     x9,  boot_l3pt_linear
+    add     x9,  x9, #MM_TYPE_TABLE
+    add     x10, x10, #(256 * 8)
+    str     x9,  [x10]
+
+    /* boot_l3pt_low[0] = runtime PA(boot_l2pt_gb0) | MM_TYPE_TABLE */
+    adr     x9,  boot_l2pt_gb0
+    add     x9,  x9, #MM_TYPE_TABLE
+    adr     x10, boot_l3pt_low
+    str     x9,  [x10]
+
+    /* boot_l3pt_high[0] = PTE_NORMAL_1G | DRAM_BASE
+     *   QEMU: 0x705 | 0x40000000 = 0x40000705 (maps VA[0-1GB) → PA 0x40000000)
+     *   RPi3: 0x705 | 0x00000000 = 0x00000705 (maps VA[0-1GB) → PA 0x00000000) */
+    ldr     x9,  =0x705             /* PTE_NORMAL_1G flags */
+    add     x9,  x9,  x21           /* | DRAM_BASE */
     adr     x10, boot_l3pt_high
-    str     x9, [x10]               /* patch boot_l3pt_high[0] */
+    str     x9,  [x10]
+
     dsb     sy
     isb
 
-    /* Load boot page tables */
-    /* TTBR0: identity map (low VA == PA, covers boot code at load address) */
+    /* Load boot page tables (using runtime addresses via adr) */
     adr     x2, boot_l4pt
-    msr     ttbr0_el1, x2
-    /* TTBR1: separate kernel table mapping high VA → DRAM (PA DRAM_BASE+) */
+    msr     ttbr0_el1, x2           /* TTBR0: identity map VA==PA */
     adr     x2, boot_l4pt_kern
-    msr     ttbr1_el1, x2
+    msr     ttbr1_el1, x2           /* TTBR1: high-half kernel + linear map */
     isb
 
     ldr     x3, =TCR_VALUE
@@ -225,6 +317,9 @@ jump_to_main:
     ldr     x5, =SCTLR_MMU_ENABLED
     msr     sctlr_el1, x5
     isb
+
+    /* DEBUG MARKER 'C': MMU enabled, still running in identity-mapped low VA. */
+    rpi3_putch 'C'
 
     /* Set SP to boot_stack_top (now in DRAM at ~0x400c5dd0 with KERNEL_LMA=0x40080000).
      * adr is PC-relative so it computes the correct physical/identity-mapped address. */
@@ -357,6 +452,9 @@ _start_virt:
     ldr     x8, =0xffff000000000000
     add     sp, x7, x8              /* SP_virt = SP_phys - DRAM_BASE + HIGH_HALF */
 
+    /* DEBUG MARKER 'D': _start_virt reached, SP now in high VA, MMU on. */
+    rpi3_putch 'D'
+
     /* Initialize TPIDR_EL1 to &__cpu_local_start so that CPU-local accesses
      * work before the full CPU-local initialisation in Rust.  This mirrors
      * what RISC-V does with `la gp, __cpu_local_start`. */
@@ -375,6 +473,24 @@ _start_virt:
     cmp     x10, x11
     blt     1b
 2:
+
+    /* DEBUG MARKER 'E': _start_virt done — about to branch into Rust. */
+    rpi3_putch 'E'
+
+    /* Install our own EL1 exception vectors NOW — before the Rust prologue runs —
+     * so any fault in aarch64_boot's prologue goes to our handler (prints
+     * ESR/ELR/FAR and loops) instead of U-Boot's handler (resets the CPU).
+     * vector_table_el1 is in .text at a high VA; adr gives the correct address
+     * because we are already running at the high VA here. */
+.extern vector_table_el1
+    adr     x9, vector_table_el1
+    msr     vbar_el1, x9
+    isb
+
+    /* DEBUG MARKER 'F': VBAR_EL1 installed.  If we see 'F' on serial but not
+     * any [sec] output, the prologue DID NOT fault.
+     * If we see 'E' but not 'F', something between 'E' and here is wrong (impossible). */
+    rpi3_putch 'F'
 
     /* Restore x0 (DTB paddr, per AArch64 boot protocol) and x1 (reserved=0)
      * that were saved in x19/x20 at _start before debug macros clobbered them. */

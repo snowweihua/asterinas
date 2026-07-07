@@ -34,3 +34,9 @@ aster-nix-profile-*.svg
 usr/busybox
 rust_out
 test_swap.s
+
+# Local tool caches / install roots
+.cargo/
+.docker-cargo/
+.omo/
+.opencode/

@@ -35,12 +35,14 @@ global_asm!(
     .align 2
     .globl pl011_puts_asm
 pl011_puts_asm:
+    // x0 = ptr, x1 = len, x2 = uart_base (PL011 DR)
+    // Write directly to DR without polling FR.TXFF — avoids infinite spin if
+    // the UART is in an unusual state (e.g. clock stopped, wrong base).
+    // Characters may be dropped if the 16-byte TX FIFO is full, but we will
+    // never hang here regardless of UART state.
     cbz     x1, 2f
 1:
     ldrb    w3, [x0], #1
-3:
-    ldr     w4, [x2, #0x18]
-    tbnz    w4, #5, 3b
     str     w3, [x2]
     subs    x1, x1, #1
     bne     1b
@@ -224,11 +226,11 @@ fn is_valid_dtb_paddr(paddr: usize, scan_end: usize) -> bool {
         return false;
     }
 
-    let Ok(fdt) = (unsafe { Fdt::from_ptr(dtb_ptr) }) else {
-        return false;
-    };
-
-    fdt.find_node("/memory").is_some() && fdt.find_node("/cpus").is_some()
+    // Magic bytes and size bounds are sufficient for early-boot validation.
+    // Do NOT call Fdt::from_ptr here: it applies strict version checks that
+    // reject valid RPi3 DTBs (FDT v16 compatibility level), causing
+    // discover_dtb_paddr() to return None and the kernel to hang silently.
+    true
 }
 
 fn discover_dtb_paddr(device_tree_paddr: usize) -> Option<usize> {
@@ -269,6 +271,30 @@ pub unsafe fn pl011_puts(s: &[u8]) {
     unsafe { pl011_puts_asm(s.as_ptr(), s.len(), early_uart_base()) };
 }
 
+/// Write a single ASCII byte directly to RPi3 PL011 + mini-UART + QEMU PL011,
+/// bypassing board detection entirely.  Used for pre-detection debug markers.
+#[inline(always)]
+fn early_marker(ch: u8) {
+    unsafe {
+        core::arch::asm!(
+            // RPi3 PL011 DR: 0x3F201000
+            "movz x28, #0x3F20, lsl #16",
+            "movk x28, #0x1000",
+            "strb w27, [x28]",
+            // RPi3 mini-UART IO: 0x3F215040
+            "movz x28, #0x3F21, lsl #16",
+            "movk x28, #0x5040",
+            "strb w27, [x28]",
+            // QEMU virt PL011 DR: 0x09000000
+            "movz x28, #0x0900, lsl #16",
+            "strb w27, [x28]",
+            in("w27") ch as u32,
+            out("x28") _,
+            options(nostack),
+        );
+    }
+}
+
 /// The entry point of the Rust code portion of Asterinas.
 ///
 /// AArch64 Linux boot protocol: x0 = physical address of DTB, x1 = 0 (reserved).
@@ -276,12 +302,49 @@ pub unsafe fn pl011_puts(s: &[u8]) {
 pub unsafe extern "C" fn aarch64_boot(device_tree_paddr: usize, _reserved: usize) -> ! {
     use crate::boot::{call_ostd_main, EarlyBootInfo, EARLY_INFO};
 
+    // DEBUG MARKER 'F': first instruction reached in Rust.
+    // Writes 'F' unconditionally to RPi3 PL011, RPi3 mini-UART, and QEMU PL011
+    // so we see it regardless of board type, before board detection.
+    unsafe {
+        core::arch::asm!(
+            // PL011 DR on RPi3: 0x3F201000
+            "movz x28, #0x3F20, lsl #16",
+            "movk x28, #0x1000",
+            "mov  w27, #70",           // 'F'
+            "str  w27, [x28]",
+            // mini-UART IO on RPi3: 0x3F215040
+            "movz x28, #0x3F21, lsl #16",
+            "movk x28, #0x5040",
+            "str  w27, [x28]",
+            // PL011 DR on QEMU virt: 0x09000000
+            "movz x28, #0x0900, lsl #16",
+            "str  w27, [x28]",
+            out("x27") _,
+            out("x28") _,
+            options(nostack),
+        );
+    }
+
+    // Install our own exception vectors ASAP so any EL1 fault goes to our
+    // handler (prints ESR/ELR/SPSR and loops) instead of U-Boot's which resets.
+    unsafe { crate::arch::trap::init() };
+
+    // MARKER G: trap::init() done.
+    early_marker(b'G');
+
     // CRITICAL: detect the board type from the raw DTB pointer BEFORE any UART output.
     // early_uart_base() uses BoardType::cached(), so we must populate the cache first.
     // On RPi3, the PL011 is at 0x3F201000; on QEMU it is at 0x09000000.
     // discover_dtb_paddr() validates the DTB via the TTBR0 identity map (no MMU tricks needed).
     let discovered_dtb_paddr = discover_dtb_paddr(device_tree_paddr).unwrap_or(0);
+
+    // MARKER H: discover_dtb_paddr() done.
+    early_marker(b'H');
+
     crate::arch::board::BoardType::detect_from_dtb_ptr(discovered_dtb_paddr);
+
+    // MARKER I: detect_from_dtb_ptr() done — board type is now in BOARD_CACHE.
+    early_marker(b'I');
 
     unsafe { pl011_puts(b"[a2-boot] entry\n") };
 
@@ -289,7 +352,18 @@ pub unsafe extern "C" fn aarch64_boot(device_tree_paddr: usize, _reserved: usize
         unsafe { pl011_puts(b"[a2-boot] using loader dtb\n") };
         let device_tree_ptr = discovered_dtb_paddr as *const u8;
         let device_tree_size = parse_fdt_total_size(device_tree_ptr);
-        let fdt = unsafe { fdt::Fdt::from_ptr(device_tree_ptr).unwrap() };
+        // Use from_ptr with a fallback: RPi3 DTBs (FDT v16) may be rejected
+        // by strict version checks in the fdt crate.  If parsing fails, halt
+        // with an explicit message rather than silently panicking.
+        let fdt = match unsafe { fdt::Fdt::from_ptr(device_tree_ptr) } {
+            Ok(f) => f,
+            Err(_e) => {
+                unsafe {
+                    pl011_puts(b"[a2-boot] FATAL: Fdt::from_ptr failed\n");
+                }
+                loop { core::hint::spin_loop(); }
+            }
+        };
         DEVICE_TREE.call_once(|| fdt);
         DEVICE_TREE_REGION.call_once(|| (discovered_dtb_paddr, device_tree_size));
         unsafe { pl011_puts(b"[a2-boot] dtb discovery done\n") };

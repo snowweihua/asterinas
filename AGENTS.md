@@ -34,21 +34,26 @@ docker run --rm -v /home/snow/asterinas:/root/asterinas asterinas/aarch64-dev:la
 - Use `.github/agent_state/` for recovery checkpoints
 - Use `target/agent_logs/` for run logs
 
-## Current Status (2026-07-23)
+## Current Status (2026-07-07)
 
 **Completed:** P0.1, P0.2, P1.1, P1.2, P1.3, P2.2, P3.1, P4.1, P4.2, P5.1 (RPi3 hardware),
 initramfs hang fix, VirtIO init fix, user-space shell (QEMU + RPi3), timer IRQs (QEMU + RPi3),
-PL011 UART RX interrupt (QEMU + RPi3), exception table for fallible user-memory access,
-RPi3 silent boot fix (UART address, MMU, platform detection)
+PL011 UART RX interrupt (QEMU + RPi3), exception table for fallible user-memory access
 
-**Latest commits (2026-07-23) — RPi3 silent boot fixes:**
-- boot.S: text_offset=0x80000, PC-based DRAM_BASE detection (RPi3=0 / QEMU=0x40000000),
-  dynamic boot_l3pt_high patch, RPi3 peripheral bus (0x3F000000–0x3FFFFFFF) mapped Device,
-  SP fixup uses detected DRAM_BASE instead of hardcoded 0x40000000
-- serial.rs: PL011_BASE_PA_RPI3 = 0x3F201000 (was 0x3F215030), IMSC at offset 0x038
-- boot/mod.rs: early_uart_base() RPi3 = 0x3F201000; board detection BEFORE first pl011_puts;
-  kernel_phys_range/parse_memory_regions use dram_base() from DTB (works for both boards)
-- board.rs: detect_from_dtb_ptr() parses raw FDT for "bcm2837"/"raspberrypi" compatible
+**In Progress:** RPi3 boot hangs after marker 'I'.
+- Kernel now prints all early markers `ABCDEFFGHI` on real RPi3 3B hardware.
+- It then hangs silently before `[a2-boot] entry\n` appears.
+- Suspected causes: wrong board cache (QEMU selected instead of RPi3), PL011 32-bit store failing, or a silent panic after board detection.
+- See `.github/agent_state/2026-07-07-rpi3-boot-marker-i-hang.md` for full analysis.
+
+**Latest commits (2026-07-07) — RPi3 silent boot instrumentation:**
+- boot.S: marker A-D/F, VBAR_EL1 set in `_start_virt` before branching to Rust,
+  text_offset=0x80000, PC-based DRAM_BASE detection, RPi3 peripheral bus mapped Device
+- boot/mod.rs: markers E/F/G/H/I, `early_marker()` raw putchar, `pl011_puts_asm` without
+  FR.TXFF polling, fatal message around `Fdt::from_ptr()` failure
+- board.rs: `detect_from_dtb_ptr()` scans raw DTB bytes for `bcm2837`/`raspberrypi` instead
+  of using `fdt::Fdt::from_ptr()` for early identification
+- trap/mod.rs: exception handler writes diagnostic output to both RPi3 and QEMU UARTs
 
 **Previous working commits (2026-07-03):**
 - `462cc567` — aarch64: implement PL011 UART RX interrupt for interactive shell
@@ -97,12 +102,12 @@ RPi3 silent boot fix (UART address, MMU, platform detection)
 - `sync_exception_current` checks `.ex_table` for EL1 DABTs from user-space addresses.
 - Without this, `write()` with an invalid user buf caused EL1 DABT hang.
 
-**Current boot status (2026-07-03):**
+**Current boot status (2026-07-07):**
 
 | Platform | Boot | Timer | Shell prompt | Interactive input | Notes |
 |----------|------|-------|-------------|------------------|-------|
 | QEMU virt (cortex-a72) | ✅ | ✅ CNTP IRQ 30 | ✅ `/ #` | ❌ stdin multiplexing issue | RX interrupt implemented |
-| RPi3 3B (hardware) | ✅ | ✅ CNTV IRQ 16 | ✅ `/ #` | ✅ works | first-boot PSCI reset |
+| RPi3 3B (hardware) | ⚠️ markers `ABCDEFFGHI` | ✅ CNTV IRQ 16 | ❌ hangs before prompt | ❌ not reached | first-boot PSCI reset; hang after marker 'I' |
 
 **Remaining diagnostic probes in tree (to remove):**
 - `kernel/src/fs/rootfs.rs`: `[unpack]` probes, `[rootfs]` entries

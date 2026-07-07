@@ -1,10 +1,9 @@
 # Latest Log Pointer
 
-- Latest stable verification runtime (pre-Phase II): `target/agent_logs/20260316_dtb_final_clean_run.txt`
-- Latest Phase II build log: `target/agent_logs/20260318_phase2_step1_build.txt` (`BUILD_EXIT=0`)
-- Latest Phase II run log: `target/agent_logs/20260318_phase2_step1_run.txt` (`RUN_EXIT=124`)
-- Current key observation: runtime reaches `AMVRB` then enters panic/oops path; `addr2line` maps the crash path to `ostd::mm::frame::allocator::init` calling global allocator `add_free_memory`.
-- Active blocker after Phase II step1: allocator panic during early OSTD init must be fixed before validating new GIC/timer path end-to-end.
-- Latest iterative build log: `target/agent_logs/20260318_phase2_step12_build.txt` (`BUILD_EXIT=0`)
-- Latest iterative run log: `target/agent_logs/20260318_phase2_step12_run.txt` (`RUN_EXIT=124`)
-- Latest coherent boundary: boot now reaches `[a2-5] ostd init done` and `[kernel] OSTD initialized. Preparing components.` before stalling in later kernel init path.
+- **Current checkpoint:** `2026-07-07-rpi3-boot-marker-i-hang.md`
+- **Branch:** `aarch64_support`
+- **Base commit:** `e08c4255` — "aarch64: fix RPi3 silent boot — UART address, MMU, platform detection"
+- **Latest build:** `target/osdk/aster-nix/kernel8_raw.bin` (built 2026-07-07)
+- **Latest RPi3 serial capture:** `ABCDEFFGHI` then hang after marker 'I'
+- **Active blocker:** Kernel hangs after `detect_from_dtb_ptr()` / before/after `[a2-boot] entry\n` is visible on RPi3 serial.
+- **Next hypothesis to test:** `BoardType::cached()` may be wrong (QEMU selected), or `pl011_puts_asm` 32-bit store fails on RPi3, or `Fdt::from_ptr` / `DEVICE_TREE.call_once` panics silently.

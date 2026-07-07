@@ -20,15 +20,69 @@ pub(crate) unsafe fn init() {
     }
 }
 
+/// Write a hex nibble to both RPi3 PL011 and QEMU PL011 directly.
+#[inline(always)]
+fn raw_put_hex_nibble(v: u8) {
+    let ch: u8 = if v < 10 { b'0' + v } else { b'a' + v - 10 };
+    unsafe {
+        core::arch::asm!(
+            "movz x28, #0x3F20, lsl #16",
+            "movk x28, #0x1000",
+            "strb w27, [x28]",
+            "movz x28, #0x0900, lsl #16",
+            "strb w27, [x28]",
+            in("w27") ch as u32,
+            out("x28") _,
+            options(nostack),
+        );
+    }
+}
+
+/// Print a usize as 16 hex digits to both UARTs unconditionally.
+fn raw_put_hex(v: usize) {
+    for shift in (0..64).rev().step_by(4) {
+        raw_put_hex_nibble(((v >> shift) & 0xf) as u8);
+    }
+}
+
+/// Print a static string byte-by-byte to both UARTs unconditionally.
+fn raw_puts(s: &[u8]) {
+    for &b in s {
+        unsafe {
+            core::arch::asm!(
+                "movz x28, #0x3F20, lsl #16",
+                "movk x28, #0x1000",
+                "strb w27, [x28]",
+                "movz x28, #0x0900, lsl #16",
+                "strb w27, [x28]",
+                in("w27") b as u32,
+                out("x28") _,
+                options(nostack),
+            );
+        }
+    }
+}
+
 /// Handle synchronous exceptions from current EL (kernel exceptions).
 #[unsafe(no_mangle)]
 extern "C" fn sync_exception_current(f: &mut TrapFrame) {
     let esr = ESR_EL1.get() as usize;
     let ec = (esr >> 26) & 0x3f;
 
+    // Always print raw hex to both UARTs — board detection may not have run yet.
+    raw_puts(b"\r\n[sec] ESR=");
+    raw_put_hex(esr);
+    raw_puts(b" ELR=");
+    raw_put_hex(f.elr_el1);
+    raw_puts(b" LR=");
+    raw_put_hex(f.lr);
+
     match ec {
         0x24 | 0x25 => {
             let far = FAR_EL1.get() as usize;
+            raw_puts(b" FAR=");
+            raw_put_hex(far);
+            raw_puts(b"\r\n");
             if far < MAX_USERSPACE_VADDR {
                 let cpu_exception = CpuExceptionInfo {
                     code: if ec == 0x24 {
@@ -58,6 +112,7 @@ extern "C" fn sync_exception_current(f: &mut TrapFrame) {
             );
         }
         _ => {
+            raw_puts(b"\r\n");
             crate::early_println!(
                 "[sec] sync_exception_current: ESR={:#x} ELR={:#x} SPSR={:#x} LR={:#x}",
                 esr,

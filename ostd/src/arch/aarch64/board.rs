@@ -75,26 +75,26 @@ impl BoardType {
             return BoardType::QemuVirt;
         }
 
-        // Parse the FDT to read the root /compatible string.
-        // SAFETY: we have verified the magic bytes and the DTB is accessible via
-        // the boot identity map (TTBR0) which covers the full 32-bit PA space.
-        let board = match unsafe { fdt::Fdt::from_ptr(dtb_ptr as *const u8) } {
-            Ok(fdt) => {
-                let compat_bytes = fdt
-                    .find_node("/")
-                    .and_then(|n| n.property("compatible"))
-                    .map(|p| p.value)
-                    .unwrap_or(&[]);
-                // Match BCM2837 (RPi3 3B/3B+) or generic "raspberrypi" compatible strings.
-                if compat_bytes.windows(7).any(|w| w == b"bcm2837")
-                    || compat_bytes.windows(11).any(|w| w == b"raspberrypi")
-                {
-                    BoardType::RaspberryPi3
-                } else {
-                    BoardType::QemuVirt
-                }
-            }
-            Err(_) => BoardType::QemuVirt,
+        // Read the FDT total size (big-endian u32 at offset 4).
+        let total_size_bytes =
+            unsafe { core::slice::from_raw_parts((dtb_ptr + 4) as *const u8, 4) };
+        let total_size =
+            u32::from_be_bytes([total_size_bytes[0], total_size_bytes[1], total_size_bytes[2], total_size_bytes[3]])
+                as usize;
+        // Clamp to a reasonable maximum (2 MB) to avoid huge scans.
+        let scan_size = total_size.min(2 * 1024 * 1024);
+
+        // Scan raw DTB bytes for well-known RPi3 compatible strings.
+        // This avoids the `fdt` crate's path-based find_node() which may fail
+        // when the root node compatible property is not directly accessible via
+        // find_node("/") (some FDT implementations or crate versions differ).
+        let dtb_bytes = unsafe { core::slice::from_raw_parts(dtb_ptr as *const u8, scan_size) };
+        let board = if dtb_bytes.windows(7).any(|w| w == b"bcm2837")
+            || dtb_bytes.windows(11).any(|w| w == b"raspberrypi")
+        {
+            BoardType::RaspberryPi3
+        } else {
+            BoardType::QemuVirt
         };
 
         if board.is_hardware() {

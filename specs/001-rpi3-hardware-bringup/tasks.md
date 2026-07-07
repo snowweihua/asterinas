@@ -19,6 +19,18 @@
 
 - [x] T001 [P] Build kernel and verify QEMU virt boot still works after any changes
 - [ ] T002 [P] Boot RPi3 hardware and verify which issues are reproducible: D-cache hang, stat SIGSEGV, reboot hang, SMP failure
+  - **T002.1** [P] Add UARTCR init (0x301 = UARTEN + TXE) at `_start_real` → kernel NOT hanging, UART output issue
+  - **T002.2** [P] Add GPIO setup for PL011 ALT0 function (pins 14,15) at GPFSEL1 → kernel NOT hanging, UART output issue
+  - **T002.3** [P] Add marker putchars ('S', 'A') at `_start_real` entry and before MMU jump → kernel IS reaching `_start_real`, serial not visible
+  - **T002.4** [P] Read CurrentEL to verify exception level → EL3 boot, drop to EL1 works
+  - **T002.5** [P] Parse DTB for actual UART address in chosen node → verify UART base address
+  - **T002.6** [P] Test with UART output using `early_putchar` macro (busy-wait TX) → verify UART hardware connection
+  - **T002.7** Investigate: kernel boots ("Starting kernel...") but serial output invisible — possible causes: (a) UART not connected to serial header, (b) baud rate mismatch, (c) output redirected elsewhere, (d) UART works but getc not receive mode
+  - **T002.8** [P] Restore boot.S from working commit (05829a3b), add RPi3-specific UART setup properly
+  - **T002.9** [P] Verify text_offset=0x0 for RPi3 booti compatibility (entry = load_addr + text_offset)
+  - **T002.10** [P] Test: kernel boots but 'K' marker not visible — UART setup may be wrong or UART clock disabled
+  - **T002.11** [P] Current status: kernel boots (booti runs, "Starting kernel..." appears), but 'K' marker not visible. Binary header correct (b _start_real at offset 0x00), text_offset=0 (entry = 0x80000, which hits header and branches to _start_real at 0x80040). Issue likely: (a) UART not properly initialized despite GPIO/UARTCR setup, (b) UART clock not enabled in Clock Manager, (c) something else preventing UART peripheral access.
+  - **T002.12** Next debugging steps: (a) Try Mini UART instead of PL011, (b) verify UART clock via CM registers, (c) try polling UART DR directly without waiting for TX buffer, (d) check if kernel is actually reaching putchar code via memory marker
 - [x] T003 Verify initramfs is being loaded correctly by checking for `[unpack]` and `[rootfs]` probes in serial log
 
 ---
