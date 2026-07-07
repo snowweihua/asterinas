@@ -3,7 +3,9 @@
 //! AArch64 console I/O via PL011 UART.
 
 const PL011_BASE_PA_QEMU: usize = 0x0900_0000;
-const PL011_BASE_PA_RPI3: usize = 0x3F215030;
+/// RPi3 PL011 UART0 base PA (BCM2837 peripheral base 0x3F000000 + UART0 offset 0x201000).
+/// Requires config.txt: enable_uart=1, dtoverlay=disable-bt (frees PL011 from Bluetooth).
+const PL011_BASE_PA_RPI3: usize = 0x3F20_1000;
 const PL011_LINEAR_OFFSET: usize = 0xffff_8000_0000_0000;
 
 fn pl011_base_va() -> usize {
@@ -19,6 +21,8 @@ fn pl011_base_va() -> usize {
 const FR_TXFF: u32 = 1 << 5;
 const FR_RXFE: u32 = 1 << 4;
 const IM_RXIM: u32 = 1 << 4;
+/// PL011 IMSC (Interrupt Mask Set/Clear) is at offset 0x038, not 0x004 (which is RSR/ECR).
+const PL011_IMSC_OFFSET: usize = 0x038;
 
 #[inline(always)]
 fn read_fr() -> u32 {
@@ -32,7 +36,9 @@ fn read_dr() -> u32 {
 
 #[inline(always)]
 fn set_im(value: u32) {
-    unsafe { core::ptr::write_volatile((pl011_base_va() + 0x004) as *mut u32, value) }
+    unsafe {
+        core::ptr::write_volatile((pl011_base_va() + PL011_IMSC_OFFSET) as *mut u32, value)
+    }
 }
 
 pub(crate) fn init() {}

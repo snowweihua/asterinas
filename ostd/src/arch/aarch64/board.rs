@@ -59,24 +59,49 @@ impl BoardType {
     }
 
     /// Detects board type from raw DTB pointer (before DEVICE_TREE is set).
-    /// Used by early_puts before any Rust infrastructure is available.
-    /// Returns QemuVirt if DTB pointer is null or invalid.
+    /// Parses the FDT's root `/compatible` property to identify RPi3.
+    /// Returns and caches QemuVirt if the pointer is null, the FDT is invalid,
+    /// or no RPi3 compatible string is found.
     pub fn detect_from_dtb_ptr(dtb_ptr: usize) -> Self {
-        // Check the boot code's board detection first (set in boot.S based on PC).
-        // Marker is placed in .text so Rust can access it; boot.S writes via phys addr.
-        #[unsafe(no_mangle)]
-        #[unsafe(link_section = ".text")]
-        static mut BOOT_BOARD_IS_RPI3: u64 = 0;
-        if unsafe { BOOT_BOARD_IS_RPI3 } != 0 {
-            Self::cache(BoardType::RaspberryPi3);
-            return BoardType::RaspberryPi3;
+        if dtb_ptr == 0 {
+            Self::cache(BoardType::QemuVirt);
+            return BoardType::QemuVirt;
         }
 
-        // BOOT_BOARD_IS_RPI3 = 0 means QEMU virt (PC >= 0x4000_0000).
-        // QEMU also passes a valid DTB in x0, so we cannot use dtb_ptr validity
-        // to distinguish QEMU from RPi3 — trust the PC-based marker instead.
-        Self::cache(BoardType::QemuVirt);
-        BoardType::QemuVirt
+        // Verify the FDT magic bytes (big-endian 0xd0_0d_fe_ed).
+        let header = unsafe { core::slice::from_raw_parts(dtb_ptr as *const u8, 4) };
+        if header != [0xd0, 0x0d, 0xfe, 0xed] {
+            Self::cache(BoardType::QemuVirt);
+            return BoardType::QemuVirt;
+        }
+
+        // Parse the FDT to read the root /compatible string.
+        // SAFETY: we have verified the magic bytes and the DTB is accessible via
+        // the boot identity map (TTBR0) which covers the full 32-bit PA space.
+        let board = match unsafe { fdt::Fdt::from_ptr(dtb_ptr as *const u8) } {
+            Ok(fdt) => {
+                let compat_bytes = fdt
+                    .find_node("/")
+                    .and_then(|n| n.property("compatible"))
+                    .map(|p| p.value)
+                    .unwrap_or(&[]);
+                // Match BCM2837 (RPi3 3B/3B+) or generic "raspberrypi" compatible strings.
+                if compat_bytes.windows(7).any(|w| w == b"bcm2837")
+                    || compat_bytes.windows(11).any(|w| w == b"raspberrypi")
+                {
+                    BoardType::RaspberryPi3
+                } else {
+                    BoardType::QemuVirt
+                }
+            }
+            Err(_) => BoardType::QemuVirt,
+        };
+
+        if board.is_hardware() {
+            IS_HARDWARE.store(true, Ordering::Relaxed);
+        }
+        Self::cache(board);
+        board
     }
 
     /// Returns true if running on QEMU (needs TLB workarounds).

@@ -2,8 +2,12 @@
 
 /* AArch64 early boot stub.
  *
- * Execution starts at _start (loaded at physical address 0x40080000 by QEMU
- * "virt" board via the kernel Image header).  The stub:
+ * Execution starts at _start.  The ARM64 Image header carries text_offset=0x80000,
+ * so U-Boot's booti places the kernel at DRAM_BASE+0x80000:
+ *   - QEMU virt: DRAM_BASE=0x40000000 → loaded at PA 0x40080000
+ *   - RPi3 3B:   DRAM_BASE=0x00000000 → loaded at PA 0x00080000
+ * Platform detection via PC at _start_real sets x21=DRAM_BASE and patches the
+ * boot page tables so the same binary works on both boards.  The stub:
  *
  *   1. Drops from EL3 -> EL2 (if at EL3).
  *   2. Drops from EL2 -> EL1 (always).
@@ -75,17 +79,14 @@ PTE_NORMAL_2M  = ( MM_TYPE_BLOCK | PTE_AIDX_MEMORY | PTE_SH_INNER | PTE_AF )
  * Boot section
  * -------------------------------------------------------------------------- */
 
-UART_BASE_QEMU  = 0x09000000
-UART_BASE_RPI3  = 0x3F215030
-
+/* Macro: write character to PL011 at 0x09000000 (QEMU, no MMU, polled).
+ * For RPi3 early output, pl011_puts_asm in mod.rs is used after MMU is on. */
 .macro  early_uart_putchar char
     mov     w0, #\char
-    movz    x1, #0x3F21, lsl #16
-    movk    x1, #0x5030
-1:  ldr     w2, [x1, #0x18]
-    tbnz    w2, #5, 1b
-    str     w0, [x1]
-    dsb     sy
+    ldr     x1, =0x09000000
+1:  ldr     w2, [x1, #0x18]         /* FR register */
+    tbnz    w2, #5, 1b              /* wait while TXFF=1 */
+    str     w0, [x1, #0x00]         /* write to DR */
 .endm
 
 .section ".boot", "awx", @progbits
@@ -112,7 +113,7 @@ _start:
      */
     b       _start_real              /* [0x00] code0 */
     .long   0                        /* [0x04] code1 */
-    .quad   0x80000                  /* [0x08] text_offset (LMA − RAM base) */
+    .quad   0x80000                  /* [0x08] text_offset (LMA − RAM base; QEMU: 0x40080000, RPi3: 0x80000) */
     .quad   0                        /* [0x10] image_size */
     .quad   0                        /* [0x18] flags */
     .quad   0                        /* [0x20] res2 */
@@ -122,17 +123,22 @@ _start:
     .long   0                        /* [0x3c] res5 */
 
 _start_real:
-    movz    x0, #0x3F21, lsl #16
-    movk    x0, #0x5030
-    mov     w1, #0x4B
-    str     w1, [x0]
-    dsb     sy
     /* AArch64 Linux boot protocol: x0 = DTB physical address, x1 = 0 (reserved).
-     * Save to callee-saved registers before any debug macros clobber them. */
+     * Save to callee-saved registers immediately before anything clobbers them. */
     mov     x19, x0
     mov     x20, x1
-    mov     x0, x19
-    mov     x1, x20
+
+    /* PC-based platform detection: determine DRAM base for this platform.
+     *   PC < 0x40000000 → RPi3 (booti relocated us to DRAM_BASE+0x80000 = 0x80000)
+     *   PC >= 0x40000000 → QEMU virt (kernel loaded at DRAM_BASE+0x80000 = 0x40080000)
+     * Store DRAM_BASE in x21; survives EL-switch eret and is used in:
+     *   - jump_to_main: patch boot_l3pt_high[0] for correct high-VA → PA mapping
+     *   - _start_virt: fix up SP from physical to virtual address */
+    adr     x21, .                          /* x21 = current PC (physical) */
+    ldr     x22, =0x40000000               /* QEMU/RPi4 DRAM boundary */
+    cmp     x21, x22
+    csel    x21, xzr, x22, lo              /* RPi3: x21 = 0; QEMU: x21 = 0x40000000 */
+
     /* Detect current exception level [3:2] of CurrentEL */
     mrs     x2, CurrentEL
     and     x2, x2, #0b1100
@@ -183,11 +189,22 @@ switch_to_el1_from_el2:
  * EL1: configure paging, enable MMU, jump to virtual addresses
  * -------------------------------------------------------------------------- */
 jump_to_main:
+    /* Dynamically patch boot_l3pt_high[0] so that VA 0xffff000000000000+X → PA DRAM_BASE+X.
+     * PTE_NORMAL_1G flags = MM_TYPE_BLOCK | PTE_AIDX_MEMORY | PTE_SH_INNER | PTE_AF = 0x705.
+     * For QEMU: DRAM_BASE=0x40000000 → PTE = 0x40000705 (PA 0x40000000 1 GB block)
+     * For RPi3: DRAM_BASE=0x00000000 → PTE = 0x00000705 (PA 0x00000000 1 GB block) */
+    ldr     x9, =0x705              /* PTE_NORMAL_1G flags */
+    add     x9, x9, x21             /* add DRAM_BASE (x21 from _start_real) */
+    adr     x10, boot_l3pt_high
+    str     x9, [x10]               /* patch boot_l3pt_high[0] */
+    dsb     sy
+    isb
+
     /* Load boot page tables */
-    /* TTBR0: identity map (low VA == PA, covers boot code at 0x40080000) */
+    /* TTBR0: identity map (low VA == PA, covers boot code at load address) */
     adr     x2, boot_l4pt
     msr     ttbr0_el1, x2
-    /* TTBR1: separate kernel table mapping high VA → DRAM (PA 0x40000000+) */
+    /* TTBR1: separate kernel table mapping high VA → DRAM (PA DRAM_BASE+) */
     adr     x2, boot_l4pt_kern
     msr     ttbr1_el1, x2
     isb
@@ -289,18 +306,22 @@ boot_l3pt_linear:
     .zero 8 * (512 - 4)
 
 /*
- * L2 (PMD) for the first 1 GB (0x00000000–0x3FFFFFFF), 2 MB per entry.
+ * L2 page table for GB0 (0x00000000–0x3FFFFFFF).
  *
  * Keep almost everything as Normal memory so early kernel text/rodata remain
- * executable and readable with expected behavior.  Override only the PL011
- * UART window (0x09000000–0x091FFFFF, entry index 72) to Device memory.
+ * executable and readable with expected behavior.  Override:
+ *   - QEMU UART window (0x09000000–0x09FFFFFF) to Device memory (one 2 MB block)
+ *   - RPi3 peripheral window (0x3F000000–0x3FFFFFFF) to Device memory
+ *     (all 8 x 2 MB blocks: PL011 at 0x3F201000, aux/mini-uart at 0x3F215000, etc.)
  */
 .balign 4096
 boot_l2pt_gb0:
     .set _mb2, 0
     .rept 512
     .if _mb2 == 0x09000000
-    .quad ( PTE_DEVICE_2M | _mb2 )
+    .quad ( PTE_DEVICE_2M | _mb2 )          /* QEMU UART */
+    .elseif _mb2 >= 0x3F000000
+    .quad ( PTE_DEVICE_2M | _mb2 )          /* RPi3 peripheral bus (PL011, AUX, GPIO, ...) */
     .else
     .quad ( PTE_NORMAL_2M | _mb2 )
     .endif
@@ -325,15 +346,14 @@ boot_stack_top:
 .globl _start_virt
 _start_virt:
     /* Fix up SP: before enabling the MMU we set SP from an `adr` instruction,
-     * which gives the physical / identity-mapped address of boot_stack_top
-     * (somewhere around 0x400cXXXX).  Now that TTBR1 maps PA 0x40000000..
-     * 0x7fffffff to VA 0xffff000000000000..0xffff00003fffffff, the same frame
-     * is reachable at VA = PA - 0x40000000 + 0xffff000000000000.
+     * which gives the physical / identity-mapped address of boot_stack_top.
+     * TTBR1 maps PA DRAM_BASE+X to VA 0xffff000000000000+X, so:
+     *   SP_virt = SP_phys - DRAM_BASE + 0xffff000000000000
+     * x21 = DRAM_BASE (0 for RPi3, 0x40000000 for QEMU) set in _start_real.
      * Rust stack-variable addresses come from SP, so we MUST switch to the
      * high-VA stack pointer here before any Rust frame is allocated. */
     mov     x7, sp
-    ldr     x8, =0x40000000
-    sub     x7, x7, x8              /* SP - DRAM_BASE */
+    sub     x7, x7, x21             /* SP - DRAM_BASE */
     ldr     x8, =0xffff000000000000
     add     sp, x7, x8              /* SP_virt = SP_phys - DRAM_BASE + HIGH_HALF */
 

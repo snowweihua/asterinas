@@ -60,7 +60,7 @@ const FDT_MAX_TOTAL_SIZE: usize = 2 * 1024 * 1024;
 const FDT_MAGIC_BE: [u8; 4] = [0xd0, 0x0d, 0xfe, 0xed];
 
 pub fn kernel_physical_base(kernel_start: usize, kernel_loaded_offset: usize) -> usize {
-    QEMU_VIRT_RAM_BASE + (kernel_start - kernel_loaded_offset)
+    crate::arch::board::dram_base() + (kernel_start - kernel_loaded_offset)
 }
 
 fn parse_bootloader_name() -> &'static str {
@@ -88,8 +88,11 @@ fn parse_framebuffer_info() -> Option<BootloaderFramebufferArg> {
 
 fn parse_memory_regions() -> MemoryRegionArray {
     let mut regions = MemoryRegionArray::new();
-    let usable_start = QEMU_VIRT_RAM_BASE;
-    let usable_end = QEMU_VIRT_RAM_BASE + QEMU_VIRT_RAM_SCAN_SIZE;
+    // Use the actual DRAM base from the device tree (0x40000000 for QEMU, 0 for RPi3).
+    let dram_base = crate::arch::board::dram_base();
+    let usable_start = dram_base;
+    // 512 MB scan window from the DRAM base — enough for QEMU (512 MB) and RPi3 first GB.
+    let usable_end = dram_base.saturating_add(QEMU_VIRT_RAM_SCAN_SIZE);
     let (kernel_phys_start, _) = kernel_phys_range();
 
     for region in DEVICE_TREE.get().unwrap().memory().regions() {
@@ -195,9 +198,10 @@ fn kernel_phys_range() -> (usize, usize) {
         fn __kernel_end();
     }
 
+    let dram_base = crate::arch::board::dram_base();
     let offset = crate::mm::kspace::kernel_loaded_offset();
-    let start = QEMU_VIRT_RAM_BASE + (__kernel_start as usize - offset);
-    let end = QEMU_VIRT_RAM_BASE + (__kernel_end as usize - offset);
+    let start = dram_base + (__kernel_start as usize - offset);
+    let end = dram_base + (__kernel_end as usize - offset);
     (start, end)
 }
 
@@ -228,13 +232,17 @@ fn is_valid_dtb_paddr(paddr: usize, scan_end: usize) -> bool {
 }
 
 fn discover_dtb_paddr(device_tree_paddr: usize) -> Option<usize> {
-    let scan_end = QEMU_VIRT_RAM_BASE + QEMU_VIRT_RAM_SCAN_SIZE;
+    // Use a fixed upper limit large enough to cover:
+    //   - RPi3 DTB: typically at PA 0x02000000–0x04000000
+    //   - QEMU loader DTB: at PA 0x47000000
+    //   - QEMU virt RAM: 0x40000000 + 512 MB = 0x60000000
+    const DTB_SCAN_END: usize = 0x6000_0000;
 
-    if device_tree_paddr != 0 && is_valid_dtb_paddr(device_tree_paddr, scan_end) {
+    if device_tree_paddr != 0 && is_valid_dtb_paddr(device_tree_paddr, DTB_SCAN_END) {
         return Some(device_tree_paddr);
     }
 
-    if is_valid_dtb_paddr(QEMU_LOADER_DTB_PADDR, scan_end) {
+    if is_valid_dtb_paddr(QEMU_LOADER_DTB_PADDR, DTB_SCAN_END) {
         return Some(QEMU_LOADER_DTB_PADDR);
     }
 
@@ -247,10 +255,12 @@ unsafe extern "C" {
 }
 
 fn early_uart_base() -> usize {
+    // BoardType::cached() == 2 means RaspberryPi3.
+    // PL011 UART0 on BCM2837: peripheral base 0x3F000000 + UART0 offset 0x201000.
     if crate::arch::board::BoardType::cached() == 2 {
-        0x3F215030
+        0x3F20_1000
     } else {
-        0x09000000
+        0x0900_0000 // QEMU virt PL011
     }
 }
 
@@ -266,9 +276,15 @@ pub unsafe fn pl011_puts(s: &[u8]) {
 pub unsafe extern "C" fn aarch64_boot(device_tree_paddr: usize, _reserved: usize) -> ! {
     use crate::boot::{call_ostd_main, EarlyBootInfo, EARLY_INFO};
 
+    // CRITICAL: detect the board type from the raw DTB pointer BEFORE any UART output.
+    // early_uart_base() uses BoardType::cached(), so we must populate the cache first.
+    // On RPi3, the PL011 is at 0x3F201000; on QEMU it is at 0x09000000.
+    // discover_dtb_paddr() validates the DTB via the TTBR0 identity map (no MMU tricks needed).
+    let discovered_dtb_paddr = discover_dtb_paddr(device_tree_paddr).unwrap_or(0);
+    crate::arch::board::BoardType::detect_from_dtb_ptr(discovered_dtb_paddr);
+
     unsafe { pl011_puts(b"[a2-boot] entry\n") };
 
-    let discovered_dtb_paddr = discover_dtb_paddr(device_tree_paddr).unwrap_or(0);
     if discovered_dtb_paddr != 0 {
         unsafe { pl011_puts(b"[a2-boot] using loader dtb\n") };
         let device_tree_ptr = discovered_dtb_paddr as *const u8;

@@ -34,13 +34,23 @@ docker run --rm -v /home/snow/asterinas:/root/asterinas asterinas/aarch64-dev:la
 - Use `.github/agent_state/` for recovery checkpoints
 - Use `target/agent_logs/` for run logs
 
-## Current Status (2026-07-03)
+## Current Status (2026-07-23)
 
 **Completed:** P0.1, P0.2, P1.1, P1.2, P1.3, P2.2, P3.1, P4.1, P4.2, P5.1 (RPi3 hardware),
 initramfs hang fix, VirtIO init fix, user-space shell (QEMU + RPi3), timer IRQs (QEMU + RPi3),
-PL011 UART RX interrupt (QEMU + RPi3), exception table for fallible user-memory access
+PL011 UART RX interrupt (QEMU + RPi3), exception table for fallible user-memory access,
+RPi3 silent boot fix (UART address, MMU, platform detection)
 
-**Latest commits (2026-07-03):**
+**Latest commits (2026-07-23) — RPi3 silent boot fixes:**
+- boot.S: text_offset=0x80000, PC-based DRAM_BASE detection (RPi3=0 / QEMU=0x40000000),
+  dynamic boot_l3pt_high patch, RPi3 peripheral bus (0x3F000000–0x3FFFFFFF) mapped Device,
+  SP fixup uses detected DRAM_BASE instead of hardcoded 0x40000000
+- serial.rs: PL011_BASE_PA_RPI3 = 0x3F201000 (was 0x3F215030), IMSC at offset 0x038
+- boot/mod.rs: early_uart_base() RPi3 = 0x3F201000; board detection BEFORE first pl011_puts;
+  kernel_phys_range/parse_memory_regions use dram_base() from DTB (works for both boards)
+- board.rs: detect_from_dtb_ptr() parses raw FDT for "bcm2837"/"raspberrypi" compatible
+
+**Previous working commits (2026-07-03):**
 - `462cc567` — aarch64: implement PL011 UART RX interrupt for interactive shell
 - `806511eba` — aarch64: fix RPi3 timer regression — restore CNTV in set_next_timer_rpi3()
 - `a5c9f5c8c` — aarch64: fix GIC timer IRQs — set GICC_CTLR ACK_CTL bit (bit 2)
@@ -127,7 +137,7 @@ qemu-system-aarch64 \
   -kernel target/osdk/aster-nix/aster-nix-osdk-bin.qemu_elf \
   -dtb test/nix/aarch64-virt.dtb \
   -device loader,file=test/build/virt-init.dtb,addr=0x47000000,force-raw=on \
-  -device loader,file=test/build/init.cpio.gz,addr=0x48000000,force-raw=on \
+  -device loader,file=test/build/aarch64-shell-initramfs.cpio.gz,addr=0x48000000,force-raw=on \
   -append "console=ttyAMA0" -nographic -display none
 ```
 
@@ -152,7 +162,7 @@ Use "ci-runner" keyword to invoke this subagent for running AArch64 CI tests.
     -kernel target/osdk/aster-nix/aster-nix-osdk-bin.qemu_elf \
     -dtb test/nix/aarch64-virt.dtb \
     -device loader,file=test/build/virt-init.dtb,addr=0x47000000,force-raw=on \
-    -device loader,file=test/build/init.cpio.gz,addr=0x48000000,force-raw=on \
+    -device loader,file=test/build/aarch64-shell-initramfs.cpio.gz,addr=0x48000000,force-raw=on \
     -append "console=ttyAMA0" -nographic -display none
   ```
 
@@ -193,7 +203,7 @@ qemu-system-aarch64 \
   -kernel target/osdk/aster-nix/aster-nix-osdk-bin.qemu_elf \
   -dtb test/nix/aarch64-virt.dtb \
   -device loader,file=test/build/virt-init.dtb,addr=0x47000000,force-raw=on \
-  -device loader,file=test/build/init.cpio.gz,addr=0x48000000,force-raw=on \
+  -device loader,file=test/build/aarch64-shell-initramfs.cpio.gz,addr=0x48000000,force-raw=on \
   -append "console=ttyAMA0" -nographic -display none
 ```
 
@@ -321,7 +331,7 @@ qemu-system-aarch64 \
   -kernel target/osdk/aster-nix/aster-nix-osdk-bin.qemu_elf \
   -dtb test/nix/aarch64-virt.dtb \
   -device loader,file=test/build/virt-init.dtb,addr=0x47000000,force-raw=on \
-  -device loader,file=test/build/init.cpio.gz,addr=0x48000000,force-raw=on \
+  -device loader,file=test/build/aarch64-shell-initramfs.cpio.gz,addr=0x48000000,force-raw=on \
   -append "console=ttyAMA0" -nographic -display none
 ```
 
