@@ -49,6 +49,7 @@ lib.rs:init_in_first_kthread:
 3. `ostd/src/mm/frame/allocator.rs` - Skip adding memory ranges below `frame_paddr_base`
 4. `ostd/src/mm/kspace/mod.rs` - Added debug markers W, X, Y, Z
 5. `ostd/src/lib.rs` - Added debug markers M, N, P, S, T, U, V
+6. `ostd/src/logger.rs` - Changed default log level from Off to Info (T030 fix)
 
 ### Debug Probes Still in Code
 
@@ -65,16 +66,23 @@ lib.rs:init_in_first_kthread:
 - Marker 'Y' after linear mapping block
 - Marker 'Z' after metadata mapping block
 
-### Remaining Issues to Fix (T031)
+### T030 Fix Applied ✅
 
-1. **Basic serial output doesn't work** - Only inline asm `early_marker()` probes work; `info!()` macro produces no output
-2. **QEMU test has no output** - `qemu-system-aarch64 ... -nographic` produces no serial output locally
+Fixed in commit `27e0314e`:
+- Changed default log level from `LevelFilter::Off` to `LevelFilter::Info` in `ostd/src/logger.rs`
+- Also uses `set_logger_racy` for AArch64 RPi3 (CAS hangs on Device memory)
+
+**Root cause**: `get_log_level().unwrap_or(LevelFilter::Off)` returned Off when `ostd.log_level=` not in cmdline, disabling all logging.
+
+### Remaining Issues (T031)
+
+1. **QEMU test has no output** - `qemu-system-aarch64 ... -nographic` produces no serial output locally (T031)
+2. **RPi3 crash at marker W** - Early allocator exhausts all memory before `PageTable::new_kernel_page_table()` can allocate
 
 ### Suggested Next Steps
 
-1. **Fix T030 (serial output)** - Investigate why `info!()` doesn't work in early boot
-2. **Fix T031 (QEMU output)** - Get QEMU serial output working for faster iteration
-3. **Re-think early allocator design** - The early allocator should not reserve ALL memory on platforms with no high memory
+1. **Fix T031 (QEMU output)** - Get QEMU serial output working for faster iteration
+2. **Fix RPi3 early allocator issue** - The early allocator reserves ALL under-4G memory on RPi3 (no high memory), leaving no frames for page table allocation
 
 ### Related Files to Check
 
