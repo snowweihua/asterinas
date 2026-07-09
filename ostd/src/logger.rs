@@ -19,7 +19,7 @@ use core::str::FromStr;
 use log::{LevelFilter, Metadata, Record};
 use spin::Once;
 
-use crate::boot::EARLY_INFO;
+use crate::boot::get_early_info;
 
 /// Injects a logger.
 ///
@@ -39,9 +39,14 @@ pub fn inject_logger(new_logger: &'static dyn log::Log) {
 
 /// Initializes the logger. Users should avoid using the log macros before this function is called.
 pub(crate) fn init() {
-    let level = get_log_level().unwrap_or(LevelFilter::Off);
+    let level = get_log_level().unwrap_or(LevelFilter::Info);
     log::set_max_level(level);
-    log::set_logger(&LOGGER).unwrap();
+    // On AArch64 RPi3, atomic CAS (LDX/STX) hangs on memory mapped through the
+    // 1 GB block entry in boot_l3pt_high[0] because the AXI bridge between ARM
+    // and VideoCore does not support exclusive transactions. Use set_logger_racy
+    // (load + store only, no CAS) instead. Safe during single-core boot.
+    // SAFETY: Boot is single-core with interrupts disabled.
+    unsafe { log::set_logger_racy(&LOGGER).unwrap() };
 }
 
 static LOGGER: Logger = Logger::new();
@@ -86,7 +91,7 @@ impl log::Log for Logger {
 }
 
 fn get_log_level() -> Option<LevelFilter> {
-    let kcmdline = EARLY_INFO.get().unwrap().kernel_cmdline;
+    let kcmdline = get_early_info().kernel_cmdline;
 
     // Although OSTD is agnostic of the parsing of the kernel command line,
     // the logger assumes that it follows the Linux kernel command line format.
