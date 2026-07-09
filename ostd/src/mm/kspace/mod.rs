@@ -181,11 +181,16 @@ pub(crate) enum MappedItem {
 /// This function should be called before:
 ///  - any initializer that modifies the kernel page table.
 pub fn init_kernel_page_table(meta_pages: Segment<MetaPageMeta>) {
-    info!("Initializing the kernel page table");
+    #[cfg(target_arch = "aarch64")]
+    unsafe { crate::early_marker(b'W'); }
 
     // Start to initialize the kernel page table.
     let kpt = PageTable::<KernelPtConfig>::new_kernel_page_table();
+    #[cfg(target_arch = "aarch64")]
+    unsafe { crate::early_marker(b'X'); }
     let preempt_guard = disable_preempt();
+    #[cfg(target_arch = "aarch64")]
+    unsafe { crate::early_marker(b'Y'); }
 
     // In LoongArch64, we don't need to do linear mappings for the kernel because of DMW0.
     #[cfg(not(target_arch = "loongarch64"))]
@@ -205,6 +210,9 @@ pub fn init_kernel_page_table(meta_pages: Segment<MetaPageMeta>) {
                 .expect("Kernel linear address space is mapped twice");
         }
     }
+
+    #[cfg(target_arch = "aarch64")]
+    unsafe { crate::early_marker(b'Y'); }
 
     // Map the metadata pages.
     {
@@ -229,12 +237,15 @@ pub fn init_kernel_page_table(meta_pages: Segment<MetaPageMeta>) {
         }
     }
 
+    #[cfg(target_arch = "aarch64")]
+    unsafe { crate::early_marker(b'Z'); }
+
     // In LoongArch64, we don't need to do linear mappings for the kernel code because of DMW0.
     #[cfg(all(not(target_arch = "loongarch64"), not(target_arch = "aarch64")))]
     // Map for the kernel code itself.
     // TODO: set separated permissions for each segments in the kernel.
     {
-        let regions = &crate::boot::EARLY_INFO.get().unwrap().memory_regions;
+        let regions = &crate::boot::get_early_info().memory_regions;
         let region = regions
             .iter()
             .find(|r| r.typ() == MemoryRegionType::Kernel)

@@ -44,6 +44,7 @@ use core::{
     cell::UnsafeCell,
     fmt::Debug,
     mem::{size_of, ManuallyDrop, MaybeUninit},
+    ptr::addr_of_mut,
     result::Result,
     sync::atomic::{AtomicU64, AtomicUsize, Ordering},
 };
@@ -496,11 +497,9 @@ impl_frame_meta_for!(MetaPageMeta);
 ///
 /// # Safety
 ///
-/// This function should be called only once and only on the BSP,
-/// before any APs are started.
 pub(crate) unsafe fn init() -> Segment<MetaPageMeta> {
     let max_paddr = {
-        let regions = &crate::boot::EARLY_INFO.get().unwrap().memory_regions;
+        let regions = &crate::boot::get_early_info().memory_regions;
         regions
             .iter()
             .filter(|r| r.typ() == MemoryRegionType::Usable)
@@ -508,11 +507,6 @@ pub(crate) unsafe fn init() -> Segment<MetaPageMeta> {
             .max()
             .unwrap()
     };
-
-    info!(
-        "Initializing frame metadata for physical memory up to {:x}",
-        max_paddr
-    );
 
     // In RISC-V, the boot page table has mapped the 512GB memory,
     // so we don't need to add temporary linear mapping.
@@ -523,6 +517,11 @@ pub(crate) unsafe fn init() -> Segment<MetaPageMeta> {
 
     let frame_paddr_base = crate::arch::mm::frame_paddr_base();
     let tot_nr_frames = max_paddr.saturating_sub(frame_paddr_base) / page_size::<PagingConsts>(1);
+
+    if tot_nr_frames == 0 {
+        return unsafe { Segment::from_raw(0..0) };
+    }
+
     let (nr_meta_pages, meta_pages) = alloc_meta_frames(tot_nr_frames);
 
     if frame_paddr_base == 0 {
@@ -554,11 +553,12 @@ pub(crate) unsafe fn init() -> Segment<MetaPageMeta> {
     let meta_page_range = meta_pages..meta_pages + nr_meta_pages * PAGE_SIZE;
 
     if frame_paddr_base == 0 {
-        let (range_1, range_2) = allocator::EARLY_ALLOCATOR
-            .lock()
-            .as_ref()
-            .unwrap()
-            .allocated_regions();
+        let (range_1, range_2) = unsafe {
+            (*(addr_of_mut!(allocator::EARLY_ALLOCATOR)))
+                .as_ref()
+                .unwrap()
+                .allocated_regions()
+        };
         for r in range_difference(&range_1, &meta_page_range) {
             let early_seg = Segment::from_unused(r, |_| EarlyAllocatedFrameMeta).unwrap();
             let _ = ManuallyDrop::new(early_seg);
@@ -571,7 +571,11 @@ pub(crate) unsafe fn init() -> Segment<MetaPageMeta> {
 
     mark_unusable_ranges();
 
-    Segment::from_unused(meta_page_range, |_| MetaPageMeta {}).unwrap()
+    if meta_page_range.is_empty() {
+        Segment::from_raw(meta_page_range)
+    } else {
+        Segment::from_unused(meta_page_range, |_| MetaPageMeta {}).unwrap()
+    }
 }
 
 /// Returns whether the global frame allocator is initialized.
@@ -638,7 +642,7 @@ macro_rules! mark_ranges {
 }
 
 fn mark_unusable_ranges() {
-    let regions = &crate::boot::EARLY_INFO.get().unwrap().memory_regions;
+    let regions = &crate::boot::get_early_info().memory_regions;
     let frame_paddr_base = crate::arch::mm::frame_paddr_base();
 
     for region in regions

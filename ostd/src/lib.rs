@@ -62,6 +62,23 @@ mod coverage;
 
 use core::sync::atomic::{AtomicBool, Ordering};
 
+/// Write a single character to the RPi3 mini-UART for debug markers.
+/// Only usable on real RPi3 hardware (the mini-UART is at a fixed PA).
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+unsafe fn early_marker(ch: u8) {
+    unsafe {
+        core::arch::asm!(
+            "movz x28, #0x3F21, lsl #16",
+            "movk x28, #0x5040",
+            "str w27, [x28]",
+            in("w27") ch as u32,
+            out("x28") _,
+            options(nostack),
+        );
+    }
+}
+
 pub use ostd_macros::{
     global_frame_allocator, global_heap_allocator, global_heap_allocator_slot_map, main,
     panic_handler,
@@ -84,11 +101,23 @@ pub use self::{error::Error, prelude::Result};
 // boot stage only global variables.
 #[doc(hidden)]
 unsafe fn init() {
+    // DEBUG: AArch64 RPi3 early marker '1'
+    #[cfg(target_arch = "aarch64")]
+    unsafe { early_marker(b'1'); }
+
     arch::enable_cpu_features();
+
+    // DEBUG: AArch64 RPi3 early marker '2'
+    #[cfg(target_arch = "aarch64")]
+    unsafe { early_marker(b'2'); }
 
     // SAFETY: This function is called only once, before `allocator::init`
     // and after memory regions are initialized.
     unsafe { mm::frame::allocator::init_early_allocator() };
+
+    // DEBUG: AArch64 RPi3 early marker '3'
+    #[cfg(target_arch = "aarch64")]
+    unsafe { early_marker(b'3'); }
 
     #[cfg(target_arch = "x86_64")]
     arch::if_tdx_enabled!({
@@ -98,7 +127,15 @@ unsafe fn init() {
     #[cfg(not(target_arch = "x86_64"))]
     arch::serial::init();
 
+    // DEBUG: AArch64 RPi3 early marker '4'
+    #[cfg(target_arch = "aarch64")]
+    unsafe { early_marker(b'4'); }
+
     logger::init();
+
+    // DEBUG: AArch64 RPi3 early marker '5'
+    #[cfg(target_arch = "aarch64")]
+    unsafe { early_marker(b'5'); }
 
     // SAFETY:
     // 1. They are only called once in the boot context of the BSP.
@@ -106,18 +143,37 @@ unsafe fn init() {
     // 3. No CPU-local objects have been accessed yet.
     unsafe { cpu::init_on_bsp() };
 
+    // DEBUG: AArch64 RPi3 early marker '6'
+    #[cfg(target_arch = "aarch64")]
+    unsafe { early_marker(b'6'); }
+
     // SAFETY: We are on the BSP and APs are not yet started.
     let meta_pages = unsafe { mm::frame::meta::init() };
+    #[cfg(target_arch = "aarch64")]
+    unsafe { early_marker(b'M'); }
+
     // The frame allocator should be initialized immediately after the metadata
     // is initialized. Otherwise the boot page table can't allocate frames.
     // SAFETY: This function is called only once.
     unsafe { mm::frame::allocator::init() };
+    #[cfg(target_arch = "aarch64")]
+    unsafe { early_marker(b'N'); }
 
     mm::kspace::init_kernel_page_table(meta_pages);
+    #[cfg(target_arch = "aarch64")]
+    unsafe { early_marker(b'P'); }
 
+    #[cfg(target_arch = "aarch64")]
+    unsafe { early_marker(b'S'); }
     sync::init();
+    #[cfg(target_arch = "aarch64")]
+    unsafe { early_marker(b'T'); }
 
+    #[cfg(target_arch = "aarch64")]
+    unsafe { early_marker(b'U'); }
     boot::init_after_heap();
+    #[cfg(target_arch = "aarch64")]
+    unsafe { early_marker(b'V'); }
 
     mm::dma::init();
 

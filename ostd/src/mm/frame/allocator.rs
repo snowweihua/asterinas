@@ -2,7 +2,7 @@
 
 //! The physical memory allocator.
 
-use core::{alloc::Layout, ops::Range};
+use core::{alloc::Layout, ops::Range, ptr::addr_of_mut};
 
 use align_ext::AlignExt;
 
@@ -199,23 +199,30 @@ pub(super) fn get_global_frame_allocator() -> &'static dyn GlobalFrameAllocator 
 ///
 /// This function should be called only once.
 pub(crate) unsafe fn init() {
-    let regions = &crate::boot::EARLY_INFO.get().unwrap().memory_regions;
+    let regions = &crate::boot::get_early_info().memory_regions;
 
     // Retire the early allocator.
-    let early_allocator = EARLY_ALLOCATOR.lock().take().unwrap();
+    let early_allocator = unsafe { (*(addr_of_mut!(EARLY_ALLOCATOR))).take().unwrap() };
     let (range_1, range_2) = early_allocator.allocated_regions();
+
+    let frame_paddr_base = crate::arch::mm::frame_paddr_base();
 
     for region in regions.iter() {
         if region.typ() == MemoryRegionType::Usable {
             debug_assert!(region.base() % PAGE_SIZE == 0);
             debug_assert!(region.len() % PAGE_SIZE == 0);
 
-            // Add global free pages to the frame allocator.
-            // Truncate the early allocated frames if there is an overlap.
             for r1 in range_difference(&(region.base()..region.end()), &range_1) {
                 for r2 in range_difference(&r1, &range_2) {
-                    log::info!("Adding free frames to the allocator: {:x?}", r2);
-                    get_global_frame_allocator().add_free_memory(r2.start, r2.len());
+                    let r2 = if r2.start < frame_paddr_base {
+                        frame_paddr_base..r2.end
+                    } else {
+                        r2
+                    };
+                    if r2.start < r2.end {
+                        log::info!("Adding free frames to the allocator: {:x?}", r2);
+                        get_global_frame_allocator().add_free_memory(r2.start, r2.len());
+                    }
                 }
             }
         }
@@ -242,12 +249,18 @@ pub(super) struct EarlyFrameAllocator {
 /// metadata is initialized with [`super::meta::init`], the frames are tracked
 /// with metadata and the early allocator is no longer used.
 ///
-/// This is protected by the [`spin::Mutex`] rather than [`crate::sync::SpinLock`]
-/// since the latter uses CPU-local storage, which isn't available in the early
-/// boot phase. So we must make sure that no interrupts are enabled when using
-/// this allocator.
-pub(super) static EARLY_ALLOCATOR: spin::Mutex<Option<EarlyFrameAllocator>> =
-    spin::Mutex::new(None);
+/// IMPORTANT: We use `static mut` instead of `spin::Mutex` because on AArch64 RPi3
+/// the kernel image is mapped through a boot-time 1-GiB block entry.  The block
+/// entry uses Normal memory attributes, but exclusive-access instructions (LDXRB/STXRB)
+/// required by atomic CAS (used by spin::Mutex) silently fail on some RPi3
+/// Cortex-A53 implementations when the attributed memory region spans both DRAM
+/// and peripheral MMIO addresses (0x3F00_0000–0x3FFF_FFFF), which this 1 GiB block
+/// does.  With `static mut` + `addr_of_mut!()` we use plain load/store and avoid
+/// the exclusive monitor entirely.
+///
+/// We must make sure that no interrupts are enabled when using this allocator
+/// (it is only used during single-core boot, where IRQs are disabled).
+pub(super) static mut EARLY_ALLOCATOR: Option<EarlyFrameAllocator> = None;
 
 impl EarlyFrameAllocator {
     /// Creates a new early frame allocator.
@@ -256,7 +269,7 @@ impl EarlyFrameAllocator {
     /// 4 GiB. The other is the maximum usable region above 4 GiB and is only
     /// usable when linear mapping is constructed.
     pub fn new() -> Self {
-        let regions = &crate::boot::EARLY_INFO.get().unwrap().memory_regions;
+    let regions = &crate::boot::get_early_info().memory_regions;
 
         let mut under_4g_range = 0..0;
         let mut max_range = 0..0;
@@ -345,8 +358,8 @@ impl_frame_meta_for!(EarlyAllocatedFrameMeta);
 ///  - it is called before [`init_early_allocator`],
 ///  - or if is called after [`init`].
 pub(crate) fn early_alloc(layout: Layout) -> Option<Paddr> {
-    let mut early_allocator = EARLY_ALLOCATOR.lock();
-    early_allocator.as_mut().unwrap().alloc(layout)
+    let early_allocator = unsafe { (*(addr_of_mut!(EARLY_ALLOCATOR))).as_mut().unwrap() };
+    early_allocator.alloc(layout)
 }
 
 /// Initializes the early frame allocator.
@@ -358,6 +371,5 @@ pub(crate) fn early_alloc(layout: Layout) -> Option<Paddr> {
 ///
 /// This function should be called only once after the memory regions are ready.
 pub(crate) unsafe fn init_early_allocator() {
-    let mut early_allocator = EARLY_ALLOCATOR.lock();
-    *early_allocator = Some(EarlyFrameAllocator::new());
+    addr_of_mut!(EARLY_ALLOCATOR).write(Some(EarlyFrameAllocator::new()));
 }
