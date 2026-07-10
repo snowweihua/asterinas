@@ -20,7 +20,42 @@ use alloc::{
 };
 
 use memory_region::{MemoryRegion, MemoryRegionArray};
-use spin::Once;
+
+pub struct SimpleOnce<T> {
+    value: core::cell::UnsafeCell<Option<T>>,
+    initialized: core::cell::UnsafeCell<u8>,
+}
+
+impl<T> SimpleOnce<T> {
+    pub const fn new() -> Self {
+        Self {
+            value: core::cell::UnsafeCell::new(None),
+            initialized: core::cell::UnsafeCell::new(0),
+        }
+    }
+
+    pub fn get(&self) -> Option<&T> {
+        if unsafe { *self.initialized.get() == 1 } {
+            Some(unsafe { (*self.value.get()).as_ref().unwrap_unchecked() })
+        } else {
+            None
+        }
+    }
+
+    pub fn call_once<F: FnOnce() -> T>(&self, f: F) -> &T {
+        if unsafe { *self.initialized.get() == 0 } {
+            unsafe {
+                *self.value.get() = Some(f());
+                *self.initialized.get() = 1;
+            }
+        }
+        unsafe { (*self.value.get()).as_ref().unwrap_unchecked() }
+    }
+}
+
+unsafe impl<T> Sync for SimpleOnce<T> where T: Send {}
+
+type Once<T> = SimpleOnce<T>;
 
 /// The boot information provided by the bootloader.
 pub struct BootInfo {
