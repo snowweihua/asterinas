@@ -116,10 +116,10 @@ unsafe impl<T: 'static> AnyStorage<T> for StaticStorage<T> {
             // `init_cpu_nums` must have been called, so `copy_bsp_for_ap` must
             // also have been called (see the implementation of `cpu::init_on_bsp`),
             // so `CPU_LOCAL_STORAGES` must already be initialized.
-            let storages = unsafe { super::CPU_LOCAL_STORAGES.get_unchecked() };
+            let storages = super::CPU_LOCAL_STORAGES.get().unwrap();
             // SAFETY: `cpu_id` is guaranteed to be in range because the type
             // invariant of `CpuId`.
-            let storage = unsafe { *storages.get_unchecked(cpu_id - 1) };
+            let storage = storages[cpu_id - 1];
             crate::mm::paddr_to_vaddr(storage)
         };
 

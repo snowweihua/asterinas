@@ -498,15 +498,26 @@ impl_frame_meta_for!(MetaPageMeta);
 /// # Safety
 ///
 pub(crate) unsafe fn init() -> Segment<MetaPageMeta> {
+    unsafe { crate::arch::boot::pl011_puts(b"[meta] START\n"); }
+    let _ = crate::arch::boot::pl011_puts(b"[meta] before EARLY_INFO.get()\n");
+    let result = crate::boot::EARLY_INFO.get();
+    let _ = crate::arch::boot::pl011_puts(b"[meta] after EARLY_INFO.get()\n");
+    let early_info = result.unwrap();
+    let _ = crate::arch::boot::pl011_puts(b"[meta] after unwrap\n");
     let max_paddr = {
-        let regions = &crate::boot::boot_info().memory_regions;
-        regions
-            .iter()
-            .filter(|r| r.typ() == MemoryRegionType::Usable)
-            .map(|r| r.base() + r.len())
-            .max()
-            .unwrap()
+        let regions = &early_info.memory_regions;
+        let _ = crate::arch::boot::pl011_puts(b"[meta] got regions\n");
+        let it = regions.iter();
+        let _ = crate::arch::boot::pl011_puts(b"[meta] got iter\n");
+        let filtered = it.filter(|r| r.typ() == MemoryRegionType::Usable);
+        let _ = crate::arch::boot::pl011_puts(b"[meta] got filtered\n");
+        let mapped = filtered.map(|r| r.base() + r.len());
+        let _ = crate::arch::boot::pl011_puts(b"[meta] got mapped\n");
+        let max = mapped.max();
+        let _ = crate::arch::boot::pl011_puts(b"[meta] got max\n");
+        max.unwrap()
     };
+    let _ = crate::arch::boot::pl011_puts(b"[meta] computed max_paddr\n");
 
     // In RISC-V, the boot page table has mapped the 512GB memory,
     // so we don't need to add temporary linear mapping.

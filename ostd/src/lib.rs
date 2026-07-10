@@ -62,6 +62,9 @@ mod coverage;
 
 use core::sync::atomic::{AtomicBool, Ordering};
 
+#[cfg(target_arch = "aarch64")]
+use crate::arch::boot::pl011_puts;
+
 /// Write a single character to the RPi3 mini-UART for debug markers.
 /// Only usable on real RPi3 hardware (the mini-UART is at a fixed PA).
 #[cfg(target_arch = "aarch64")]
@@ -101,23 +104,11 @@ pub use self::{error::Error, prelude::Result};
 // boot stage only global variables.
 #[doc(hidden)]
 unsafe fn init() {
-    // DEBUG: AArch64 RPi3 early marker '1'
-    #[cfg(target_arch = "aarch64")]
-    unsafe { early_marker(b'1'); }
-
     arch::enable_cpu_features();
-
-    // DEBUG: AArch64 RPi3 early marker '2'
-    #[cfg(target_arch = "aarch64")]
-    unsafe { early_marker(b'2'); }
 
     // SAFETY: This function is called only once, before `allocator::init`
     // and after memory regions are initialized.
     unsafe { mm::frame::allocator::init_early_allocator() };
-
-    // DEBUG: AArch64 RPi3 early marker '3'
-    #[cfg(target_arch = "aarch64")]
-    unsafe { early_marker(b'3'); }
 
     #[cfg(target_arch = "x86_64")]
     arch::if_tdx_enabled!({
@@ -127,17 +118,7 @@ unsafe fn init() {
     #[cfg(not(target_arch = "x86_64"))]
     arch::serial::init();
 
-    // DEBUG: AArch64 RPi3 early marker '4'
-    #[cfg(target_arch = "aarch64")]
-    unsafe { early_marker(b'4'); }
-
     logger::init();
-
-    crate::arch::serial::send_direct_pa(b'P');
-
-    // DEBUG: AArch64 RPi3 early marker '5'
-    #[cfg(target_arch = "aarch64")]
-    unsafe { early_marker(b'5'); }
 
     // SAFETY:
     // 1. They are only called once in the boot context of the BSP.
@@ -145,41 +126,29 @@ unsafe fn init() {
     // 3. No CPU-local objects have been accessed yet.
     unsafe { cpu::init_on_bsp() };
 
-    // DEBUG: AArch64 RPi3 early marker '6'
-    #[cfg(target_arch = "aarch64")]
-    unsafe { early_marker(b'6'); }
-
-    // SAFETY: We are on the BSP and APs are not yet started.
     let meta_pages = unsafe { mm::frame::meta::init() };
-    #[cfg(target_arch = "aarch64")]
-    unsafe { early_marker(b'M'); }
+    unsafe { crate::arch::boot::pl011_puts(b"[init] after meta::init\n"); }
 
     // The frame allocator should be initialized immediately after the metadata
     // is initialized. Otherwise the boot page table can't allocate frames.
     // SAFETY: This function is called only once.
     unsafe { mm::frame::allocator::init() };
-    #[cfg(target_arch = "aarch64")]
-    unsafe { early_marker(b'N'); }
+    unsafe { crate::arch::boot::pl011_puts(b"[init] after allocator::init\n"); }
+
+    boot::init_after_heap();
+    unsafe { crate::arch::boot::pl011_puts(b"[init] after init_after_heap\n"); }
 
     mm::kspace::init_kernel_page_table(meta_pages);
-    #[cfg(target_arch = "aarch64")]
-    unsafe { early_marker(b'P'); }
+    unsafe { crate::arch::boot::pl011_puts(b"[init] after kspace::init\n"); }
 
-    #[cfg(target_arch = "aarch64")]
-    unsafe { early_marker(b'S'); }
     sync::init();
-    #[cfg(target_arch = "aarch64")]
-    unsafe { early_marker(b'T'); }
-
-    #[cfg(target_arch = "aarch64")]
-    unsafe { early_marker(b'U'); }
-    boot::init_after_heap();
-    #[cfg(target_arch = "aarch64")]
-    unsafe { early_marker(b'V'); }
+    unsafe { crate::arch::boot::pl011_puts(b"[init] after sync::init\n"); }
 
     mm::dma::init();
+    unsafe { crate::arch::boot::pl011_puts(b"[init] after dma::init\n"); }
 
     unsafe { arch::late_init_on_bsp() };
+    unsafe { crate::arch::boot::pl011_puts(b"[init] after late_init_on_bsp\n"); }
 
     #[cfg(target_arch = "x86_64")]
     arch::if_tdx_enabled!({

@@ -50,7 +50,7 @@ use align_ext::AlignExt;
 pub use cell::CpuLocalCell;
 pub use dyn_cpu_local::DynCpuLocalChunk;
 use dyn_cpu_local::DynamicStorage;
-use spin::Once;
+use crate::boot::SimpleOnce;
 use static_cpu_local::StaticStorage;
 
 use super::CpuId;
@@ -180,7 +180,7 @@ impl<T: 'static, S: AnyStorage<T>> !Copy for CpuLocal<T, S> {}
 impl<T: 'static, S: AnyStorage<T>> !Clone for CpuLocal<T, S> {}
 
 /// The static CPU-local areas for APs.
-static CPU_LOCAL_STORAGES: Once<&'static [Paddr]> = Once::new();
+static CPU_LOCAL_STORAGES: SimpleOnce<&'static [Paddr]> = SimpleOnce::new();
 
 /// Copies the static CPU-local data on the bootstrap processor (BSP)
 /// for application processors (APs).
@@ -198,10 +198,18 @@ static CPU_LOCAL_STORAGES: Once<&'static [Paddr]> = Once::new();
 /// The caller must ensure that the `num_cpus` matches the number of all
 /// CPUs that will access the CPU-local storage.
 pub(crate) unsafe fn copy_bsp_for_ap(num_cpus: usize) {
+    #[cfg(target_arch = "aarch64")]
+    unsafe { crate::arch::boot::pl011_puts(b"[cpu] copy_bsp_for_ap start\n"); }
     let num_aps = num_cpus - 1; // BSP does not need allocated storage.
+    #[cfg(target_arch = "aarch64")]
+    unsafe { crate::arch::boot::pl011_puts(b"[cpu] num_aps computed\n"); }
     if num_aps == 0 {
+        #[cfg(target_arch = "aarch64")]
+        unsafe { crate::arch::boot::pl011_puts(b"[cpu] num_aps==0, returning\n"); }
         return;
     }
+    #[cfg(target_arch = "aarch64")]
+    unsafe { crate::arch::boot::pl011_puts(b"[cpu] past num_aps==0 check\n"); }
 
     // Allocate a region to store the pointers to the CPU-local storage segments.
     let res = {
@@ -209,8 +217,12 @@ pub(crate) unsafe fn copy_bsp_for_ap(num_cpus: usize) {
             .checked_mul(num_aps)
             .unwrap()
             .align_up(PAGE_SIZE);
+        #[cfg(target_arch = "aarch64")]
+        unsafe { crate::arch::boot::pl011_puts(b"[cpu] before first early_alloc\n"); }
         let addr =
             allocator::early_alloc(Layout::from_size_align(size, PAGE_SIZE).unwrap()).unwrap();
+        #[cfg(target_arch = "aarch64")]
+        unsafe { crate::arch::boot::pl011_puts(b"[cpu] after first early_alloc\n"); }
         let ptr = paddr_to_vaddr(addr) as *mut Paddr;
 
         // SAFETY: The memory is properly allocated. We exclusively own it. So it's valid to write.
@@ -227,9 +239,15 @@ pub(crate) unsafe fn copy_bsp_for_ap(num_cpus: usize) {
 
     // Allocate the CPU-local storage segments for APs.
     for res_addr_mut in res.iter_mut() {
+        #[cfg(target_arch = "aarch64")]
+        unsafe { crate::arch::boot::pl011_puts(b"[cpu] loop start\n"); }
         let nbytes = (bsp_end_va - bsp_base_va).align_up(PAGE_SIZE);
+        #[cfg(target_arch = "aarch64")]
+        unsafe { crate::arch::boot::pl011_puts(b"[cpu] before ap early_alloc\n"); }
         let ap_pages =
             allocator::early_alloc(Layout::from_size_align(nbytes, PAGE_SIZE).unwrap()).unwrap();
+        #[cfg(target_arch = "aarch64")]
+        unsafe { crate::arch::boot::pl011_puts(b"[cpu] after ap early_alloc\n"); }
         let ap_pages_ptr = paddr_to_vaddr(ap_pages) as *mut u8;
 
         // SAFETY:
@@ -248,7 +266,7 @@ pub(crate) unsafe fn copy_bsp_for_ap(num_cpus: usize) {
 
     is_used::debug_assert_false();
 
-    assert!(!CPU_LOCAL_STORAGES.is_completed());
+    assert!(CPU_LOCAL_STORAGES.get().is_none());
     CPU_LOCAL_STORAGES.call_once(|| res);
 }
 
