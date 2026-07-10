@@ -245,7 +245,7 @@ pub fn init_kernel_page_table(meta_pages: Segment<MetaPageMeta>) {
     // Map for the kernel code itself.
     // TODO: set separated permissions for each segments in the kernel.
     {
-        let regions = &crate::boot::get_early_info().memory_regions;
+        let regions = &crate::boot::boot_info().memory_regions;
         let region = regions
             .iter()
             .find(|r| r.typ() == MemoryRegionType::Kernel)

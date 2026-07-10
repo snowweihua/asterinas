@@ -133,6 +133,8 @@ unsafe fn init() {
 
     logger::init();
 
+    crate::arch::serial::send_direct_pa(b'P');
+
     // DEBUG: AArch64 RPi3 early marker '5'
     #[cfg(target_arch = "aarch64")]
     unsafe { early_marker(b'5'); }

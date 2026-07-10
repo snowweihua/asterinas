@@ -35,11 +35,6 @@ global_asm!(
     .align 2
     .globl pl011_puts_asm
 pl011_puts_asm:
-    // x0 = ptr, x1 = len, x2 = uart_base (PL011 DR)
-    // Write directly to DR without polling FR.TXFF — avoids infinite spin if
-    // the UART is in an unusual state (e.g. clock stopped, wrong base).
-    // Characters may be dropped if the 16-byte TX FIFO is full, but we will
-    // never hang here regardless of UART state.
     cbz     x1, 2f
 1:
     ldrb    w3, [x0], #1
@@ -257,36 +252,50 @@ unsafe extern "C" {
 }
 
 fn early_uart_base() -> usize {
-    // BoardType::cached() == 2 means RaspberryPi3.
-    // PL011 UART0 on BCM2837: peripheral base 0x3F000000 + UART0 offset 0x201000.
     if crate::arch::board::BoardType::cached() == 2 {
         0x3F20_1000
     } else {
-        0x0900_0000 // QEMU virt PL011
+        0x0900_0000
+    }
+}
+
+#[inline(never)]
+pub unsafe fn pl011_puts(s: &[u8]) {
+    let mut i = 0;
+    while i < s.len() {
+        let b = s[i];
+        unsafe {
+            core::arch::asm!(
+                "movz x4, #0x3F21, lsl #16",
+                "movk x4, #0x5054",
+                "1: ldrb w5, [x4]",
+                "tst w5, #0x20",
+                "beq 1b",
+                out("x4") _,
+                out("w5") _,
+                options(nostack),
+            );
+        }
+        unsafe {
+            core::arch::asm!(
+                "movz x4, #0x3F21, lsl #16",
+                "movk x4, #0x5040",
+                "strb w3, [x4]",
+                in("w3") b as u32,
+                out("x4") _,
+                options(nostack),
+            );
+        }
+        i += 1;
     }
 }
 
 #[inline(always)]
-pub unsafe fn pl011_puts(s: &[u8]) {
-    unsafe { pl011_puts_asm(s.as_ptr(), s.len(), early_uart_base()) };
-}
-
-/// Write a single ASCII byte directly to RPi3 PL011 + mini-UART + QEMU PL011,
-/// bypassing board detection entirely.  Used for pre-detection debug markers.
-#[inline(always)]
 fn early_marker(ch: u8) {
     unsafe {
         core::arch::asm!(
-            // RPi3 PL011 DR: 0x3F201000
-            "movz x28, #0x3F20, lsl #16",
-            "movk x28, #0x1000",
-            "strb w27, [x28]",
-            // RPi3 mini-UART IO: 0x3F215040
             "movz x28, #0x3F21, lsl #16",
             "movk x28, #0x5040",
-            "strb w27, [x28]",
-            // QEMU virt PL011 DR: 0x09000000
-            "movz x28, #0x0900, lsl #16",
             "strb w27, [x28]",
             in("w27") ch as u32,
             out("x28") _,

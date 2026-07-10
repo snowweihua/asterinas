@@ -499,7 +499,7 @@ impl_frame_meta_for!(MetaPageMeta);
 ///
 pub(crate) unsafe fn init() -> Segment<MetaPageMeta> {
     let max_paddr = {
-        let regions = &crate::boot::get_early_info().memory_regions;
+        let regions = &crate::boot::boot_info().memory_regions;
         regions
             .iter()
             .filter(|r| r.typ() == MemoryRegionType::Usable)
@@ -642,7 +642,7 @@ macro_rules! mark_ranges {
 }
 
 fn mark_unusable_ranges() {
-    let regions = &crate::boot::get_early_info().memory_regions;
+    let regions = &crate::boot::boot_info().memory_regions;
     let frame_paddr_base = crate::arch::mm::frame_paddr_base();
 
     for region in regions

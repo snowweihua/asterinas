@@ -62,3 +62,15 @@ pub fn send(data: u8) {
         core::ptr::write_volatile((pl011_base_va() + 0x000) as *mut u32, data as u32);
     }
 }
+
+pub fn send_direct_pa(data: u8) {
+    let base_pa = if crate::arch::board::BoardType::cached() == 2 {
+        PL011_BASE_PA_RPI3
+    } else {
+        PL011_BASE_PA_QEMU
+    };
+    while unsafe { core::ptr::read_volatile((base_pa + 0x018) as *const u32) } & FR_TXFF != 0 {}
+    unsafe {
+        core::ptr::write_volatile((base_pa + 0x000) as *mut u32, data as u32);
+    }
+}

@@ -89,19 +89,11 @@ PTE_NORMAL_2M  = ( MM_TYPE_BLOCK | PTE_AIDX_MEMORY | PTE_SH_INNER | PTE_AF )
     str     w0, [x1, #0x00]         /* write to DR */
 .endm
 
-/* Macro: write a single ASCII character to BOTH RPi3 UARTs unconditionally.
- * Tries PL011 (0x3F201000) AND mini-UART (0x3F215040) to discover which
- * one is wired to the serial adapter.  No polling — never hangs.
+/* Macro: write a single ASCII character to RPi3 mini-UART (0x3F215040).
  * Uses movz/movk to build addresses without any literal pool.
  * Only executes when x21 == 0 (RPi3). */
 .macro  rpi3_putch char
     cbnz    x21, 9998f
-    /* PL011 DR at 0x3F201000 */
-    movz    x26, #0x3F20, lsl #16
-    movk    x26, #0x1000
-    mov     w27, #\char
-    str     w27, [x26]
-    /* mini-UART IO_REG at 0x3F215040 */
     movz    x26, #0x3F21, lsl #16
     movk    x26, #0x5040
     mov     w27, #\char
