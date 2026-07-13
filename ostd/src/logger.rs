@@ -17,9 +17,9 @@
 use core::str::FromStr;
 
 use log::{LevelFilter, Metadata, Record};
+use spin::Once;
 
-use crate::arch::boot::pl011_puts;
-use crate::boot::{EARLY_INFO, SimpleOnce};
+use crate::boot::EARLY_INFO;
 
 /// Injects a logger.
 ///
@@ -39,35 +39,26 @@ pub fn inject_logger(new_logger: &'static dyn log::Log) {
 
 /// Initializes the logger. Users should avoid using the log macros before this function is called.
 pub(crate) fn init() {
-    #[cfg(target_arch = "aarch64")]
-    unsafe { pl011_puts(b"L"); }
-    let _level = LevelFilter::Info;
-    #[cfg(target_arch = "aarch64")]
-    unsafe { pl011_puts(b"M"); }
-    log::set_max_level(_level);
-    #[cfg(target_arch = "aarch64")]
-    unsafe { pl011_puts(b"N"); }
+    let level = get_log_level().unwrap_or(LevelFilter::Info);
+    log::set_max_level(level);
     // On AArch64 RPi3, atomic CAS (LDX/STX) hangs on memory mapped through the
     // 1 GB block entry in boot_l3pt_high[0] because the AXI bridge between ARM
     // and VideoCore does not support exclusive transactions. Use set_logger_racy
     // (load + store only, no CAS) instead. Safe during single-core boot.
     // SAFETY: Boot is single-core with interrupts disabled.
-    unsafe { pl011_puts(b"P"); }
     unsafe { log::set_logger_racy(&LOGGER).unwrap() };
-    #[cfg(target_arch = "aarch64")]
-    unsafe { pl011_puts(b"Q"); }
 }
 
 static LOGGER: Logger = Logger::new();
 
 struct Logger {
-    backend: SimpleOnce<&'static dyn log::Log>,
+    backend: Once<&'static dyn log::Log>,
 }
 
 impl Logger {
     const fn new() -> Self {
         Self {
-            backend: SimpleOnce::new(),
+            backend: Once::new(),
         }
     }
 }

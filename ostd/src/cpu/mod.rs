@@ -167,35 +167,19 @@ unsafe impl PinCurrentCpu for dyn InAtomicMode + '_ {}
 /// 2. The number of available processors is available.
 /// 3. No CPU-local objects have been accessed.
 pub(crate) unsafe fn init_on_bsp() {
-    #[cfg(target_arch = "aarch64")]
-    unsafe { crate::arch::boot::pl011_puts(b"[cpu] init_on_bsp start\n"); }
     let num_cpus = crate::arch::boot::smp::count_processors().unwrap_or(1);
-    #[cfg(target_arch = "aarch64")]
-    unsafe { crate::arch::boot::pl011_puts(b"[cpu] count_processors done\n"); }
 
     // SAFETY: The safety is upheld by the caller and
     // the correctness of the `get_num_processors` method.
     unsafe {
-        #[cfg(target_arch = "aarch64")]
-        crate::arch::boot::pl011_puts(b"[cpu] before copy_bsp_for_ap\n");
         local::copy_bsp_for_ap(num_cpus as usize);
-        #[cfg(target_arch = "aarch64")]
-        crate::arch::boot::pl011_puts(b"[cpu] after copy_bsp_for_ap\n");
 
-        #[cfg(target_arch = "aarch64")]
-        crate::arch::boot::pl011_puts(b"[cpu] before set_this_cpu_id\n");
         set_this_cpu_id(0);
-        #[cfg(target_arch = "aarch64")]
-        crate::arch::boot::pl011_puts(b"[cpu] after set_this_cpu_id\n");
 
         // Note that `init_num_cpus` should be called after `copy_bsp_for_ap`.
         // This helps to build the safety reasoning in `CpuLocal::get_on_cpu`.
         // See its implementation for details.
-        #[cfg(target_arch = "aarch64")]
-        crate::arch::boot::pl011_puts(b"[cpu] before init_num_cpus\n");
         init_num_cpus(num_cpus);
-        #[cfg(target_arch = "aarch64")]
-        crate::arch::boot::pl011_puts(b"[cpu] after init_num_cpus\n");
     }
 }
 

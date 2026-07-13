@@ -5,9 +5,9 @@
 pub mod smp;
 
 use core::arch::global_asm;
-use core::cell::UnsafeCell;
 
 use fdt::Fdt;
+use spin::Once;
 
 use crate::{
     boot::{
@@ -46,43 +46,9 @@ pl011_puts_asm:
 "#
 );
 
-pub struct SimpleOnce<T> {
-    value: UnsafeCell<Option<T>>,
-    initialized: UnsafeCell<u8>,
-}
-
-impl<T> SimpleOnce<T> {
-    pub const fn new() -> Self {
-        Self {
-            value: UnsafeCell::new(None),
-            initialized: UnsafeCell::new(0),
-        }
-    }
-
-    pub fn get(&self) -> Option<&T> {
-        if unsafe { *self.initialized.get() == 1 } {
-            Some(unsafe { (*self.value.get()).as_ref().unwrap_unchecked() })
-        } else {
-            None
-        }
-    }
-
-    pub fn call_once<F: FnOnce() -> T>(&self, f: F) -> &T {
-        if unsafe { *self.initialized.get() == 0 } {
-            unsafe {
-                *self.value.get() = Some(f());
-                *self.initialized.get() = 1;
-            }
-        }
-        unsafe { (*self.value.get()).as_ref().unwrap_unchecked() }
-    }
-}
-
-unsafe impl<T> Sync for SimpleOnce<T> where T: Send {}
-
 /// The Flattened Device Tree of the platform.
-pub static DEVICE_TREE: SimpleOnce<Fdt> = SimpleOnce::new();
-static DEVICE_TREE_REGION: SimpleOnce<(usize, usize)> = SimpleOnce::new();
+pub static DEVICE_TREE: Once<Fdt> = Once::new();
+static DEVICE_TREE_REGION: Once<(usize, usize)> = Once::new();
 
 const QEMU_VIRT_RAM_BASE: usize = 0x4000_0000;
 const QEMU_VIRT_RAM_SCAN_SIZE: usize = 512 * 1024 * 1024;
