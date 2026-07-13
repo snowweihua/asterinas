@@ -97,18 +97,24 @@ pub(crate) struct EarlyBootInfo {
 /// The boot-time information.
 pub(crate) static EARLY_INFO: Once<EarlyBootInfo> = Once::new();
 
-/// Initializes the boot information.
-///
-/// This function copies the boot-time accessible information to the heap to
-/// allow [`boot_info`] to work properly.
+static TEST_ONCE: Once<usize> = Once::new();
+
 pub(crate) fn init_after_heap() {
     unsafe { crate::arch::boot::pl011_puts(b"[IAH] START\n"); }
+
+    unsafe { crate::arch::boot::pl011_puts(b"[IAH] TEST_ONCE start\n"); }
+    let _test_val = TEST_ONCE.call_once(|| {
+        unsafe { crate::arch::boot::pl011_puts(b"[IAH] TEST_ONCE inside\n"); }
+        42
+    });
+    unsafe { crate::arch::boot::pl011_puts(b"[IAH] TEST_ONCE done\n"); }
+
     let boot_time_info = EARLY_INFO.get().unwrap();
     unsafe { crate::arch::boot::pl011_puts(b"[IAH] got EARLY_INFO\n"); }
 
     unsafe { crate::arch::boot::pl011_puts(b"[IAH] before INFO.call_once\n"); }
     INFO.call_once(|| {
-        unsafe { crate::arch::boot::pl011_puts(b"[IAH] inside call_once\n"); }
+        unsafe { crate::arch::boot::pl011_puts(b"[IAH] inside INFO.call_once\n"); }
         BootInfo {
             bootloader_name: boot_time_info.bootloader_name.to_string(),
             kernel_cmdline: boot_time_info.kernel_cmdline.to_string(),
