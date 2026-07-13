@@ -7,7 +7,8 @@ pub mod smp;
 use core::arch::global_asm;
 
 use fdt::Fdt;
-use spin::Once;
+
+use crate::boot::SimpleOnce as Once;
 
 use crate::{
     boot::{
