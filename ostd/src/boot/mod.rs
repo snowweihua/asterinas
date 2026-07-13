@@ -102,15 +102,22 @@ pub(crate) static EARLY_INFO: Once<EarlyBootInfo> = Once::new();
 /// This function copies the boot-time accessible information to the heap to
 /// allow [`boot_info`] to work properly.
 pub(crate) fn init_after_heap() {
+    unsafe { crate::arch::boot::pl011_puts(b"[IAH] START\n"); }
     let boot_time_info = EARLY_INFO.get().unwrap();
+    unsafe { crate::arch::boot::pl011_puts(b"[IAH] got EARLY_INFO\n"); }
 
-    INFO.call_once(|| BootInfo {
-        bootloader_name: boot_time_info.bootloader_name.to_string(),
-        kernel_cmdline: boot_time_info.kernel_cmdline.to_string(),
-        initramfs: boot_time_info.initramfs,
-        framebuffer_arg: boot_time_info.framebuffer_arg,
-        memory_regions: boot_time_info.memory_regions.to_vec(),
+    unsafe { crate::arch::boot::pl011_puts(b"[IAH] before INFO.call_once\n"); }
+    INFO.call_once(|| {
+        unsafe { crate::arch::boot::pl011_puts(b"[IAH] inside call_once\n"); }
+        BootInfo {
+            bootloader_name: boot_time_info.bootloader_name.to_string(),
+            kernel_cmdline: boot_time_info.kernel_cmdline.to_string(),
+            initramfs: boot_time_info.initramfs,
+            framebuffer_arg: boot_time_info.framebuffer_arg,
+            memory_regions: boot_time_info.memory_regions.to_vec(),
+        }
     });
+    unsafe { crate::arch::boot::pl011_puts(b"[IAH] done\n"); }
 }
 
 /// Calls the OSTD-user defined entrypoint of the actual kernel.
