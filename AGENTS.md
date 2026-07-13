@@ -19,6 +19,11 @@ docker run --rm -v /home/snow/asterinas:/root/asterinas asterinas/aarch64-dev:la
 
 ## Agent Session State
 
+**Testing Restriction:**
+- **DO NOT use QEMU to test AArch64 until T031 is fixed.** QEMU produces no serial output
+  on AArch64, making it impossible to verify boot progress. Test on real RPi3 hardware instead.
+  The QEMU `-nographic` mode has stdin multiplexing issues that prevent interactive testing.
+
 **Git Workflow:**
 - Always work on a named branch (e.g., `aarch64_support`), not detached HEAD
 - Commits on detached HEAD are lost when switching branches
@@ -34,17 +39,22 @@ docker run --rm -v /home/snow/asterinas:/root/asterinas asterinas/aarch64-dev:la
 - Use `.github/agent_state/` for recovery checkpoints
 - Use `target/agent_logs/` for run logs
 
-## Current Status (2026-07-07)
+## Current Status (2026-07-13)
 
 **Completed:** P0.1, P0.2, P1.1, P1.2, P1.3, P2.2, P3.1, P4.1, P4.2, P5.1 (RPi3 hardware),
 initramfs hang fix, VirtIO init fix, user-space shell (QEMU + RPi3), timer IRQs (QEMU + RPi3),
 PL011 UART RX interrupt (QEMU + RPi3), exception table for fallible user-memory access
 
-**In Progress:** RPi3 boot hangs after marker 'I'.
-- Kernel now prints all early markers `ABCDEFFGHI` on real RPi3 3B hardware.
-- It then hangs silently before `[a2-boot] entry\n` appears.
-- Suspected causes: wrong board cache (QEMU selected instead of RPi3), PL011 32-bit store failing, or a silent panic after board detection.
-- See `.github/agent_state/2026-07-07-rpi3-boot-marker-i-hang.md` for full analysis.
+**In Progress:** T030 - Boot to shell with interactive command working (RPi3 hardware)
+- Kernel hangs in `init_after_heap()` before reaching shell prompt
+- Root cause identified: `spin::Once` uses `compare_exchange` which can fail spuriously on RPi3
+- Implemented `SimpleOnce` with atomic `swap` instead of `compare_exchange`
+- Next: Deploy and test on RPi3 hardware
+
+**Blocking Task (Phase I):** Boot to shell with interactive command working
+- RPi3 kernel hangs after `cpu::init_on_bsp()` returns
+- Hang occurs in `init_after_heap()` when `INFO.call_once()` is executed
+- See `.github/agent_state/2026-07-13-handoff.md` for full analysis
 
 **Latest commits (2026-07-07) — RPi3 silent boot instrumentation:**
 - boot.S: marker A-D/F, VBAR_EL1 set in `_start_virt` before branching to Rust,
@@ -102,12 +112,12 @@ PL011 UART RX interrupt (QEMU + RPi3), exception table for fallible user-memory 
 - `sync_exception_current` checks `.ex_table` for EL1 DABTs from user-space addresses.
 - Without this, `write()` with an invalid user buf caused EL1 DABT hang.
 
-**Current boot status (2026-07-07):**
+**Current boot status (2026-07-13):**
 
 | Platform | Boot | Timer | Shell prompt | Interactive input | Notes |
 |----------|------|-------|-------------|------------------|-------|
 | QEMU virt (cortex-a72) | ✅ | ✅ CNTP IRQ 30 | ✅ `/ #` | ❌ stdin multiplexing issue | RX interrupt implemented |
-| RPi3 3B (hardware) | ⚠️ markers `ABCDEFFGHI` | ✅ CNTV IRQ 16 | ❌ hangs before prompt | ❌ not reached | first-boot PSCI reset; hang after marker 'I' |
+| RPi3 3B (hardware) | ⚠️ markers `ABCDEFFGHI` | ✅ CNTV IRQ 16 | ❌ hangs before prompt | ❌ not reached | spin::Once CAS hang; SimpleOnce implemented |
 
 **Remaining diagnostic probes in tree (to remove):**
 - `kernel/src/fs/rootfs.rs`: `[unpack]` probes, `[rootfs]` entries
