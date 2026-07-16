@@ -88,6 +88,8 @@ impl<C: PageTableConfig> PageTableNode<C> {
 
         #[cfg(target_arch = "aarch64")]
         unsafe { crate::arch::boot::pl011_puts(b"[node.alloc] done\n"); }
+        #[cfg(target_arch = "aarch64")]
+        unsafe { crate::arch::boot::pl011_puts(b"[node.alloc] returning frame\n"); }
         frame
     }
 

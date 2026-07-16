@@ -63,16 +63,29 @@ impl FrameAllocOptions {
         unsafe { crate::arch::boot::pl011_puts(b"[fa] before allocator.alloc\n"); }
         let frame = allocator
             .alloc(single_layout)
-            .map(|paddr| Frame::from_unused(paddr, metadata).unwrap())
+            .map(|paddr| {
+                #[cfg(target_arch = "aarch64")]
+                unsafe { crate::arch::boot::pl011_puts(b"[fa.1] in map, paddr="); }
+                let f = Frame::from_unused(paddr, metadata).unwrap();
+                #[cfg(target_arch = "aarch64")]
+                unsafe { crate::arch::boot::pl011_puts(b"[fa.2] after Frame::from_unused\n"); }
+                f
+            })
             .ok_or(Error::NoMemory)?;
         #[cfg(target_arch = "aarch64")]
         unsafe { crate::arch::boot::pl011_puts(b"[fa] after allocator.alloc\n"); }
 
         if self.zeroed {
+            #[cfg(target_arch = "aarch64")]
+            unsafe { crate::arch::boot::pl011_puts(b"[fa] before paddr_to_vaddr\n"); }
             let addr = paddr_to_vaddr(frame.paddr()) as *mut u8;
+            #[cfg(target_arch = "aarch64")]
+            unsafe { crate::arch::boot::pl011_puts(b"[fa] before write_bytes\n"); }
 
             // SAFETY: The newly allocated frame is guaranteed to be valid.
             unsafe { core::ptr::write_bytes(addr, 0, PAGE_SIZE) }
+            #[cfg(target_arch = "aarch64")]
+            unsafe { crate::arch::boot::pl011_puts(b"[fa] after write_bytes\n"); }
         }
 
         #[cfg(target_arch = "aarch64")]

@@ -253,6 +253,8 @@ impl MetaSlot {
         metadata: M,
         as_unique_ptr: bool,
     ) -> Result<*const Self, GetFrameError> {
+        #[cfg(target_arch = "aarch64")]
+        unsafe { crate::arch::boot::pl011_puts(b"[meta.get.0] start\n"); }
         let slot = get_slot(paddr)?;
         #[cfg(target_arch = "aarch64")]
         unsafe { crate::arch::boot::pl011_puts(b"[meta.get] got slot\n"); }
