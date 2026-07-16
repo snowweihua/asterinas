@@ -70,15 +70,15 @@ type Once<T> = SimpleOnce<T>;
 /// The boot information provided by the bootloader.
 pub struct BootInfo {
     /// The name of the bootloader.
-    pub bootloader_name: String,
+    pub bootloader_name: &'static str,
     /// The kernel command line arguments.
-    pub kernel_cmdline: String,
+    pub kernel_cmdline: &'static str,
     /// The initial ramfs raw bytes.
     pub initramfs: Option<&'static [u8]>,
     /// The framebuffer arguments.
     pub framebuffer_arg: Option<BootloaderFramebufferArg>,
     /// The memory regions provided by the bootloader.
-    pub memory_regions: Vec<MemoryRegion>,
+    pub memory_regions: &'static [MemoryRegion],
 }
 
 /// Gets the boot information.
@@ -157,9 +157,18 @@ pub(crate) fn init_after_heap() {
     let boot_time_info = EARLY_INFO.get().unwrap();
     unsafe { crate::arch::boot::pl011_puts(b"[IAH] got EARLY_INFO\n"); }
 
-    unsafe { crate::arch::boot::pl011_puts(b"[IAH] before immediate panic\n"); }
-    panic!("IAH: immediate panic test");
-    unsafe { crate::arch::boot::pl011_puts(b"[IAH] after panic (should not reach)\n"); }
+    unsafe { crate::arch::boot::pl011_puts(b"[IAH] before INFO.call_once\n"); }
+    let _bi = INFO.call_once(|| {
+        unsafe { crate::arch::boot::pl011_puts(b"[IAH.1] inside call_once\n"); }
+        BootInfo {
+            bootloader_name: boot_time_info.bootloader_name,
+            kernel_cmdline: boot_time_info.kernel_cmdline,
+            initramfs: boot_time_info.initramfs,
+            framebuffer_arg: boot_time_info.framebuffer_arg,
+            memory_regions: &boot_time_info.memory_regions,
+        }
+    });
+    unsafe { crate::arch::boot::pl011_puts(b"[IAH.2] after INFO.call_once\n"); }
     unsafe { crate::arch::boot::pl011_puts(b"[IAH] done\n"); }
 }
 

@@ -167,7 +167,7 @@ fn first_kthread() {
 
     print_banner();
 
-    let karg: KCmdlineArg = boot_info().kernel_cmdline.as_str().into();
+    let karg: KCmdlineArg = boot_info().kernel_cmdline.into();
     let initproc = spawn_init_process(
         karg.get_initproc_path().unwrap(),
         karg.get_initproc_argv().to_vec(),
