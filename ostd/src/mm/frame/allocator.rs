@@ -269,7 +269,7 @@ impl EarlyFrameAllocator {
     /// 4 GiB. The other is the maximum usable region above 4 GiB and is only
     /// usable when linear mapping is constructed.
     pub fn new() -> Self {
-    let regions = &crate::boot::boot_info().memory_regions;
+        let regions = &crate::boot::EARLY_INFO.get().unwrap().memory_regions;
 
         let mut under_4g_range = 0..0;
         let mut max_range = 0..0;

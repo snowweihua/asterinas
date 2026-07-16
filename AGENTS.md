@@ -1,6 +1,7 @@
 # AArch64 Development Agent Instructions
 
 ## last session status refer to specs/001-rpi3-hardware-bringup/LATEST_SESSION.md
+## development important information refer to specs/001-rpi3-hardware-bringup/quickstart.md
 
 ## Git Rules
 
