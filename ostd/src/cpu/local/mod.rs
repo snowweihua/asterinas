@@ -50,7 +50,7 @@ use align_ext::AlignExt;
 pub use cell::CpuLocalCell;
 pub use dyn_cpu_local::DynCpuLocalChunk;
 use dyn_cpu_local::DynamicStorage;
-use spin::Once;
+use crate::boot::SimpleOnce as Once;
 use static_cpu_local::StaticStorage;
 
 use super::CpuId;

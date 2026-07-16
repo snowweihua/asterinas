@@ -53,6 +53,14 @@ impl<T> SimpleOnce<T> {
         }
         unsafe { (*self.value.get()).as_ref().unwrap_unchecked() }
     }
+
+    pub fn is_completed(&self) -> bool {
+        self.initialized.load(Ordering::Acquire) == 1
+    }
+
+    pub unsafe fn get_unchecked(&self) -> &T {
+        (*self.value.get()).as_ref().unwrap_unchecked()
+    }
 }
 
 unsafe impl<T> Sync for SimpleOnce<T> where T: Send {}
