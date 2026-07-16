@@ -157,18 +157,9 @@ pub(crate) fn init_after_heap() {
     let boot_time_info = EARLY_INFO.get().unwrap();
     unsafe { crate::arch::boot::pl011_puts(b"[IAH] got EARLY_INFO\n"); }
 
-    unsafe { crate::arch::boot::pl011_puts(b"[IAH] before INFO.call_once\n"); }
-    let _bi = INFO.call_once(|| {
-        unsafe { crate::arch::boot::pl011_puts(b"[IAH.1] inside call_once\n"); }
-        unsafe { crate::arch::boot::pl011_puts(b"[IAH.X] skipping BootInfo construction\n"); }
-        let _ = boot_time_info.bootloader_name.len();
-        let _ = boot_time_info.kernel_cmdline.len();
-        let _ = boot_time_info.initramfs.is_some();
-        let _ = boot_time_info.framebuffer_arg.is_some();
-        let _ = !boot_time_info.memory_regions.is_empty();
-        panic!("IAH: should not reach here");
-    });
-    unsafe { crate::arch::boot::pl011_puts(b"[IAH.3] after INFO.call_once\n"); }
+    unsafe { crate::arch::boot::pl011_puts(b"[IAH] before immediate panic\n"); }
+    panic!("IAH: immediate panic test");
+    unsafe { crate::arch::boot::pl011_puts(b"[IAH] after panic (should not reach)\n"); }
     unsafe { crate::arch::boot::pl011_puts(b"[IAH] done\n"); }
 }
 
