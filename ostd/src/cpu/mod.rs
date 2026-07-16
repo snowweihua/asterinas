@@ -167,19 +167,27 @@ unsafe impl PinCurrentCpu for dyn InAtomicMode + '_ {}
 /// 2. The number of available processors is available.
 /// 3. No CPU-local objects have been accessed.
 pub(crate) unsafe fn init_on_bsp() {
+    unsafe { crate::arch::boot::pl011_puts(b"[cpu.1] init_on_bsp start\n") };
     let num_cpus = crate::arch::boot::smp::count_processors().unwrap_or(1);
+    unsafe { crate::arch::boot::pl011_puts(b"[cpu.2] count_processors done\n") };
 
     // SAFETY: The safety is upheld by the caller and
     // the correctness of the `get_num_processors` method.
     unsafe {
+        unsafe { crate::arch::boot::pl011_puts(b"[cpu.3] before copy_bsp_for_ap\n") };
         local::copy_bsp_for_ap(num_cpus as usize);
+        unsafe { crate::arch::boot::pl011_puts(b"[cpu.4] after copy_bsp_for_ap\n") };
 
+        unsafe { crate::arch::boot::pl011_puts(b"[cpu.5] before set_this_cpu_id\n") };
         set_this_cpu_id(0);
+        unsafe { crate::arch::boot::pl011_puts(b"[cpu.6] after set_this_cpu_id\n") };
 
         // Note that `init_num_cpus` should be called after `copy_bsp_for_ap`.
         // This helps to build the safety reasoning in `CpuLocal::get_on_cpu`.
         // See its implementation for details.
+        unsafe { crate::arch::boot::pl011_puts(b"[cpu.7] before init_num_cpus\n") };
         init_num_cpus(num_cpus);
+        unsafe { crate::arch::boot::pl011_puts(b"[cpu.8] after init_num_cpus\n") };
     }
 }
 
