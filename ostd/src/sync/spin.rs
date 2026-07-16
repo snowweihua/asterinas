@@ -118,19 +118,29 @@ impl<T: ?Sized, G: SpinGuardian> SpinLock<T, G> {
 
     /// Acquires the spin lock, otherwise busy waiting
     fn acquire_lock(&self) {
+        let mut iterations = 0u32;
         while !self.try_acquire_lock() {
             core::hint::spin_loop();
+            iterations += 1;
+            if iterations == 1 {
+                crate::arch::boot::pl011_puts_safe(b"[spin.L] spinning...\n");
+            }
         }
     }
 
     fn try_acquire_lock(&self) -> bool {
-        // WORKAROUND: QEMU 6.2 AArch64 compare_exchange (LDAXR/STXR) fails spuriously.
-        // Use swap instead: if the lock was false (unlocked), swap returns false (success).
-        !self.inner.lock.swap(true, Ordering::Acquire)
+        // WORKAROUND: RPi3 AXI bridge causes LDXR/STXR atomics to fail.
+        // Use relaxed store + fence for UP boot safety.
+        if self.inner.lock.load(Ordering::Relaxed) {
+            return false;
+        }
+        self.inner.lock.store(true, Ordering::Relaxed);
+        core::sync::atomic::fence(Ordering::Acquire);
+        true
     }
 
     fn release_lock(&self) {
-        self.inner.lock.store(false, Ordering::Release);
+        self.inner.lock.store(false, Ordering::Relaxed);
     }
 }
 
