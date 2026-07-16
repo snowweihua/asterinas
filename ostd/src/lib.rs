@@ -148,6 +148,7 @@ unsafe fn init() {
     boot::init_after_heap();
     unsafe { crate::arch::boot::pl011_puts(b"[init.B] after init_after_heap\n"); }
 
+    unsafe { crate::arch::boot::pl011_puts(b"[init.B1] before kspace::init\n"); }
     mm::kspace::init_kernel_page_table(meta_pages);
     unsafe { crate::arch::boot::pl011_puts(b"[init.C] after kspace::init\n"); }
 
