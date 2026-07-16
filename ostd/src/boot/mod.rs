@@ -158,16 +158,19 @@ pub(crate) fn init_after_heap() {
     unsafe { crate::arch::boot::pl011_puts(b"[IAH] got EARLY_INFO\n"); }
 
     unsafe { crate::arch::boot::pl011_puts(b"[IAH] before INFO.call_once\n"); }
-    INFO.call_once(|| {
-        unsafe { crate::arch::boot::pl011_puts(b"[IAH] inside INFO.call_once\n"); }
-        BootInfo {
+    let _bi = INFO.call_once(|| {
+        unsafe { crate::arch::boot::pl011_puts(b"[IAH.1] inside call_once before BootInfo\n"); }
+        let bi = BootInfo {
             bootloader_name: boot_time_info.bootloader_name.to_string(),
             kernel_cmdline: boot_time_info.kernel_cmdline.to_string(),
             initramfs: boot_time_info.initramfs,
             framebuffer_arg: boot_time_info.framebuffer_arg,
             memory_regions: boot_time_info.memory_regions.to_vec(),
-        }
+        };
+        unsafe { crate::arch::boot::pl011_puts(b"[IAH.2] BootInfo constructed\n"); }
+        bi
     });
+    unsafe { crate::arch::boot::pl011_puts(b"[IAH.3] after INFO.call_once\n"); }
     unsafe { crate::arch::boot::pl011_puts(b"[IAH] done\n"); }
 }
 

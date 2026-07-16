@@ -199,7 +199,7 @@ pub(super) fn get_global_frame_allocator() -> &'static dyn GlobalFrameAllocator 
 ///
 /// This function should be called only once.
 pub(crate) unsafe fn init() {
-    let regions = &crate::boot::boot_info().memory_regions;
+    let regions = &crate::boot::EARLY_INFO.get().unwrap().memory_regions;
 
     // Retire the early allocator.
     let early_allocator = unsafe { (*(addr_of_mut!(EARLY_ALLOCATOR))).take().unwrap() };
