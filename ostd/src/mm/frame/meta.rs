@@ -254,11 +254,15 @@ impl MetaSlot {
         as_unique_ptr: bool,
     ) -> Result<*const Self, GetFrameError> {
         let slot = get_slot(paddr)?;
+        #[cfg(target_arch = "aarch64")]
+        unsafe { crate::arch::boot::pl011_puts(b"[meta.get] got slot\n"); }
 
         // WORKAROUND: QEMU 6.2 AArch64 compare_exchange fails spuriously (broken STXR).
         // Retry on spurious failure (Err(REF_COUNT_UNUSED) = expected value observed but STXR failed).
         // `Acquire` pairs with the `Release` in `drop_last_in_place`.
         loop {
+            #[cfg(target_arch = "aarch64")]
+            unsafe { crate::arch::boot::pl011_puts(b"[meta.get] before compare_exchange\n"); }
             match slot.ref_count.compare_exchange(
                 REF_COUNT_UNUSED,
                 0,
@@ -266,12 +270,18 @@ impl MetaSlot {
                 Ordering::Relaxed,
             ) {
                 Ok(_) => break,
-                Err(val) if val == REF_COUNT_UNUSED => continue, // spurious failure, retry
+                Err(val) if val == REF_COUNT_UNUSED => {
+                    #[cfg(target_arch = "aarch64")]
+                    unsafe { crate::arch::boot::pl011_puts(b"[meta.get] spurious, retry\n"); }
+                    continue // spurious failure, retry
+                },
                 Err(REF_COUNT_UNIQUE) => return Err(GetFrameError::Unique),
                 Err(0) => return Err(GetFrameError::Busy),
                 Err(_) => return Err(GetFrameError::InUse),
             }
         }
+        #[cfg(target_arch = "aarch64")]
+        unsafe { crate::arch::boot::pl011_puts(b"[meta.get] compare_exchange succeeded\n"); }
 
         // SAFETY: The slot now has a reference count of `0`, other threads will
         // not access the metadata slot so it is safe to have a mutable reference.

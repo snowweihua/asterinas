@@ -33,14 +33,15 @@ impl<const MAX_ORDER: BuddyOrder> BuddySet<MAX_ORDER> {
         let inserted_size = size_of_order(order);
         let mut chunk = FreeChunk::from_unused(addr, order);
 
-        let order = chunk.order();
+        let mut current_order = chunk.order();
         // Coalesce the chunk with its buddy whenever possible.
-        for (i, list) in self.lists.iter_mut().enumerate().skip(order) {
-            if i + 1 >= MAX_ORDER {
+        loop {
+            if current_order + 1 >= MAX_ORDER {
                 // The chunk is already the largest one.
                 break;
             }
             let buddy_addr = chunk.buddy();
+            let list = &mut self.lists[current_order + 1];
             let Some(mut cursor) = list.cursor_mut_at(buddy_addr) else {
                 // The buddy is not in this free list, so we can't coalesce.
                 break;
@@ -48,6 +49,7 @@ impl<const MAX_ORDER: BuddyOrder> BuddySet<MAX_ORDER> {
             let taken = cursor.take_current().unwrap();
             debug_assert_eq!(buddy_addr, taken.paddr());
             chunk = chunk.merge_free(FreeChunk::from_free_head(taken));
+            current_order = chunk.order();
         }
         // Insert the coalesced chunk into the free lists.
         let order = chunk.order();

@@ -3,6 +3,8 @@
 ## last session status refer to specs/001-rpi3-hardware-bringup/SESSION_CONTEXT.md
 ## development important information refer to specs/001-rpi3-hardware-bringup/quickstart.md
 
+## Current work flow (may change based on task)
+**Research and analysis -> code change -> Build and Deploy -> stop and ask user to power cycle RPi3B ->start serial capture and read log -> If have new progress, commit code and do /checkpoint (save session status) -> continue next research and analysis
 
 ## Git rules
 

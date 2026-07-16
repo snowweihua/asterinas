@@ -64,8 +64,14 @@ pub struct FrameAllocator;
 
 impl GlobalFrameAllocator for FrameAllocator {
     fn alloc(&self, layout: Layout) -> Option<Paddr> {
+        #[cfg(target_arch = "aarch64")]
+        ostd::arch::boot::pl011_puts_safe(b"[FA] before disable_local\n");
         let guard = irq::disable_local();
+        #[cfg(target_arch = "aarch64")]
+        ostd::arch::boot::pl011_puts_safe(b"[FA] after disable_local\n");
         let res = cache::alloc(&guard, layout);
+        #[cfg(target_arch = "aarch64")]
+        ostd::arch::boot::pl011_puts_safe(b"[FA] after cache::alloc\n");
         if res.is_some() {
             TOTAL_FREE_SIZE.sub(guard.current_cpu(), layout.size());
         }

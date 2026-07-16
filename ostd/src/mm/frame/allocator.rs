@@ -54,10 +54,19 @@ impl FrameAllocOptions {
     pub fn alloc_frame_with<M: AnyFrameMeta>(&self, metadata: M) -> Result<Frame<M>> {
         let single_layout = Layout::from_size_align(PAGE_SIZE, PAGE_SIZE).unwrap();
 
-        let frame = get_global_frame_allocator()
+        #[cfg(target_arch = "aarch64")]
+        unsafe { crate::arch::boot::pl011_puts(b"[fa] before get_global_frame_allocator\n"); }
+        let allocator = get_global_frame_allocator();
+        #[cfg(target_arch = "aarch64")]
+        unsafe { crate::arch::boot::pl011_puts(b"[fa] after get_global_frame_allocator\n"); }
+        #[cfg(target_arch = "aarch64")]
+        unsafe { crate::arch::boot::pl011_puts(b"[fa] before allocator.alloc\n"); }
+        let frame = allocator
             .alloc(single_layout)
             .map(|paddr| Frame::from_unused(paddr, metadata).unwrap())
             .ok_or(Error::NoMemory)?;
+        #[cfg(target_arch = "aarch64")]
+        unsafe { crate::arch::boot::pl011_puts(b"[fa] after allocator.alloc\n"); }
 
         if self.zeroed {
             let addr = paddr_to_vaddr(frame.paddr()) as *mut u8;
@@ -66,6 +75,8 @@ impl FrameAllocOptions {
             unsafe { core::ptr::write_bytes(addr, 0, PAGE_SIZE) }
         }
 
+        #[cfg(target_arch = "aarch64")]
+        unsafe { crate::arch::boot::pl011_puts(b"[fa] done\n"); }
         Ok(frame)
     }
 

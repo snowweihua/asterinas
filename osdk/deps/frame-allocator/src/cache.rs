@@ -48,9 +48,15 @@ impl<const NR_CONT_FRAMES: usize, const COUNT: usize> CacheArray<NR_CONT_FRAMES,
     /// It may allocate directly from this cache. If the cache is empty, it
     /// will fill the cache.
     fn alloc(&mut self, guard: &DisabledLocalIrqGuard) -> Option<Paddr> {
+        #[cfg(target_arch = "aarch64")]
+        ostd::arch::boot::pl011_puts_safe(b"[CA.a] start\n");
         if let Some(frame) = self.pop_front() {
+            #[cfg(target_arch = "aarch64")]
+            ostd::arch::boot::pl011_puts_safe(b"[CA.b] pop_front hit\n");
             return Some(frame);
         }
+        #[cfg(target_arch = "aarch64")]
+        ostd::arch::boot::pl011_puts_safe(b"[CA.c] pop_front miss, calling pools::alloc\n");
 
         let nr_to_alloc = COUNT * 2 / 3;
         let allocated = super::pools::alloc(
@@ -61,6 +67,8 @@ impl<const NR_CONT_FRAMES: usize, const COUNT: usize> CacheArray<NR_CONT_FRAMES,
         for i in 1..nr_to_alloc {
             self.push_front(allocated + i * Self::segment_size());
         }
+        #[cfg(target_arch = "aarch64")]
+        ostd::arch::boot::pl011_puts_safe(b"[CA.d] pools::alloc done\n");
 
         Some(allocated)
     }
@@ -118,22 +126,35 @@ impl CacheOfSizes {
 }
 
 pub(super) fn alloc(guard: &DisabledLocalIrqGuard, layout: Layout) -> Option<Paddr> {
+    #[cfg(target_arch = "aarch64")]
+    ostd::arch::boot::pl011_puts_safe(b"[cache.a] start\n");
     let nr_frames = layout.size() / PAGE_SIZE;
     if layout.align() > layout.size() {
         return super::pools::alloc(guard, layout);
     }
 
+    #[cfg(target_arch = "aarch64")]
+    ostd::arch::boot::pl011_puts_safe(b"[cache.b] before CACHE.get_with\n");
     let cache_cell = CACHE.get_with(guard);
+    #[cfg(target_arch = "aarch64")]
+    ostd::arch::boot::pl011_puts_safe(b"[cache.c] after CACHE.get_with\n");
 
+    #[cfg(target_arch = "aarch64")]
+    ostd::arch::boot::pl011_puts_safe(b"[cache.d] before borrow_mut\n");
     let mut cache = cache_cell.borrow_mut();
+    #[cfg(target_arch = "aarch64")]
+    ostd::arch::boot::pl011_puts_safe(b"[cache.e] after borrow_mut\n");
 
-    match nr_frames {
+    let result = match nr_frames {
         1 => cache.cache1.alloc(guard),
         2 => cache.cache2.alloc(guard),
         3 => cache.cache3.alloc(guard),
         4 => cache.cache4.alloc(guard),
         _ => super::pools::alloc(guard, layout),
-    }
+    };
+    #[cfg(target_arch = "aarch64")]
+    ostd::arch::boot::pl011_puts_safe(b"[cache.f] done\n");
+    result
 }
 
 pub(super) fn dealloc(guard: &DisabledLocalIrqGuard, addr: Paddr, size: usize) {

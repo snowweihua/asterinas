@@ -97,15 +97,25 @@ pub(super) fn alloc(guard: &DisabledLocalIrqGuard, layout: Layout) -> Option<Pad
 
 #[cfg(target_arch = "aarch64")]
 pub(super) fn alloc(_guard: &DisabledLocalIrqGuard, layout: Layout) -> Option<Paddr> {
+    #[cfg(target_arch = "aarch64")]
+    ostd::arch::boot::pl011_puts_safe(b"[pools.a] start\n");
     let mut global_pool = OnDemandGlobalLock::new();
+    #[cfg(target_arch = "aarch64")]
+    ostd::arch::boot::pl011_puts_safe(b"[pools.b] got global_pool\n");
 
     let size_order = greater_order_of(layout.size());
     let align_order = greater_order_of(layout.align());
     let order = size_order.max(align_order);
+    #[cfg(target_arch = "aarch64")]
+    ostd::arch::boot::pl011_puts_safe(b"[pools.c] calling global_pool.get()\n");
 
     let pool = global_pool.get();
+    #[cfg(target_arch = "aarch64")]
+    ostd::arch::boot::pl011_puts_safe(b"[pools.d] got pool\n");
 
     let chunk_addr = pool.alloc_chunk(order);
+    #[cfg(target_arch = "aarch64")]
+    ostd::arch::boot::pl011_puts_safe(b"[pools.e] alloc_chunk done\n");
 
     let allocated_size = size_of_order(order);
     if allocated_size > layout.size() {

@@ -68,16 +68,26 @@ impl<C: PageTableConfig> PageTableNode<C> {
 
     /// Allocates a new empty page table node.
     pub(super) fn alloc(level: PagingLevel) -> Self {
+        #[cfg(target_arch = "aarch64")]
+        unsafe { crate::arch::boot::pl011_puts(b"[node.alloc] start\n"); }
         let meta = PageTablePageMeta::new(level);
+        #[cfg(target_arch = "aarch64")]
+        unsafe { crate::arch::boot::pl011_puts(b"[node.alloc] meta created\n"); }
 
+        #[cfg(target_arch = "aarch64")]
+        unsafe { crate::arch::boot::pl011_puts(b"[node.alloc] before FrameAllocOptions\n"); }
         let frame = FrameAllocOptions::new()
             .zeroed(true)
             .alloc_frame_with(meta)
             .expect("Failed to allocate a page table node");
+        #[cfg(target_arch = "aarch64")]
+        unsafe { crate::arch::boot::pl011_puts(b"[node.alloc] frame allocated\n"); }
 
         // The allocated frame is zeroed. Make sure zero is absent PTE.
         debug_assert_eq!(C::E::new_absent().as_usize(), 0);
 
+        #[cfg(target_arch = "aarch64")]
+        unsafe { crate::arch::boot::pl011_puts(b"[node.alloc] done\n"); }
         frame
     }
 

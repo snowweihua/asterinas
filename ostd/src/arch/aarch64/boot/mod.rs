@@ -260,6 +260,10 @@ fn early_uart_base() -> usize {
     }
 }
 
+pub fn pl011_puts_safe(s: &[u8]) {
+    unsafe { pl011_puts(s) }
+}
+
 #[inline(never)]
 pub unsafe fn pl011_puts(s: &[u8]) {
     let mut i = 0;
