@@ -182,26 +182,25 @@ pub(crate) enum MappedItem {
 ///  - any initializer that modifies the kernel page table.
 pub fn init_kernel_page_table(meta_pages: Segment<MetaPageMeta>) {
     #[cfg(target_arch = "aarch64")]
-    unsafe { crate::early_marker(b'W'); }
+    unsafe { crate::arch::boot::pl011_puts(b"[kspace.W] start\n"); }
 
     // Start to initialize the kernel page table.
     let kpt = PageTable::<KernelPtConfig>::new_kernel_page_table();
     #[cfg(target_arch = "aarch64")]
-    unsafe { crate::early_marker(b'X'); }
+    unsafe { crate::arch::boot::pl011_puts(b"[kspace.X] after new_kernel_page_table\n"); }
     let preempt_guard = disable_preempt();
     #[cfg(target_arch = "aarch64")]
-    unsafe { crate::early_marker(b'Y'); }
+    unsafe { crate::arch::boot::pl011_puts(b"[kspace.Y] after disable_preempt\n"); }
 
     // In LoongArch64, we don't need to do linear mappings for the kernel because of DMW0.
     #[cfg(not(target_arch = "loongarch64"))]
     // Do linear mappings for the kernel.
     {
         #[cfg(target_arch = "aarch64")]
-        unsafe { crate::early_marker(b'a'); }
+        unsafe { crate::arch::boot::pl011_puts(b"[kspace.a] before max_paddr\n"); }
         let max_paddr = crate::mm::frame::max_paddr();
         #[cfg(target_arch = "aarch64")]
-        unsafe { crate::early_marker(b'b'); }
-        let max_paddr = crate::mm::frame::max_paddr();
+        unsafe { crate::arch::boot::pl011_puts(b"[kspace.b] after max_paddr\n"); }
         let from = LINEAR_MAPPING_BASE_VADDR..LINEAR_MAPPING_BASE_VADDR + max_paddr;
         let prop = PageProperty {
             flags: PageFlags::RW,
