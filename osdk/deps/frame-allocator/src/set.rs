@@ -99,7 +99,7 @@ impl<const MAX_ORDER: BuddyOrder> BuddySet<MAX_ORDER> {
         // The remaining chunk is the one we want.
         let head_frame = chunk.take().unwrap().into_unique_head();
         let paddr = head_frame.paddr();
-        head_frame.reset_as_unused(); // It will "drop" the frame without up-calling us.
+        head_frame.release_without_dealloc();
 
         Some(paddr)
     }

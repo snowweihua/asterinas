@@ -52,6 +52,8 @@ impl FrameAllocOptions {
 
     /// Allocates a single frame with additional metadata.
     pub fn alloc_frame_with<M: AnyFrameMeta>(&self, metadata: M) -> Result<Frame<M>> {
+        #[cfg(target_arch = "aarch64")]
+        unsafe { crate::arch::boot::pl011_puts(b"[fa.0] alloc_frame_with start\n"); }
         let single_layout = Layout::from_size_align(PAGE_SIZE, PAGE_SIZE).unwrap();
 
         #[cfg(target_arch = "aarch64")]

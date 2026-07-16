@@ -208,10 +208,14 @@ impl FreeChunk {
         let new_order = order - 1;
         let left_child_addr = addr;
         let right_child_addr = addr ^ size_of_order(new_order);
+        #[cfg(target_arch = "aarch64")]
+        ostd::arch::boot::pl011_puts_safe(b"[split] start\n");
 
         let mut unique_head = self.into_unique_head();
         debug_assert_eq!(unique_head.paddr(), left_child_addr);
         unique_head.meta_mut().order = new_order;
+        #[cfg(target_arch = "aarch64")]
+        ostd::arch::boot::pl011_puts_safe(b"[split] before right child\n");
 
         let left_child = FreeChunk { head: unique_head };
         let right_child = FreeChunk {
@@ -221,6 +225,8 @@ impl FreeChunk {
             )
             .expect("Tail frames are not unused"),
         };
+        #[cfg(target_arch = "aarch64")]
+        ostd::arch::boot::pl011_puts_safe(b"[split] done\n");
         (left_child, right_child)
     }
 

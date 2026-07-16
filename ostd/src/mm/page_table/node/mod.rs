@@ -76,10 +76,14 @@ impl<C: PageTableConfig> PageTableNode<C> {
 
         #[cfg(target_arch = "aarch64")]
         unsafe { crate::arch::boot::pl011_puts(b"[node.alloc] before FrameAllocOptions\n"); }
+        #[cfg(target_arch = "aarch64")]
+        unsafe { crate::arch::boot::pl011_puts(b"[node.alloc] calling alloc_frame_with\n"); }
         let frame = FrameAllocOptions::new()
             .zeroed(true)
             .alloc_frame_with(meta)
             .expect("Failed to allocate a page table node");
+        #[cfg(target_arch = "aarch64")]
+        unsafe { crate::arch::boot::pl011_puts(b"[node.alloc] alloc_frame_with returned\n"); }
         #[cfg(target_arch = "aarch64")]
         unsafe { crate::arch::boot::pl011_puts(b"[node.alloc] frame allocated\n"); }
 

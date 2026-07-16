@@ -1,7 +1,7 @@
 # RPi3 Debug Session - 2026-07-16
 
 ## Current Task T030
-Kernel hangs in `SpinLock::try_acquire_lock` inside `global_pool.get()` - hang is at `[pools.c]` marker, meaning we successfully reach the SpinLock acquisition but `swap` atomic hangs.
+Kernel crashes with `Synchronous Abort` after successful frame allocation in `kspace::init_kernel_page_table()`.
 
 ## Root Causes Found & Fixed
 
@@ -47,10 +47,14 @@ Kernel hangs in `SpinLock::try_acquire_lock` inside `global_pool.get()` - hang i
 - **Fix**: Changed from for-loop with enumerate to explicit loop with `current_order` tracking. After each `merge_free()`, update `current_order = chunk.order()` and recalculate `buddy_addr` with new order.
 - **Commit**: 7f61fe9b
 
+### Fix 8: SpinLock atomic swap hangs on RPi3 AXI bridge
+- **File**: `ostd/src/sync/spin.rs`
+- **Issue**: `AtomicBool::swap()` uses LDXR/STXR internally which fails spuriously on RPi3 AXI bridge - STXR appears to succeed locally but never becomes globally visible, causing infinite retry.
+- **Fix**: Use relaxed store + fence instead of atomic swap for UP early boot.
+- **Commit**: 8d55e298
+
 ## Boot Progress - 2026-07-16 (Latest)
 ```
-[init.B] after init_after_heap
-[init.B1] before kspace::init
 [kspace.W] start
 [node.alloc] start
 [node.alloc] meta created
@@ -70,31 +74,38 @@ Kernel hangs in `SpinLock::try_acquire_lock` inside `global_pool.get()` - hang i
 [pools.a] start
 [pools.b] got global_pool
 [pools.c] calling global_pool.get()
+[pools.d] got pool
+[pools.e] alloc_chunk done
+[cache.f] done
+[FA] after cache::alloc
+(SYNCHRONOUS ABORT - no further markers print)
 ```
-**Confirmed**: Hang is INSIDE `OnDemandGlobalLock::get()` → `GLOBAL_POOL.lock()` → `SpinLock::acquire_lock()` → `SpinLock::try_acquire_lock()` using `swap` atomic.
+**Confirmed**: Frame allocation succeeds but crash occurs when converting paddr to Frame object or subsequent use.
 
 ## Next Steps
-1. Build with SpinLock markers to confirm hang at `[spin.t] before swap`
-2. Investigate if `swap` itself is affected by RPi3 AXI bridge (not just compare_exchange)
-3. Consider using memory barriers or disabled interrupts approach instead of atomic swap
-4. T030 complete when `/ #` prompt appears
+1. Add marker in `get_from_unused` to confirm crash location - marker [meta.get.0] should print if get_from_unused is reached
+2. If [meta.get.0] doesn't print, crash is in `paddr_to_vaddr` or metadata slot lookup
+3. Investigate paddr validity and frame_paddr_base settings on RPi3
 
 ## Known Blockers
 - RPi3 AXI bridge causes LDXR/STXR atomics to fail spuriously
-- Even `swap` with `Ordering::Acquire` may be affected since internally it uses LDXR/STXR
+- Synchronous Abort after successful frame allocation - memory access issue
 
 ## Files Modified (this session)
 - `ostd/src/boot/mod.rs` - BootInfo zero-allocation, test code
-- `ostd/src/mm/frame/allocator.rs` - EARLY_INFO fix
-- `ostd/src/mm/frame/meta.rs` - EARLY_INFO fix
+- `ostd/src/mm/frame/allocator.rs` - EARLY_INFO fix, debug markers
+- `ostd/src/mm/frame/meta.rs` - EARLY_INFO fix, debug markers
 - `ostd/src/mm/kspace/mod.rs` - pl011_puts markers
-- `ostd/src/sync/spin.rs` - ADDED markers at [spin.t] and [spin.L]
+- `ostd/src/sync/spin.rs` - Relaxed store SpinLock fix
+- `ostd/src/mm/page_table/node/mod.rs` - Debug markers
 - `osdk/deps/frame-allocator/src/set.rs` - Buddy coalescing bug fix
 - `osdk/deps/frame-allocator/src/pools/mod.rs` - Debug markers
 - `osdk/deps/frame-allocator/src/cache.rs` - Debug markers
 - `kernel/src/lib.rs` - Removed .as_str() call
 
 ## Commits on aarch64_support
+- b97c5178 debug: add markers to trace Synchronous Abort after frame allocation
+- 8d55e298 aarch64/SpinLock: use relaxed store instead of atomic swap
 - 7f61fe9b aarch64/buddy: fix buddy address recalculation after coalesce
 - dcce6611 docs: add commit-on-progress rule to AGENTS.md
 - 63a5a48d aarch64/cpu: add cpu.1-8 markers

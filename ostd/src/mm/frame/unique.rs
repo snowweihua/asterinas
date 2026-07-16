@@ -117,6 +117,14 @@ impl<M: AnyFrameMeta + ?Sized> UniqueFrame<M> {
         unsafe { this.slot().drop_last_in_place() };
     }
 
+    pub fn release_without_dealloc(self) {
+        let this = ManuallyDrop::new(self);
+        // SAFETY: We are the sole owner and the slot is initialized.
+        unsafe {
+            this.slot().ref_count.store(super::REF_COUNT_UNUSED, Ordering::Relaxed);
+        }
+    }
+
     /// Converts this frame into a raw physical address.
     pub(crate) fn into_raw(self) -> Paddr {
         let this = ManuallyDrop::new(self);
