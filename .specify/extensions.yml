@@ -1,0 +1,15 @@
+# Speckit Extensions
+# This file configures hooks for speckit command workflows
+
+hooks:
+  before_implement:
+    - name: save-session-state
+      command: save-session-state
+      description: "Update LATEST_SESSION.md before speckit commands to preserve debugging context"
+      optional: false
+
+  after_implement:
+    - name: update-session-state
+      command: save-session-state
+      description: "Update LATEST_SESSION.md after speckit commands with completed work"
+      optional: true

@@ -24,6 +24,7 @@ docker run --rm -v $(pwd):/root/asterinas asterinas/aarch64-dev:latest bash -c \
 
 # 3. Deploy to TFTP root (rename to initramfs.cpio.gz — boot.cmd TFTP command expects this name)
 cp target/osdk/aster-nix/asterina.img /mnt/d/pi_sd/
+# if initramfs is updated then
 cp test/build/aarch64-shell-initramfs.cpio.gz /mnt/d/pi_sd/initramfs.cpio.gz
 ```
 

@@ -104,12 +104,16 @@ pub use self::{error::Error, prelude::Result};
 // boot stage only global variables.
 #[doc(hidden)]
 unsafe fn init() {
+    unsafe { crate::arch::boot::pl011_puts(b"[init.0] start\n"); }
     arch::enable_cpu_features();
+    unsafe { crate::arch::boot::pl011_puts(b"[init.1] enable_cpu_features done\n"); }
 
     // SAFETY: This function is called only once, before `allocator::init`
     // and after memory regions are initialized.
     unsafe { mm::frame::allocator::init_early_allocator() };
+    unsafe { crate::arch::boot::pl011_puts(b"[init.2] init_early_allocator done\n"); }
 
+    unsafe { crate::arch::boot::pl011_puts(b"[init.3] before serial::init\n"); }
     #[cfg(target_arch = "x86_64")]
     arch::if_tdx_enabled!({
     } else {
@@ -117,8 +121,11 @@ unsafe fn init() {
     });
     #[cfg(not(target_arch = "x86_64"))]
     arch::serial::init();
+    unsafe { crate::arch::boot::pl011_puts(b"[init.4] after serial::init\n"); }
 
+    unsafe { crate::arch::boot::pl011_puts(b"[init.5] before logger::init\n"); }
     logger::init();
+    unsafe { crate::arch::boot::pl011_puts(b"[init.6] after logger::init\n"); }
 
     // SAFETY:
     // 1. They are only called once in the boot context of the BSP.

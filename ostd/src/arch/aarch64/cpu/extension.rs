@@ -3,7 +3,7 @@
 //! AArch64 ISA extensions.
 
 use bitflags::bitflags;
-use spin::Once;
+use crate::boot::SimpleOnce as Once;
 
 /// Detects available AArch64 ISA extensions.
 pub(in crate::arch) fn init() {
