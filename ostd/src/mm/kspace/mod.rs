@@ -196,6 +196,11 @@ pub fn init_kernel_page_table(meta_pages: Segment<MetaPageMeta>) {
     #[cfg(not(target_arch = "loongarch64"))]
     // Do linear mappings for the kernel.
     {
+        #[cfg(target_arch = "aarch64")]
+        unsafe { crate::early_marker(b'a'); }
+        let max_paddr = crate::mm::frame::max_paddr();
+        #[cfg(target_arch = "aarch64")]
+        unsafe { crate::early_marker(b'b'); }
         let max_paddr = crate::mm::frame::max_paddr();
         let from = LINEAR_MAPPING_BASE_VADDR..LINEAR_MAPPING_BASE_VADDR + max_paddr;
         let prop = PageProperty {

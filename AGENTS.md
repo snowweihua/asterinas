@@ -3,7 +3,11 @@
 ## last session status refer to specs/001-rpi3-hardware-bringup/SESSION_CONTEXT.md
 ## development important information refer to specs/001-rpi3-hardware-bringup/quickstart.md
 
-## Git Rules
+
+## Git rules
+
+### Time to commit
+**When new progress, commit it immediately, then do next debugging
 
 ### "Commit on Progress" — Non-Negotiable
 
