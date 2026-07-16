@@ -499,7 +499,7 @@ impl_frame_meta_for!(MetaPageMeta);
 ///
 pub(crate) unsafe fn init() -> Segment<MetaPageMeta> {
     let max_paddr = {
-        let regions = &crate::boot::boot_info().memory_regions;
+        let regions = &crate::boot::EARLY_INFO.get().unwrap().memory_regions;
         regions
             .iter()
             .filter(|r| r.typ() == MemoryRegionType::Usable)
