@@ -110,6 +110,7 @@ unsafe fn init() {
 
     // SAFETY: This function is called only once, before `allocator::init`
     // and after memory regions are initialized.
+    unsafe { crate::arch::boot::pl011_puts(b"[init.1b] before init_early_allocator\n"); }
     unsafe { mm::frame::allocator::init_early_allocator() };
     unsafe { crate::arch::boot::pl011_puts(b"[init.2] init_early_allocator done\n"); }
 
