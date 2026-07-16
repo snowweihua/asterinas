@@ -25,10 +25,6 @@ git add -A && git commit -m "WIP: <description>"
 ```
 Example: `aarch64/cpu: replace spin::Once with SimpleOnce — fixes RPi3 boot hang at enable_cpu_features`
 
-### Before Each Power Cycle Checklist
-1. ✅ Committed recent code changes?
-2. ✅ Updated session docs with latest findings?
-3. ✅ Kernel binary deployed to TFTP?
 
 ## Current Session: RPi3 Boot Hang Investigation
 

@@ -132,22 +132,24 @@ unsafe fn init() {
     // 1. They are only called once in the boot context of the BSP.
     // 2. The number of CPUs are available because ACPI has been initialized.
     // 3. No CPU-local objects have been accessed yet.
+    unsafe { crate::arch::boot::pl011_puts(b"[init.7] before cpu::init_on_bsp\n"); }
     unsafe { cpu::init_on_bsp() };
+    unsafe { crate::arch::boot::pl011_puts(b"[init.8] after cpu::init_on_bsp\n"); }
 
     let meta_pages = unsafe { mm::frame::meta::init() };
-    unsafe { crate::arch::boot::pl011_puts(b"[init] after meta::init\n"); }
+    unsafe { crate::arch::boot::pl011_puts(b"[init.9] after meta::init\n"); }
 
     // The frame allocator should be initialized immediately after the metadata
     // is initialized. Otherwise the boot page table can't allocate frames.
     // SAFETY: This function is called only once.
     unsafe { mm::frame::allocator::init() };
-    unsafe { crate::arch::boot::pl011_puts(b"[init] after allocator::init\n"); }
+    unsafe { crate::arch::boot::pl011_puts(b"[init.A] after allocator::init\n"); }
 
     boot::init_after_heap();
-    unsafe { crate::arch::boot::pl011_puts(b"[init] after init_after_heap\n"); }
+    unsafe { crate::arch::boot::pl011_puts(b"[init.B] after init_after_heap\n"); }
 
     mm::kspace::init_kernel_page_table(meta_pages);
-    unsafe { crate::arch::boot::pl011_puts(b"[init] after kspace::init\n"); }
+    unsafe { crate::arch::boot::pl011_puts(b"[init.C] after kspace::init\n"); }
 
     sync::init();
     unsafe { crate::arch::boot::pl011_puts(b"[init] after sync::init\n"); }
