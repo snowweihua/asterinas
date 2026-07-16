@@ -25,7 +25,7 @@ Kernel hangs somewhere after `[init.8] after cpu::init_on_bsp` - needs further m
 - **Commit**: bd1d133f
 
 ## Boot Progress
-Kernel now reaches `[init.8] after cpu::init_on_bsp` consistently on RPi3.
+Kernel now reaches `[init.9] after meta::init` on RPi3!
 
 Sequence that works:
 ```
@@ -47,12 +47,13 @@ Sequence that works:
 [cpu.7] before init_num_cpus
 [cpu.8] after init_num_cpus
 [init.8] after cpu::init_on_bsp
+[init.9] after meta::init
 ```
-(Hangs somewhere after this point - likely in `mm::frame::meta::init()`)
+(Hangs somewhere after `[init.9]` - next steps are allocator::init, init_after_heap, kspace::init)
 
 ## Next Steps
-1. Add markers inside `mm::frame::meta::init()` to find exact hang location
-2. Continue adding markers through remaining init steps until shell prompt
+1. Continue adding markers for remaining init steps: allocator::init, init_after_heap, kspace::init
+2. Kernel now hangs after meta::init() completes
 3. T030 will be complete when `/ #` prompt appears
 
 ## Commits on aarch64_support
