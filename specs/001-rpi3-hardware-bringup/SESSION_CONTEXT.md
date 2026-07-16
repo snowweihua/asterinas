@@ -1,6 +1,6 @@
 # RPi3 Debug Session - 2026-07-16 (Morning)
 
-## Current Issue (T030)
+## Current Task T030
 Kernel hangs somewhere after `[init.8] after cpu::init_on_bsp` - needs further markers to pinpoint.
 
 ## Root Causes Found & Fixed
