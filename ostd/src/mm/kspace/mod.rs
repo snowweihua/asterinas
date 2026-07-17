@@ -216,7 +216,7 @@ pub fn init_kernel_page_table(meta_pages: Segment<MetaPageMeta>) {
     }
 
     #[cfg(target_arch = "aarch64")]
-    unsafe { crate::early_marker(b'Y'); }
+    unsafe { crate::arch::boot::pl011_puts(b"[kspace.c] before meta mapping\n"); }
 
     // Map the metadata pages.
     {
@@ -242,7 +242,7 @@ pub fn init_kernel_page_table(meta_pages: Segment<MetaPageMeta>) {
     }
 
     #[cfg(target_arch = "aarch64")]
-    unsafe { crate::early_marker(b'Z'); }
+    unsafe { crate::arch::boot::pl011_puts(b"[kspace.d] after meta mapping\n"); }
 
     // In LoongArch64, we don't need to do linear mappings for the kernel code because of DMW0.
     #[cfg(all(not(target_arch = "loongarch64"), not(target_arch = "aarch64")))]

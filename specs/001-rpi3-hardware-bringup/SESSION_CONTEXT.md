@@ -1,4 +1,4 @@
-# RPi3 Debug Session - 2026-07-16
+# RPi3 Debug Session - 2026-07-16 (Evening)
 
 ## Current Task T030
 Kernel crashes with `Synchronous Abort` after successful frame allocation in `kspace::init_kernel_page_table()`.
@@ -15,7 +15,6 @@ Kernel crashes with `Synchronous Abort` after successful frame allocation in `ks
 - **File**: `ostd/src/cpu/local/mod.rs`
 - **Issue**: `CPU_LOCAL_STORAGES: Once<&'static [Paddr]>` uses `spin::Once` which hangs on RPi3
 - **Fix**: Changed to `use crate::boot::SimpleOnce as Once;`
-- **Also**: Added `is_completed()` and `get_unchecked()` methods to `SimpleOnce`
 - **Commit**: fd3875b3
 
 ### Fix 3: `mm/frame/allocator.rs` - boot_info vs EARLY_INFO
@@ -80,39 +79,38 @@ Kernel crashes with `Synchronous Abort` after successful frame allocation in `ks
 [FA] after cache::alloc
 (SYNCHRONOUS ABORT - no further markers print)
 ```
-**Confirmed**: Frame allocation succeeds but crash occurs when converting paddr to Frame object or subsequent use.
+**Confirmed**: Frame allocation succeeds but crash occurs AFTER `alloc_frame_with` returns.
 
-## Next Steps
-1. Add marker in `get_from_unused` to confirm crash location - marker [meta.get.0] should print if get_from_unused is reached
-2. If [meta.get.0] doesn't print, crash is in `paddr_to_vaddr` or metadata slot lookup
-3. Investigate paddr validity and frame_paddr_base settings on RPi3
+## Mystery: Missing Marker
+- Added `[node.alloc] calling alloc_frame_with` marker BEFORE `alloc_frame_with` call
+- Added `[fa.0] alloc_frame_with start` marker at START of `alloc_frame_with`
+- **Serial output shows**: `[fa] before get_global_frame_allocator` (INSIDE alloc_frame_with) BUT NOT the before/after markers
+- This suggests markers in the function prologue or call setup are being lost/dropped
 
-## Known Blockers
-- RPi3 AXI bridge causes LDXR/STXR atomics to fail spuriously
-- Synchronous Abort after successful frame allocation - memory access issue
+## Crash Analysis
+- **Crash state**: Synchronous Abort at `0x3af610a8`, `x0 = 0`
+- **elr**: `fffffffffcc900a8` (reloc) / `000000003af610a8` (actual)
+- **Code at crash**: `3af61060` (instruction that faulted)
+- **Frame allocator returns successfully** - `[FA] after cache::alloc` prints
+- **Crash happens AFTER** `alloc_frame_with` completes but BEFORE caller continues
 
 ## Files Modified (this session)
-- `ostd/src/boot/mod.rs` - BootInfo zero-allocation, test code
+- `ostd/src/boot/mod.rs` - BootInfo zero-allocation
 - `ostd/src/mm/frame/allocator.rs` - EARLY_INFO fix, debug markers
 - `ostd/src/mm/frame/meta.rs` - EARLY_INFO fix, debug markers
 - `ostd/src/mm/kspace/mod.rs` - pl011_puts markers
 - `ostd/src/sync/spin.rs` - Relaxed store SpinLock fix
 - `ostd/src/mm/page_table/node/mod.rs` - Debug markers
 - `osdk/deps/frame-allocator/src/set.rs` - Buddy coalescing bug fix
-- `osdk/deps/frame-allocator/src/pools/mod.rs` - Debug markers
-- `osdk/deps/frame-allocator/src/cache.rs` - Debug markers
-- `kernel/src/lib.rs` - Removed .as_str() call
 
 ## Commits on aarch64_support
 - b97c5178 debug: add markers to trace Synchronous Abort after frame allocation
 - 8d55e298 aarch64/SpinLock: use relaxed store instead of atomic swap
 - 7f61fe9b aarch64/buddy: fix buddy address recalculation after coalesce
-- dcce6611 docs: add commit-on-progress rule to AGENTS.md
-- 63a5a48d aarch64/cpu: add cpu.1-8 markers
-- 8349f815 aarch64/mm: use EARLY_INFO instead of boot_info
-- fd3875b3 aarch64/cpu: replace spin::Once with SimpleOnce
-- bd1d133f aarch64/mm: use EARLY_INFO in EarlyFrameAllocator
-- b35067af boot: change BootInfo to use &str instead of String
-- 19d4617f boot: add [init.B1] marker before kspace::init
-- 7c8176be mm/kspace: add markers inside init_kernel_page_table
 - ec50b486 mm/kspace: replace early_marker with pl011_puts
+
+## Next Steps
+1. Investigate why markers inside `alloc_frame_with` prologue are missing
+2. Add marker AFTER `alloc_frame_with` returns to confirm the return succeeds
+3. Check if crash is in the `Result` unwrapping or subsequent operations
+4. Consider if `paddr_to_vaddr` or metadata slot access is causing the crash
