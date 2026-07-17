@@ -344,7 +344,7 @@ pub unsafe extern "C" fn aarch64_boot(device_tree_paddr: usize, _reserved: usize
     unsafe { crate::arch::trap::init() };
 
     // MARKER G: trap::init() done.
-    early_marker(b'G');
+    unsafe { pl011_puts(b"G\n"); }
 
     // CRITICAL: detect the board type from the raw DTB pointer BEFORE any UART output.
     // early_uart_base() uses BoardType::cached(), so we must populate the cache first.
@@ -353,12 +353,12 @@ pub unsafe extern "C" fn aarch64_boot(device_tree_paddr: usize, _reserved: usize
     let discovered_dtb_paddr = discover_dtb_paddr(device_tree_paddr).unwrap_or(0);
 
     // MARKER H: discover_dtb_paddr() done.
-    early_marker(b'H');
+    unsafe { pl011_puts(b"H\n"); }
 
     crate::arch::board::BoardType::detect_from_dtb_ptr(discovered_dtb_paddr);
 
     // MARKER I: detect_from_dtb_ptr() done — board type is now in BOARD_CACHE.
-    early_marker(b'I');
+    unsafe { pl011_puts(b"I\n"); }
 
     unsafe { pl011_puts(b"[a2-boot] entry\n") };
 

@@ -34,11 +34,17 @@ Kernel crashes with `Synchronous Abort` after successful frame allocation in `ks
 - **Fix**: Changed to `&'static str` and `&'static [MemoryRegion]` (zero-allocation)
 - **Commit**: b35067af
 
-### Fix 6: `early_marker` replaced with `pl011_puts`
-- **File**: `ostd/src/mm/kspace/mod.rs`
-- **Issue**: `early_marker` has a known issue on RPi3
-- **Fix**: Changed markers to use `pl011_puts`
-- **Commit**: ec50b486
+### Fix 6: `early_marker` replaced with `pl011_puts` (partial)
+- **Files**: `ostd/src/mm/kspace/mod.rs`
+- **Issue**: `early_marker` writes directly to UART without checking LSR bit 6 (TX empty), hangs if TX buffer is full
+- **Fix**: Changed `[kspace.c]` and `[kspace.d]` markers to use `pl011_puts`. `early_marker` in kspace was using `crate::early_marker` (lib.rs version) which lacks LSR check.
+- **Commit**: 907a896e
+
+### Fix 9: `early_marker` in kspace/mod.rs was NOT using pl011_puts
+- **File**: `ostd/src/mm/kspace/mod.rs:219,245`
+- **Issue**: `unsafe { crate::early_marker(b'Y') }` calls `crate::early_marker` defined in `ostd/src/lib.rs:71-83`, which writes directly to mini-UART DR (0x3F215040) without checking TX empty flag. This can hang if TX buffer is full.
+- **Fix**: Replaced with `crate::arch::boot::pl011_puts(b"[kspace.c/d] ...")`
+- **Commit**: 907a896e
 
 ### Fix 7: Buddy allocator coalescing bug (CRITICAL)
 - **File**: `osdk/deps/frame-allocator/src/set.rs`
