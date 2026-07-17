@@ -39,4 +39,3 @@ test_swap.s
 .cargo/
 .docker-cargo/
 .omo/
-.opencode/
