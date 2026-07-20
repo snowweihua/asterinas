@@ -14,8 +14,8 @@ use crate::{
 
 pub(crate) const NR_ENTRIES_PER_PAGE: usize = 512;
 
-pub(crate) const fn frame_paddr_base() -> usize {
-    0x4000_0000
+pub(crate) fn frame_paddr_base() -> usize {
+    crate::arch::board::dram_base()
 }
 
 #[derive(Clone, Debug, Default)]

@@ -23,7 +23,7 @@ pub(crate) mod mapping {
     use crate::mm::{kspace::FRAME_METADATA_RANGE, Paddr, PagingConstsTrait, Vaddr, PAGE_SIZE};
 
     /// Converts a physical address of a base frame to the virtual address of the metadata slot.
-    pub(crate) const fn frame_to_meta<C: PagingConstsTrait>(paddr: Paddr) -> Vaddr {
+    pub(crate) fn frame_to_meta<C: PagingConstsTrait>(paddr: Paddr) -> Vaddr {
         let base = FRAME_METADATA_RANGE.start;
         let paddr = paddr - crate::arch::mm::frame_paddr_base();
         let offset = paddr / PAGE_SIZE;
@@ -31,7 +31,7 @@ pub(crate) mod mapping {
     }
 
     /// Converts a virtual address of the metadata slot to the physical address of the frame.
-    pub(crate) const fn meta_to_frame<C: PagingConstsTrait>(vaddr: Vaddr) -> Paddr {
+    pub(crate) fn meta_to_frame<C: PagingConstsTrait>(vaddr: Vaddr) -> Paddr {
         let base = FRAME_METADATA_RANGE.start;
         let offset = (vaddr - base) / size_of::<MetaSlot>();
         crate::arch::mm::frame_paddr_base() + offset * PAGE_SIZE
