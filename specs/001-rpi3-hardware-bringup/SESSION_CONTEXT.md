@@ -1,48 +1,37 @@
-# RPi3 Debug Session - 2026-07-17
+# RPi3 Debug Session - 2026-07-20
 
-## Current Task T030
+## Current Task T035
 Kernel crashes with `Synchronous Abort` during frame metadata initialization in `kspace::init_kernel_page_table()`.
 
-## Root Causes Found & Fixed (from previous session)
+## Root Cause Found & Fixed (this session)
 
-### Fix 1-9 (previous session)
-See SESSION_CONTEXT.md from 2026-07-16 for details on spin::Once, buddy coalescing, SpinLock fixes.
+### Fix 10: `frame_paddr_base()` now uses `dram_base()` at runtime
 
-## Latest Root Cause Analysis
+**Problem**: `frame_paddr_base = 0x4000_0000` (hardcoded const) but RPi3 DRAM starts at `0x0`.
 
-### CRITICAL: `frame_paddr_base` mismatch on RPi3
+**Solution**: Changed `frame_paddr_base()` from `const fn` to `fn` that calls `crate::arch::board::dram_base()`.
 
-**Problem**: `frame_paddr_base = 0x4000_0000` (compile-time constant for all AArch64) but RPi3 DRAM starts at `0x0`.
+**Impact**:
+- RPi3: `dram_base()` reads DTB memory node → returns `0x0` → `frame_paddr_base = 0x0`
+- QEMU virt: `dram_base()` returns `0x4000_0000` → `frame_paddr_base = 0x4000_0000`
 
-**Impact on buddy allocator**:
-- RPi3 usable memory: `0x0..0x3BF00000`
-- With `frame_paddr_base = 0x4000_0000`, `add_free_memory` clamps range to `0x4000_0000..0x3BF00000` (EMPTY)
-- Buddy gets no usable memory → returns frames below `frame_paddr_base`
+**Also changed**:
+- `frame_to_meta()` and `meta_to_frame()` in meta.rs: `const fn` → `fn` (required since they call non-const `frame_paddr_base()`)
 
-**Impact on metadata slot calculation**:
-- `get_slot(paddr)` uses `(paddr - frame_paddr_base) / PAGE_SIZE` for slot index
-- With `frame_paddr_base = 0x4000_0000` and `paddr = 0x100000`: index = `-0x30000000 / 4096` = negative (WRONG!)
-- `tot_nr_frames = max_paddr - frame_paddr_base = 0x3BF00000 - 0x40000000 = 0`
-- So `tot_nr_frames = 0` and metadata frames shouldn't be tracked
+**Build**: `cargo osdk build --release --target-arch aarch64 --boot-method qemu-direct --scheme aarch64`
+**Deploy**: `aarch64-linux-gnu-objcopy -O binary ... && cp ... /mnt/d/pi_sd/asterina.img`
 
-**But crash still happens**: With `frame_paddr_base = 0x4000_0000`:
-- `[meta.init] meta_frames allocated` marker prints
-- `[meta.get.0] start`, `[meta.get] got slot` print
-- Crash INSIDE `compare_exchange` on slot's ref_count
+## Previous Session Fixes (2026-07-17)
 
-**Analysis**: Even with `tot_nr_frames = 0`, the buddy allocator somehow returns frames. The metadata frame itself (allocated via `early_alloc`) is tracked separately. When `get_slot` checks `paddr >= frame_paddr_base`, it succeeds for the metadata frame paddr (which might be above `frame_paddr_base`). But the returned frame paddr is below `frame_paddr_base`.
-
-### Attempted Fix: `frame_paddr_base = 0`
-
-**Result**: Same crash at `compare_exchange`.
-
-**Analysis**: With `frame_paddr_base = 0`:
-- Buddy gets all usable memory (0x0..0x3BF00000)
-- `tot_nr_frames = max_paddr / PAGE_SIZE = 60927` (all frames tracked)
-- Slot calculation: `slot_paddr = meta_paddr_base + (paddr / PAGE_SIZE) * 32`
-- Slot addresses are in kernel high VA range (`0xFFFF_xxxx`)
-- But during bootstrap, kernel high VA is NOT mapped in boot page table
-- Accessing these addresses causes fault
+### Fix 1-9 (from 2026-07-17 session)
+- spin::Once → SimpleOnce in cpu/extension.rs and cpu/local/mod.rs
+- boot_info() → EARLY_INFO.get() in allocator.rs and meta.rs
+- BootInfo: String→&str, Vec→&[MemoryRegion]
+- early_marker → pl011_puts in kspace/mod.rs
+- SpinLock: atomic swap → relaxed store + fence
+- BuddySet::insert_chunk: recalculate buddy_addr after coalesce
+- tot_nr_frames calculation change
+- add_free_memory range adjustment
 
 ## Key Files Analyzed
 

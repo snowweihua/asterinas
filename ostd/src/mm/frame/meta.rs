@@ -218,7 +218,7 @@ pub(super) fn get_slot(paddr: Paddr) -> Result<&'static MetaSlot, GetFrameError>
         return Err(GetFrameError::OutOfBound);
     }
 
-    let ptr = if frame_paddr_base == 0 || !crate::IN_BOOTSTRAP_CONTEXT.load(Ordering::Relaxed) {
+    let ptr = if frame_paddr_base != 0 && !crate::IN_BOOTSTRAP_CONTEXT.load(Ordering::Relaxed) {
         // After KPT activation (or when frame_paddr_base == 0), use the
         // FRAME_METADATA_RANGE virtual address which is properly mapped in the KPT.
         let vaddr = mapping::frame_to_meta::<PagingConsts>(paddr);
