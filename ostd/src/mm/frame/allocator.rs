@@ -67,7 +67,7 @@ impl FrameAllocOptions {
             .alloc(single_layout)
             .map(|paddr| {
                 #[cfg(target_arch = "aarch64")]
-                unsafe { crate::arch::boot::pl011_puts(b"[fa.1] in map, paddr="); }
+                unsafe { crate::arch::boot::pl011_puts(b"[fa.1] in map, paddr=\n"); }
                 let f = Frame::from_unused(paddr, metadata).unwrap();
                 #[cfg(target_arch = "aarch64")]
                 unsafe { crate::arch::boot::pl011_puts(b"[fa.2] after Frame::from_unused\n"); }
@@ -240,14 +240,14 @@ pub(crate) unsafe fn init() {
 
             for r1 in range_difference(&(region.base()..region.end()), &range_1) {
                 for r2 in range_difference(&r1, &range_2) {
-                    let r2 = if r2.start < frame_paddr_base {
-                        frame_paddr_base..r2.end
+                    let r2_start = if r2.start < frame_paddr_base {
+                        frame_paddr_base
                     } else {
-                        r2
+                        r2.start
                     };
-                    if r2.start < r2.end {
-                        log::info!("Adding free frames to the allocator: {:x?}", r2);
-                        get_global_frame_allocator().add_free_memory(r2.start, r2.len());
+                    if r2_start < r2.end {
+                        log::info!("Adding free frames to the allocator: {:x?}..{:x?}", r2_start, r2.end);
+                        get_global_frame_allocator().add_free_memory(r2_start, r2.end - r2_start);
                     }
                 }
             }

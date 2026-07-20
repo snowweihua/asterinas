@@ -520,21 +520,24 @@ pub(crate) unsafe fn init() -> Segment<MetaPageMeta> {
             .unwrap()
     };
 
-    // In RISC-V, the boot page table has mapped the 512GB memory,
-    // so we don't need to add temporary linear mapping.
-    // In LoongArch, the DWM0 has mapped the whole memory,
-    // so we don't need to add temporary linear mapping.
-    #[cfg(target_arch = "x86_64")]
-    add_temp_linear_mapping(max_paddr);
+    #[cfg(target_arch = "aarch64")]
+    unsafe { crate::arch::boot::pl011_puts(b"[meta.init] max_paddr computed\n"); }
 
     let frame_paddr_base = crate::arch::mm::frame_paddr_base();
-    let tot_nr_frames = max_paddr.saturating_sub(frame_paddr_base) / page_size::<PagingConsts>(1);
+    #[cfg(target_arch = "aarch64")]
+    unsafe { crate::arch::boot::pl011_puts(b"[meta.init] frame_paddr_base computed\n"); }
+
+    let tot_nr_frames = max_paddr / page_size::<PagingConsts>(1);
+    #[cfg(target_arch = "aarch64")]
+    unsafe { crate::arch::boot::pl011_puts(b"[meta.init] tot_nr_frames computed\n"); }
 
     if tot_nr_frames == 0 {
         return unsafe { Segment::from_raw(0..0) };
     }
 
     let (nr_meta_pages, meta_pages) = alloc_meta_frames(tot_nr_frames);
+    #[cfg(target_arch = "aarch64")]
+    unsafe { crate::arch::boot::pl011_puts(b"[meta.init] meta_frames allocated\n"); }
 
     if frame_paddr_base == 0 {
         boot_pt::with_borrow(|boot_pt| {
