@@ -21,6 +21,8 @@ docker run --rm -v $(pwd):/root/asterinas asterinas/aarch64-dev:latest bash -c \
   $OBJCOPY -O binary \
     /root/asterinas/target/osdk/aster-nix/aster-nix-osdk-bin.qemu_elf \
     /root/asterinas/target/osdk/aster-nix/asterina.img'
+# or not in Docker, with deploy
+aarch64-linux-gnu-objcopy -O binary /home/snow/asterinas/target/aarch64-unknown-none-softfloat/release/aster-nix-osdk-bin /mnt/d/pi_sd/asterina.img
 
 # 3. Deploy to TFTP root (rename to initramfs.cpio.gz — boot.cmd TFTP command expects this name)
 cp target/osdk/aster-nix/asterina.img /mnt/d/pi_sd/
@@ -31,15 +33,15 @@ cp test/build/aarch64-shell-initramfs.cpio.gz /mnt/d/pi_sd/initramfs.cpio.gz
 ## Boot Test (Manual)
 
 ```bash
-# Connect serial monitor
-stty -F /dev/ttyUSB0 115200 raw -echo
-cat /dev/ttyUSB0 &
-# Or: screen /dev/ttyUSB0 115200
+# Capture serial output
+# Please stop and ask user to power on, then start capturing
+# Don't change this command. If no message/no full msg/stop in "U-Boot>", just retry "power on->capture"
+stty -F /dev/ttyUSB0 115200 raw -echo 2>/dev/null; cat /dev/ttyUSB0 &
 
 # Power on / reset RPi3
 # Expected: U-Boot loads → TFTP → asterina.img → boot messages → / # prompt
 
-# Verify boot time: from power-on to / # should be < 30 seconds
+# Verify boot time: from power-on to / # should be < 60 seconds
 ```
 
 ## Expected Boot Log

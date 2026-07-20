@@ -24,11 +24,8 @@
   - **T002.16** [P] **NEW** — Add debug probes (atomic variables 'A'-'G') inside `meta::init()` to pinpoint exact crash location — DEPLOYED to RPi3 TFTP
   - **T002.17** [P] **NEW** — On RPi3 boot, observe serial output to identify which probe 'A'-'G' appears last → pinpoint crash
 - [x] T003 Verify initramfs is being loaded correctly by checking for `[unpack]` and `[rootfs]` probes in serial log
-- [ ] T030 **[BLOCKING]** Boot to shell with interactive command working - kernel hangs in `init_after_heap()` after `cpu::init_on_bsp()` returns
-   - Root cause: `spin::Once` uses `compare_exchange` (LDXR/STXR) which fails spuriously on RPi3 hardware AXI bridge
-   - Implemented fix: `SimpleOnce` with atomic `swap` instead of `compare_exchange` in `ostd/src/boot/mod.rs` and `ostd/src/arch/aarch64/boot/mod.rs`
-   - Next: Deploy to RPi3 hardware and verify boot reaches `/ #` prompt
-   - Test: Power cycle RPi3 - should reach shell prompt without hanging
+- [ ] T030 **[BLOCKING]** Boot to shell with interactive command working 
+	- Last status is in SESSION_CONTEXT.md
 - [ ] T031 [P] Fix QEMU AArch64 test output - QEMU virt boot produces no serial output when run locally (deferred until T030 is verified on hardware)
    - Note: QEMU testing is NOT reliable for AArch64 until this is fixed
    - Current issue: `qemu-system-aarch64 ... -nographic -serial stdio` shows no kernel output

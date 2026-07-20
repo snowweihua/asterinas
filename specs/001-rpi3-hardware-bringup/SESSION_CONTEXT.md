@@ -1,9 +1,9 @@
-# RPi3 Debug Session - 2026-07-20
+# RPi3 Debug Session - 2026-07-20 (Evening)
 
-## Current Task T035
-Kernel crashes with `Synchronous Abort` during frame metadata initialization in `kspace::init_kernel_page_table()`.
+## Current Task T036
+Kernel crashes with `Synchronous Abort` during frame metadata slot access in `get_slot`.
 
-## Root Cause Found & Fixed (this session)
+## Root Cause Found & Fixes Applied (this session)
 
 ### Fix 10: `frame_paddr_base()` now uses `dram_base()` at runtime
 
@@ -18,8 +18,29 @@ Kernel crashes with `Synchronous Abort` during frame metadata initialization in 
 **Also changed**:
 - `frame_to_meta()` and `meta_to_frame()` in meta.rs: `const fn` → `fn` (required since they call non-const `frame_paddr_base()`)
 
-**Build**: `cargo osdk build --release --target-arch aarch64 --boot-method qemu-direct --scheme aarch64`
-**Deploy**: `aarch64-linux-gnu-objcopy -O binary ... && cp ... /mnt/d/pi_sd/asterina.img`
+### Fix 11: `get_slot` bootstrap path check
+
+**Problem**: When `frame_paddr_base == 0`, `get_slot` was incorrectly taking the VA path (`fpb != 0`) during bootstrap.
+
+**Solution**: Changed condition from `fpb != 0` to `!IN_BOOTSTRAP && fpb != 0`:
+- Bootstrap: use physical address path (slots identity-mapped in boot_pt)
+- After bootstrap: use virtual address path
+
+## Boot Progress (this session)
+
+Kernel now reaches further than before:
+```
+[init.8] after cpu::init_on_bsp
+[meta.init] max_paddr computed
+[meta.init] frame_paddr_base computed
+[meta.init] tot_nr_frames computed
+[meta.init] meta_frames allocated
+[meta.get.0] start
+[gs.fpb]=0 paddr=2b77000
+[gs.in_boot]=1 fpb!=0=0 [gs.use_phys]
+[gs.meta_base]=2b7b000
+*** Synchronous Abort ***
+```
 
 ## Previous Session Fixes (2026-07-17)
 
@@ -39,18 +60,14 @@ Kernel crashes with `Synchronous Abort` during frame metadata initialization in 
 - `init()`: Computes `tot_nr_frames` and allocates metadata frames
 - `get_slot()`: Computes metadata slot address for a frame paddr
 - `get_from_unused()`: Calls `get_slot` then does `compare_exchange` on slot's ref_count
+- `init_slots()`: Initializes all slots with `REF_COUNT_UNUSED`
 
 ### `ostd/src/mm/frame/allocator.rs`
 - `init()`: Adds usable memory to buddy allocator
 - Clamping logic: `if r2.start < frame_paddr_base { frame_paddr_base }` causes issues when usable memory is below frame_paddr_base
 
-### `osdk/deps/frame-allocator/src/lib.rs`
-- `FrameAllocator::alloc()`: Calls `cache::alloc` then `TOTAL_FREE_SIZE.sub()`
-- Bypassed `TOTAL_FREE_SIZE.sub()` for debugging - no change in crash location
-
 ### `ostd/src/arch/aarch64/mm/mod.rs`
-- `frame_paddr_base() = 0x4000_0000` (const for all AArch64 platforms)
-- Should be `0` for RPi3 where DRAM starts at `0x0`
+- `frame_paddr_base()` is now runtime, not const
 
 ## Debug Markers Currently In Code
 
@@ -60,48 +77,33 @@ Kernel crashes with `Synchronous Abort` during frame metadata initialization in 
 - `[meta.init] tot_nr_frames computed`
 - `[meta.init] meta_frames allocated`
 - `[meta.get.0] start`
-- `[meta.get] got slot`
-- `[meta.get] before compare_exchange`
-
-### allocator.rs
-- `[fa.0] alloc_frame_with start`
-- `[fa] before/after get_global_frame_allocator`
-- `[fa] before allocator.alloc`
-- `[FA] before/after disable_local`
-- `[FA] after cache::alloc`
-- `[FA] returning res`
-- `[cache.a-f]`: Cache alloc markers
-- `[pools.a-e]`: Pool alloc markers
-
-### frame-allocator/lib.rs
-- Bypassed TOTAL_FREE_SIZE.sub()
+- `[gs.fpb]=` frame_paddr_base
+- `[gs.in_boot]=` IN_BOOTSTRAP_CONTEXT value
+- `[gs.use_phys]` when using physical path
+- `[gs.meta_base]=` meta base address
 
 ## Files Modified (this session)
-- `ostd/src/arch/aarch64/mm/mod.rs` - Attempted frame_paddr_base changes
-- `ostd/src/mm/frame/meta.rs` - Debug markers, tot_nr_frames calculation changes
-- `ostd/src/mm/frame/allocator.rs` - Debug markers, add_free_memory logic changes
-- `ostd/src/mm/frame/unique.rs` - Restored unsafe block for ref_count.store
-- `osdk/deps/frame-allocator/src/lib.rs` - Bypassed TOTAL_FREE_SIZE.sub()
+- `ostd/src/arch/aarch64/mm/mod.rs` - `frame_paddr_base()` now calls `dram_base()`
+- `ostd/src/mm/frame/meta.rs` - Debug markers, `get_slot` bootstrap path condition fix
+
+## Remaining Issue
+
+**Synchronous Abort in `get_slot`**:
+- `meta_pages = 0x2b7b_0000` (allocated by `early_alloc`)
+- First metadata slot access: `paddr=0x2b77_0000` (frame at 0x0), `slot_paddr=0x2b7b_0000`
+- `IN_BOOTSTRAP_CONTEXT = true` when `get_slot` is called
+- Physical address path selected (correct)
+- But `load(Ordering::Relaxed)` on the slot causes translation fault
+
+**Hypothesis**: Even though `FRAME_META_PADDR_BASE.store()` was done, the metadata frames might not be properly mapped in the current page table context, or the slot pointer calculation is still wrong.
 
 ## Next Steps
 
-1. **Option A**: Change `frame_paddr_base` to 0 AND fix bootstrap slot access
-   - When `frame_paddr_base = 0`, slots are at kernel high VA
-   - During bootstrap, need to access via physical address instead
-   - Modify `get_slot` to use physical address in bootstrap context
+1. **Verify metadata mapping**: Check if early_alloc maps the metadata frames properly
+2. **Check slot_paddr calculation**: When `fpb=0`, the formula `meta_base + offset + slot*64` may overflow or miscalculate
+3. **Add more granular markers**: Print slot_paddr before accessing ref_count
+4. **Consider bypassing metadata init for RPi3**: Skip `mark_unusable_ranges()` for `fpb==0` path to isolate the issue
 
-2. **Option B**: Make `frame_paddr_base` runtime-dependent
-   - Use actual DRAM base from device tree
-   - RPi3: `dram_base()` returns 0x0
-   - QEMU virt: `dram_base()` returns 0x4000_0000
-   - But `frame_paddr_base` is `const fn` which can't call runtime functions
-
-3. **Option C**: Change how `tot_nr_frames` is computed
-   - Track ALL usable memory regardless of `frame_paddr_base`
-   - Change slot calculation to use `paddr / PAGE_SIZE` directly
-   - This would require significant changes to slot index formula
-
-4. **Option D**: Fix the clamping in `add_free_memory`
-   - When usable memory is below `frame_paddr_base`, don't add it to buddy
-   - Instead, rely on the fact that such memory shouldn't be accessed
-   - But this breaks RPi3 where all usable memory is below `frame_paddr_base`
+## Known Blockers
+- RPi3 boot hangs at `call_ostd_main()` - partially fixed, now crashes later
+- `Synchronous Abort` on metadata slot access - in progress

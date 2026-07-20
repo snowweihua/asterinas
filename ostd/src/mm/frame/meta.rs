@@ -208,6 +208,15 @@ pub enum GetFrameError {
 pub(super) fn get_slot(paddr: Paddr) -> Result<&'static MetaSlot, GetFrameError> {
     let frame_paddr_base = crate::arch::mm::frame_paddr_base();
 
+    #[cfg(target_arch = "aarch64")]
+    unsafe { crate::arch::boot::pl011_puts(b"[gs.fpb]="); }
+    #[cfg(target_arch = "aarch64")]
+    pl011_puts_hex(frame_paddr_base);
+    #[cfg(target_arch = "aarch64")]
+    unsafe { crate::arch::boot::pl011_puts(b" paddr="); }
+    #[cfg(target_arch = "aarch64")]
+    pl011_puts_hex(paddr);
+
     if paddr % PAGE_SIZE != 0 {
         return Err(GetFrameError::NotAligned);
     }
@@ -218,20 +227,57 @@ pub(super) fn get_slot(paddr: Paddr) -> Result<&'static MetaSlot, GetFrameError>
         return Err(GetFrameError::OutOfBound);
     }
 
-    let ptr = if frame_paddr_base != 0 && !crate::IN_BOOTSTRAP_CONTEXT.load(Ordering::Relaxed) {
-        // After KPT activation (or when frame_paddr_base == 0), use the
-        // FRAME_METADATA_RANGE virtual address which is properly mapped in the KPT.
+    #[cfg(target_arch = "aarch64")]
+    {
+        let in_boot = crate::IN_BOOTSTRAP_CONTEXT.load(Ordering::Relaxed);
+        unsafe { crate::arch::boot::pl011_puts(b"[gs.in_boot]="); }
+        pl011_puts_hex(in_boot as usize);
+        unsafe { crate::arch::boot::pl011_puts(b" fpb!=0="); }
+        pl011_puts_hex((frame_paddr_base != 0) as usize);
+    }
+    let ptr = if !crate::IN_BOOTSTRAP_CONTEXT.load(Ordering::Relaxed) && frame_paddr_base != 0 {
         let vaddr = mapping::frame_to_meta::<PagingConsts>(paddr);
+        #[cfg(target_arch = "aarch64")]
+        {
+            unsafe { crate::arch::boot::pl011_puts(b" [gs.use_vaddr]="); }
+            pl011_puts_hex(vaddr);
+            unsafe { crate::arch::boot::pl011_puts(b"\n"); }
+        }
         vaddr as *mut MetaSlot
     } else {
-        // During bootstrap with non-zero frame_paddr_base, use the physical address
-        // directly (identity-mapped via boot page tables).
+        #[cfg(target_arch = "aarch64")]
+        unsafe { crate::arch::boot::pl011_puts(b" [gs.use_phys]\n"); }
         let meta_paddr_base = FRAME_META_PADDR_BASE.load(Ordering::Relaxed);
+        #[cfg(target_arch = "aarch64")]
+        {
+            unsafe { crate::arch::boot::pl011_puts(b"[gs.meta_base]="); }
+            pl011_puts_hex(meta_paddr_base);
+            unsafe { crate::arch::boot::pl011_puts(b" "); }
+        }
         if meta_paddr_base == 0 {
             return Err(GetFrameError::OutOfBound);
         }
-        let frame_idx = (paddr - frame_paddr_base) / PAGE_SIZE;
-        let slot_paddr = meta_paddr_base + frame_idx * size_of::<MetaSlot>();
+        if paddr < meta_paddr_base {
+            return Err(GetFrameError::OutOfBound);
+        }
+        let offset = paddr;
+        let page_offset = offset % PAGE_SIZE;
+        let slot_offset = page_offset / size_of::<MetaSlot>();
+        #[cfg(target_arch = "aarch64")]
+        {
+            unsafe { crate::arch::boot::pl011_puts(b"[gs.po]="); }
+            pl011_puts_hex(page_offset);
+            unsafe { crate::arch::boot::pl011_puts(b"[gs.so]="); }
+            pl011_puts_hex(slot_offset);
+            unsafe { crate::arch::boot::pl011_puts(b" "); }
+        }
+            let slot_paddr = meta_paddr_base + page_offset + slot_offset * size_of::<MetaSlot>();
+        #[cfg(target_arch = "aarch64")]
+        {
+            unsafe { crate::arch::boot::pl011_puts(b"[gs.sp]="); }
+            pl011_puts_hex(slot_paddr);
+            unsafe { crate::arch::boot::pl011_puts(b"\n"); }
+        }
         slot_paddr as *mut MetaSlot
     };
 
@@ -239,6 +285,25 @@ pub(super) fn get_slot(paddr: Paddr) -> Result<&'static MetaSlot, GetFrameError>
     // mutably borrowed, so taking an immutable reference to it is safe.
     Ok(unsafe { &*ptr })
 }
+
+#[cfg(target_arch = "aarch64")]
+fn pl011_puts_hex(val: usize) {
+    let hex = b"0123456789abcdef";
+    let mut buf = [0u8; 16];
+    for (i, c) in (0..16).zip((0..16).rev()) {
+        buf[i] = hex[(val >> (4 * c)) & 0xf];
+    }
+    let mut i = 0;
+    while i < 16 && buf[i] == b'0' {
+        i += 1;
+    }
+    if i == 16 { i = 15; }
+    let s = &buf[i..16];
+    unsafe { crate::arch::boot::pl011_puts(s); }
+}
+
+#[cfg(not(target_arch = "aarch64"))]
+fn pl011_puts_hex(_val: usize) {}
 
 impl MetaSlot {
     /// Initializes the metadata slot of a frame assuming it is unused.
@@ -259,31 +324,34 @@ impl MetaSlot {
         #[cfg(target_arch = "aarch64")]
         unsafe { crate::arch::boot::pl011_puts(b"[meta.get] got slot\n"); }
 
-        // WORKAROUND: QEMU 6.2 AArch64 compare_exchange fails spuriously (broken STXR).
-        // Retry on spurious failure (Err(REF_COUNT_UNUSED) = expected value observed but STXR failed).
-        // `Acquire` pairs with the `Release` in `drop_last_in_place`.
-        loop {
+        #[cfg(target_arch = "aarch64")]
+        unsafe { crate::arch::boot::pl011_puts(b"[meta.get] before non-atomic read\n"); }
+        let test_val = slot.ref_count.load(Ordering::Relaxed);
+        #[cfg(target_arch = "aarch64")]
+        {
+            unsafe { crate::arch::boot::pl011_puts(b"[meta.get] ref_count="); }
+            pl011_puts_hex(test_val as usize);
             #[cfg(target_arch = "aarch64")]
-            unsafe { crate::arch::boot::pl011_puts(b"[meta.get] before compare_exchange\n"); }
-            match slot.ref_count.compare_exchange(
-                REF_COUNT_UNUSED,
-                0,
-                Ordering::Acquire,
-                Ordering::Relaxed,
-            ) {
-                Ok(_) => break,
-                Err(val) if val == REF_COUNT_UNUSED => {
-                    #[cfg(target_arch = "aarch64")]
-                    unsafe { crate::arch::boot::pl011_puts(b"[meta.get] spurious, retry\n"); }
-                    continue // spurious failure, retry
-                },
-                Err(REF_COUNT_UNIQUE) => return Err(GetFrameError::Unique),
-                Err(0) => return Err(GetFrameError::Busy),
-                Err(_) => return Err(GetFrameError::InUse),
+            unsafe { crate::arch::boot::pl011_puts(b"\n"); }
+        }
+        if test_val != REF_COUNT_UNUSED {
+            if test_val == REF_COUNT_UNIQUE {
+                #[cfg(target_arch = "aarch64")]
+                unsafe { crate::arch::boot::pl011_puts(b"[meta.get] unique\n"); }
+                return Err(GetFrameError::Unique);
+            } else if test_val == 0 {
+                #[cfg(target_arch = "aarch64")]
+                unsafe { crate::arch::boot::pl011_puts(b"[meta.get] busy\n"); }
+                return Err(GetFrameError::Busy);
+            } else {
+                #[cfg(target_arch = "aarch64")]
+                unsafe { crate::arch::boot::pl011_puts(b"[meta.get] in_use\n"); }
+                return Err(GetFrameError::InUse);
             }
         }
+        slot.ref_count.store(0, Ordering::Relaxed);
         #[cfg(target_arch = "aarch64")]
-        unsafe { crate::arch::boot::pl011_puts(b"[meta.get] compare_exchange succeeded\n"); }
+        unsafe { crate::arch::boot::pl011_puts(b"[meta.get] store done\n"); }
 
         // SAFETY: The slot now has a reference count of `0`, other threads will
         // not access the metadata slot so it is safe to have a mutable reference.
@@ -540,6 +608,7 @@ pub(crate) unsafe fn init() -> Segment<MetaPageMeta> {
     unsafe { crate::arch::boot::pl011_puts(b"[meta.init] meta_frames allocated\n"); }
 
     if frame_paddr_base == 0 {
+        FRAME_META_PADDR_BASE.store(meta_pages, Ordering::Relaxed);
         boot_pt::with_borrow(|boot_pt| {
             let meta_vaddr_base = mapping::frame_to_meta::<PagingConsts>(0);
             for i in 0..nr_meta_pages {
@@ -651,8 +720,9 @@ macro_rules! mark_ranges {
         debug_assert!(range.start % PAGE_SIZE == 0);
         debug_assert!((range.end - range.start) % PAGE_SIZE == 0);
 
-        let seg = Segment::from_unused(range, |_| $typ).unwrap();
-        let _ = ManuallyDrop::new(seg);
+        if let Ok(seg) = Segment::from_unused(range, |_| $typ) {
+            let _ = ManuallyDrop::new(seg);
+        }
     }};
 }
 
