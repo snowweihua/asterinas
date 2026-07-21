@@ -57,24 +57,24 @@ impl FrameAllocOptions {
             // Stack canary: save FP/LR to global statics at entry, compare at exit.
             // This lets us detect if something corrupts the stack frame during execution.
             use core::sync::atomic::{AtomicUsize, Ordering};
-            static CANARY_ENTRY_FP: AtomicUsize = AtomicUsize::new(0);
-            static CANARY_ENTRY_LR: AtomicUsize = AtomicUsize::new(0);
-            let _entry_fp: usize;
-            let _entry_lr: usize;
+            static CANARY_FP: AtomicUsize = AtomicUsize::new(0);
+            static CANARY_LR: AtomicUsize = AtomicUsize::new(0);
+            let entry_fp: usize;
+            let entry_lr: usize;
             unsafe {
                 core::arch::asm!(
                     "mov {fp}, x29",
                     "mov {lr}, x30",
-                    fp = out(reg) _entry_fp,
-                    lr = out(reg) _entry_lr,
+                    fp = out(reg) entry_fp,
+                    lr = out(reg) entry_lr,
                 );
             }
-            CANARY_ENTRY_FP.store(_entry_fp, Ordering::Relaxed);
-            CANARY_ENTRY_LR.store(_entry_lr, Ordering::Relaxed);
+            CANARY_FP.store(entry_fp, Ordering::Relaxed);
+            CANARY_LR.store(entry_lr, Ordering::Relaxed);
             unsafe { crate::arch::boot::pl011_puts(b"[fa.canary] entry fp="); }
-            unsafe { crate::arch::boot::pl011_puts_hex(_entry_fp); }
+            unsafe { crate::arch::boot::pl011_puts_hex(entry_fp); }
             unsafe { crate::arch::boot::pl011_puts(b" lr="); }
-            unsafe { crate::arch::boot::pl011_puts_hex(_entry_lr); }
+            unsafe { crate::arch::boot::pl011_puts_hex(entry_lr); }
             unsafe { crate::arch::boot::pl011_puts(b"\n"); }
         }
 
@@ -87,39 +87,36 @@ impl FrameAllocOptions {
 
         #[cfg(target_arch = "aarch64")]
         {
-            use core::sync::atomic::{AtomicUsize, Ordering};
-            static CANARY_EXIT_FP: AtomicUsize = AtomicUsize::new(0);
-            static CANARY_EXIT_LR: AtomicUsize = AtomicUsize::new(0);
-            let _exit_fp: usize;
-            let _exit_lr: usize;
+            use core::sync::atomic::Ordering;
+            // Re-declare the statics (they're function-scoped, OK to repeat)
+            static CANARY_FP: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+            static CANARY_LR: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+            let exit_fp: usize;
+            let exit_lr: usize;
             unsafe {
                 core::arch::asm!(
                     "mov {fp}, x29",
                     "mov {lr}, x30",
-                    fp = out(reg) _exit_fp,
-                    lr = out(reg) _exit_lr,
+                    fp = out(reg) exit_fp,
+                    lr = out(reg) exit_lr,
                 );
             }
-            CANARY_EXIT_FP.store(_exit_fp, Ordering::Relaxed);
-            CANARY_EXIT_LR.store(_exit_lr, Ordering::Relaxed);
+            let entry_fp = CANARY_FP.load(Ordering::Relaxed);
+            let entry_lr = CANARY_LR.load(Ordering::Relaxed);
 
-            // Read entry values
-            let _entry_fp = CANARY_ENTRY_FP.load(Ordering::Relaxed);
-            let _entry_lr = CANARY_ENTRY_LR.load(Ordering::Relaxed);
-
-            let ok = _exit_fp == _entry_fp && _exit_lr == _entry_lr;
+            let ok = exit_fp == entry_fp && exit_lr == entry_lr;
             unsafe { crate::arch::boot::pl011_puts(b"[fa.canary] exit fp="); }
-            unsafe { crate::arch::boot::pl011_puts_hex(_exit_fp); }
+            unsafe { crate::arch::boot::pl011_puts_hex(exit_fp); }
             unsafe { crate::arch::boot::pl011_puts(b" lr="); }
-            unsafe { crate::arch::boot::pl011_puts_hex(_exit_lr); }
+            unsafe { crate::arch::boot::pl011_puts_hex(exit_lr); }
             if ok {
                 unsafe { crate::arch::boot::pl011_puts(b" OK\n"); }
             } else {
                 unsafe { crate::arch::boot::pl011_puts(b" CORRUPTED!\n"); }
                 unsafe { crate::arch::boot::pl011_puts(b"[fa.canary] entry fp="); }
-                unsafe { crate::arch::boot::pl011_puts_hex(_entry_fp); }
+                unsafe { crate::arch::boot::pl011_puts_hex(entry_fp); }
                 unsafe { crate::arch::boot::pl011_puts(b" lr="); }
-                unsafe { crate::arch::boot::pl011_puts_hex(_entry_lr); }
+                unsafe { crate::arch::boot::pl011_puts_hex(entry_lr); }
                 unsafe { crate::arch::boot::pl011_puts(b"\n"); }
             }
         }
