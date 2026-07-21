@@ -64,19 +64,12 @@ pub struct FrameAllocator;
 
 impl GlobalFrameAllocator for FrameAllocator {
     fn alloc(&self, layout: Layout) -> Option<Paddr> {
-        #[cfg(target_arch = "aarch64")]
-        ostd::arch::boot::pl011_puts_safe(b"[FA] before disable_local\n");
-        let guard = irq::disable_local();
-        #[cfg(target_arch = "aarch64")]
-        ostd::arch::boot::pl011_puts_safe(b"[FA] after disable_local\n");
-        let res = cache::alloc(&guard, layout);
-        #[cfg(target_arch = "aarch64")]
-        ostd::arch::boot::pl011_puts_safe(b"[FA] after cache::alloc\n");
-        #[cfg(target_arch = "aarch64")]
-        ostd::arch::boot::pl011_puts_safe(b"[FA] returning res\n");
-        // Safety net: if res is invalid, this would cause issues. Let's see if
-        // simply returning the res triggers the crash.
-        res
+        // Skip the guard and cache::alloc to see if the crash is at the return.
+        // The crash at 0x3af610a8 is the same on every test, and neither
+        // disable_local nor enable_local affects it, so try the simplest
+        // possible return path to see if returning a value still crashes.
+        let _ = layout;
+        None
     }
 
     fn dealloc(&self, addr: Paddr, size: usize) {

@@ -147,3 +147,34 @@ The crash is at the function call itself (before any code in mark_unusable_range
 - `Segment::from_unused(meta_page_range)` processes thousands of frames successfully
 - Kernel crashes AFTER meta::init() returns — likely in allocator::init()
 - Next: fix mark_unusable_ranges call crash, then fix post-meta::init crash
+
+## Session 2026-07-21: Major progress — kernel reaches kspace::init
+
+### Fixes accumulated
+- Fix 12: get_slot physical-path slot formula reverted to frame_idx
+- Fix 13: Path selection uses !IN_BOOTSTRAP (no fpb check)  
+- Fix 14: mark_unusable_ranges uses EARLY_INFO (not boot_info)
+- Fix 15: Stripped verbose per-frame debug markers
+
+### Current crash: FrameAllocator::alloc return crash
+**Crash pattern**: ESR=0x02000000, ELR=0x3af610a8, x29=0x3
+
+**Progress**:
+- allocator::init() COMPLETES (with add_free_memory bypassed)
+- init_after_heap() COMPLETES
+- kspace::init() STARTS node allocation
+- FrameAllocator::alloc prints all internal markers correctly
+- Crash happens at function return point (after `[FA] returning res`)
+
+**Bypasses tried**:
+- `disable_local` no-op → no effect
+- `enable_local` no-op → no effect
+- `pools::add_free_memory` no-op → fixes crash inside function but return crash persists
+- `TOTAL_FREE_SIZE.add` removed → no effect
+
+**Hypothesis**: The crash is at the function return boundary (ELR=LR=same value, x29=0x3 corrupted frame pointer). The `msr DAIFSet/DAIFClr` instructions are NOT the cause. The issue might be with the `ret` instruction itself on RPi3 Cortex-A53, or with how the trait dispatch/function call/return sequence interacts with the kernel's page table setup.
+
+**Next steps**:
+- Investigate the x29=0x3 corruption — this is a very specific corrupted frame pointer value
+- Check if the issue is related to the stack pointer being wrong after `init_after_heap`
+- Look at the `kspace::init` code path to understand what the caller expects after `alloc`
