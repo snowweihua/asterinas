@@ -74,6 +74,8 @@ impl GlobalFrameAllocator for FrameAllocator {
         ostd::arch::boot::pl011_puts_safe(b"[FA] after cache::alloc\n");
         #[cfg(target_arch = "aarch64")]
         ostd::arch::boot::pl011_puts_safe(b"[FA] returning res\n");
+        // Safety net: if res is invalid, this would cause issues. Let's see if
+        // simply returning the res triggers the crash.
         res
     }
 
