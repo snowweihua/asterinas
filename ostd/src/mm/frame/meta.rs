@@ -648,6 +648,9 @@ pub(crate) unsafe fn init() -> Segment<MetaPageMeta> {
 
     mark_unusable_ranges();
 
+    #[cfg(target_arch = "aarch64")]
+    unsafe { crate::arch::boot::pl011_puts(b"[meta] mark_unusable_ranges done\n"); }
+
     if meta_page_range.is_empty() {
         Segment::from_raw(meta_page_range)
     } else {
@@ -723,11 +726,28 @@ fn mark_unusable_ranges() {
     let regions = &crate::boot::boot_info().memory_regions;
     let frame_paddr_base = crate::arch::mm::frame_paddr_base();
 
+    #[cfg(target_arch = "aarch64")]
+    {
+        unsafe { crate::arch::boot::pl011_puts(b"[mur] nr_regions="); }
+        // We can't easily print count without extra deps, just marker
+        unsafe { crate::arch::boot::pl011_puts(b"\n"); }
+    }
+
     for region in regions
         .iter()
         .rev()
         .skip_while(|r| r.typ() != MemoryRegionType::Usable)
     {
+        #[cfg(target_arch = "aarch64")]
+        {
+            unsafe { crate::arch::boot::pl011_puts(b"[mur.reg] base="); }
+            pl011_puts_hex(region.base());
+            unsafe { crate::arch::boot::pl011_puts(b" len="); }
+            pl011_puts_hex(region.len());
+            unsafe { crate::arch::boot::pl011_puts(b" typ="); }
+            pl011_puts_hex(region.typ() as usize);
+            unsafe { crate::arch::boot::pl011_puts(b"\n"); }
+        }
         let mut start = region.base();
         let end = region.end().min(super::max_paddr());
         if start >= end {
