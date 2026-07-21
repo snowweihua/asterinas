@@ -318,7 +318,7 @@ pub unsafe fn pl011_puts_hex(val: usize) {
     for &byte in b"0x" {
         // Busy-wait for TX FIFO to have space (LSR bit 5)
         unsafe { core::arch::asm!("movz x4, #0x3F21, lsl #16", "movk x4, #0x5054", "1: ldrb w5, [x4]", "tst w5, #0x20", "beq 1b", out("x4") _, out("w5") _, options(nostack)); }
-        unsafe { core::arch::asm!("movz x4, #0x3F21, lsl #16", "movk x4, #0x5040", "strb {w}, [x4]", w = in(reg) byte as u32, out("x4") _, options(nostack)); }
+        unsafe { core::arch::asm!("movz x4, #0x3F21, lsl #16", "movk x4, #0x5040", "strb {w}, [x4]", w = in("w3") byte as u32, out("x4") _, options(nostack)); }
     }
     // Write 16 hex nibbles
     for nibble_pos in 0..16 {
@@ -326,7 +326,7 @@ pub unsafe fn pl011_puts_hex(val: usize) {
         let nibble = (val >> shift) & 0xf;
         let c = if nibble < 10 { b'0' + nibble as u8 } else { b'a' + nibble as u8 - 10 };
         unsafe { core::arch::asm!("movz x4, #0x3F21, lsl #16", "movk x4, #0x5054", "1: ldrb w5, [x4]", "tst w5, #0x20", "beq 1b", out("x4") _, out("w5") _, options(nostack)); }
-        unsafe { core::arch::asm!("movz x4, #0x3F21, lsl #16", "movk x4, #0x5040", "strb {w}, [x4]", w = in(reg) c as u32, out("x4") _, options(nostack)); }
+        unsafe { core::arch::asm!("movz x4, #0x3F21, lsl #16", "movk x4, #0x5040", "strb {w}, [x4]", w = in("w3") c as u32, out("x4") _, options(nostack)); }
     }
     // newline
     unsafe { core::arch::asm!("movz x4, #0x3F21, lsl #16", "movk x4, #0x5054", "1: ldrb w5, [x4]", "tst w5, #0x20", "beq 1b", out("x4") _, out("w5") _, options(nostack)); }
