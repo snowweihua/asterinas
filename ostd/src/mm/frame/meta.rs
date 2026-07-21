@@ -257,21 +257,14 @@ pub(super) fn get_slot(paddr: Paddr) -> Result<&'static MetaSlot, GetFrameError>
         if meta_paddr_base == 0 {
             return Err(GetFrameError::OutOfBound);
         }
-        if paddr < meta_paddr_base {
-            return Err(GetFrameError::OutOfBound);
-        }
-        let offset = paddr;
-        let page_offset = offset % PAGE_SIZE;
-        let slot_offset = page_offset / size_of::<MetaSlot>();
+        let frame_idx = (paddr - frame_paddr_base) / PAGE_SIZE;
         #[cfg(target_arch = "aarch64")]
         {
-            unsafe { crate::arch::boot::pl011_puts(b"[gs.po]="); }
-            pl011_puts_hex(page_offset);
-            unsafe { crate::arch::boot::pl011_puts(b"[gs.so]="); }
-            pl011_puts_hex(slot_offset);
+            unsafe { crate::arch::boot::pl011_puts(b"[gs.idx]="); }
+            pl011_puts_hex(frame_idx);
             unsafe { crate::arch::boot::pl011_puts(b" "); }
         }
-            let slot_paddr = meta_paddr_base + page_offset + slot_offset * size_of::<MetaSlot>();
+        let slot_paddr = meta_paddr_base + frame_idx * size_of::<MetaSlot>();
         #[cfg(target_arch = "aarch64")]
         {
             unsafe { crate::arch::boot::pl011_puts(b"[gs.sp]="); }

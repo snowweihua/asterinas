@@ -30,11 +30,14 @@ cp target/osdk/aster-nix/asterina.img /mnt/d/pi_sd/
 cp test/build/aarch64-shell-initramfs.cpio.gz /mnt/d/pi_sd/initramfs.cpio.gz
 ```
 
-## Boot Test (Manual)
+## Power
+
+Please stop and ask user to power on RPi3B board, user will reply "Done" when finish this
+
+## Verifier
 
 ```bash
 # Capture serial output
-# Please stop and ask user to power on, then start capturing
 # Don't change this command. If no message/no full msg/stop in "U-Boot>", just retry "power on->capture"
 stty -F /dev/ttyUSB0 115200 raw -echo 2>/dev/null; cat /dev/ttyUSB0 &
 
