@@ -636,14 +636,47 @@ pub(crate) unsafe fn init() -> Segment<MetaPageMeta> {
                 .unwrap()
                 .allocated_regions()
         };
+        #[cfg(target_arch = "aarch64")]
+        {
+            unsafe { crate::arch::boot::pl011_puts(b"[ea.1] range1="); }
+            pl011_puts_hex(range_1.start);
+            unsafe { crate::arch::boot::pl011_puts(b"-"); }
+            pl011_puts_hex(range_1.end);
+            unsafe { crate::arch::boot::pl011_puts(b"\n"); }
+            unsafe { crate::arch::boot::pl011_puts(b"[ea.2] range2="); }
+            pl011_puts_hex(range_2.start);
+            unsafe { crate::arch::boot::pl011_puts(b"-"); }
+            pl011_puts_hex(range_2.end);
+            unsafe { crate::arch::boot::pl011_puts(b"\n"); }
+        }
         for r in range_difference(&range_1, &meta_page_range) {
+            #[cfg(target_arch = "aarch64")]
+            {
+                unsafe { crate::arch::boot::pl011_puts(b"[ea.rd1] "); }
+                pl011_puts_hex(r.start);
+                unsafe { crate::arch::boot::pl011_puts(b"-"); }
+                pl011_puts_hex(r.end);
+                unsafe { crate::arch::boot::pl011_puts(b"\n"); }
+            }
             let early_seg = Segment::from_unused(r, |_| EarlyAllocatedFrameMeta).unwrap();
             let _ = ManuallyDrop::new(early_seg);
         }
+        #[cfg(target_arch = "aarch64")]
+        unsafe { crate::arch::boot::pl011_puts(b"[ea.done1] range1 done\n"); }
         for r in range_difference(&range_2, &meta_page_range) {
+            #[cfg(target_arch = "aarch64")]
+            {
+                unsafe { crate::arch::boot::pl011_puts(b"[ea.rd2] "); }
+                pl011_puts_hex(r.start);
+                unsafe { crate::arch::boot::pl011_puts(b"-"); }
+                pl011_puts_hex(r.end);
+                unsafe { crate::arch::boot::pl011_puts(b"\n"); }
+            }
             let early_seg = Segment::from_unused(r, |_| EarlyAllocatedFrameMeta).unwrap();
             let _ = ManuallyDrop::new(early_seg);
         }
+        #[cfg(target_arch = "aarch64")]
+        unsafe { crate::arch::boot::pl011_puts(b"[ea.done2] range2 done\n"); }
     }
 
     mark_unusable_ranges();
