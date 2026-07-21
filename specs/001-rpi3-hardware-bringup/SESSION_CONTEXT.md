@@ -126,3 +126,24 @@ Kernel now reaches further than before:
 ## Known Blockers
 - RPi3 boot hangs at `call_ostd_main()` - partially fixed, now crashes later
 - `Synchronous Abort` on metadata slot access - in progress
+
+## Session 2026-07-21: Breakthrough — meta::init() completes
+
+### Fix 12: Revert get_slot physical-path slot formula
+**Problem**: Fix 11 incorrectly changed the slot formula from `frame_idx` to `page_offset`-based.
+**Solution**: Reverted to `slot_paddr = meta_paddr_base + frame_idx * 64`.
+**Status**: Verified on hardware - slots correctly computed and accessed.
+
+### Fix 13: Fix path selection for post-bootstrap
+**Problem**: Condition `!IN_BOOTSTRAP && frame_paddr_base != 0` always took physical path on RPi3 (fpb=0).
+**Solution**: Changed to `!IN_BOOTSTRAP` only.
+
+### Discovery: Crash at mark_unusable_ranges() call boundary
+With no-op stub, meta::init() completes and prints `[init.9] after meta::init`.
+The crash is at the function call itself (before any code in mark_unusable_ranges executes).
+
+## Current Status
+- `meta::init()` completes with no-op mark_unusable_ranges
+- `Segment::from_unused(meta_page_range)` processes thousands of frames successfully
+- Kernel crashes AFTER meta::init() returns — likely in allocator::init()
+- Next: fix mark_unusable_ranges call crash, then fix post-meta::init crash

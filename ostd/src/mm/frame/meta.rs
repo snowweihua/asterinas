@@ -702,49 +702,42 @@ macro_rules! mark_ranges {
 
 fn mark_unusable_ranges() {
     #[cfg(target_arch = "aarch64")]
+    unsafe { crate::arch::boot::pl011_puts(b"[mur] entry\n"); }
+    let regions = &crate::boot::EARLY_INFO.get().unwrap().memory_regions;
+    let frame_paddr_base = crate::arch::mm::frame_paddr_base();
+    #[cfg(target_arch = "aarch64")]
+    unsafe { crate::arch::boot::pl011_puts(b"[mur] got regions\n"); }
+
+    for region in regions
+        .iter()
+        .rev()
+        .skip_while(|r| r.typ() != MemoryRegionType::Usable)
     {
-        unsafe { crate::arch::boot::pl011_puts(b"[mur] entry\n"); }
-        unsafe { crate::arch::boot::pl011_puts(b"[mur] early return\n"); }
-    }
-}
+        let mut start = region.base();
+        let end = region.end().min(super::max_paddr());
+        if start >= end {
+            continue;
+        }
 
-
-/// Adds a temporary linear mapping for the metadata frames.
-///
-/// We only assume boot page table to contain 4G linear mapping. Thus if the
-/// physical memory is huge we end up depleted of linear virtual memory for
-/// initializing metadata.
-#[cfg(target_arch = "x86_64")]
-fn add_temp_linear_mapping(max_paddr: Paddr) {
-    use align_ext::AlignExt;
-
-    use crate::mm::kspace::LINEAR_MAPPING_BASE_VADDR;
-
-    const PADDR4G: Paddr = 0x1_0000_0000;
-
-    if max_paddr <= PADDR4G {
-        return;
-    }
-
-    // TODO: We don't know if the allocator would allocate from low to high or
-    // not. So we prepare all linear mappings in the boot page table. Hope it
-    // won't drag the boot performance much.
-    let end_paddr = max_paddr.align_up(PAGE_SIZE);
-    let prange = PADDR4G..end_paddr;
-    let prop = PageProperty {
-        flags: PageFlags::RW,
-        cache: CachePolicy::Writeback,
-        priv_flags: PrivilegedPageFlags::GLOBAL,
-    };
-
-    // SAFETY: we are doing the linear mapping for the kernel.
-    unsafe {
-        boot_pt::with_borrow(|boot_pt| {
-            for paddr in prange.step_by(PAGE_SIZE) {
-                let vaddr = LINEAR_MAPPING_BASE_VADDR + paddr;
-                boot_pt.map_base_page(vaddr, paddr / PAGE_SIZE, prop);
+        if frame_paddr_base != 0 {
+            if end <= frame_paddr_base {
+                continue;
             }
-        })
-        .unwrap();
+            start = start.max(frame_paddr_base);
+        }
+
+        match region.typ() {
+            MemoryRegionType::BadMemory => mark_ranges!(start..end, UnusableMemoryMeta),
+            MemoryRegionType::Unknown => mark_ranges!(start..end, ReservedMemoryMeta),
+            MemoryRegionType::NonVolatileSleep => mark_ranges!(start..end, UnusableMemoryMeta),
+            MemoryRegionType::Reserved => mark_ranges!(start..end, ReservedMemoryMeta),
+            MemoryRegionType::Kernel => mark_ranges!(start..end, KernelMeta),
+            MemoryRegionType::Module => mark_ranges!(start..end, UnusableMemoryMeta),
+            MemoryRegionType::Framebuffer => mark_ranges!(start..end, ReservedMemoryMeta),
+            MemoryRegionType::Reclaimable => mark_ranges!(start..end, UnusableMemoryMeta),
+            MemoryRegionType::Usable => {} // By default it is initialized as usable.
+        }
     }
+    #[cfg(target_arch = "aarch64")]
+    unsafe { crate::arch::boot::pl011_puts(b"[mur] done\n"); }
 }
