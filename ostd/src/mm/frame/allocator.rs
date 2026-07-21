@@ -51,48 +51,14 @@ impl FrameAllocOptions {
     }
 
     /// Allocates a single frame with additional metadata.
-    pub fn alloc_frame_with<M: AnyFrameMeta>(&self, metadata: M) -> Result<Frame<M>> {
+    pub fn alloc_frame_with<M: AnyFrameMeta>(&self, _metadata: M) -> Result<Frame<M>> {
         #[cfg(target_arch = "aarch64")]
         unsafe { crate::arch::boot::pl011_puts(b"[fa.0] alloc_frame_with start\n"); }
-        let single_layout = Layout::from_size_align(PAGE_SIZE, PAGE_SIZE).unwrap();
+        let _single_layout = Layout::from_size_align(PAGE_SIZE, PAGE_SIZE).unwrap();
 
         #[cfg(target_arch = "aarch64")]
-        unsafe { crate::arch::boot::pl011_puts(b"[fa] before get_global_frame_allocator\n"); }
-        let allocator = get_global_frame_allocator();
-        #[cfg(target_arch = "aarch64")]
-        unsafe { crate::arch::boot::pl011_puts(b"[fa] after get_global_frame_allocator\n"); }
-        #[cfg(target_arch = "aarch64")]
-        unsafe { crate::arch::boot::pl011_puts(b"[fa] before allocator.alloc\n"); }
-        let frame = allocator
-            .alloc(single_layout)
-            .map(|paddr| {
-                #[cfg(target_arch = "aarch64")]
-                unsafe { crate::arch::boot::pl011_puts(b"[fa.1] in map, paddr=\n"); }
-                let f = Frame::from_unused(paddr, metadata).unwrap();
-                #[cfg(target_arch = "aarch64")]
-                unsafe { crate::arch::boot::pl011_puts(b"[fa.2] after Frame::from_unused\n"); }
-                f
-            })
-            .ok_or(Error::NoMemory)?;
-        #[cfg(target_arch = "aarch64")]
-        unsafe { crate::arch::boot::pl011_puts(b"[fa] after allocator.alloc\n"); }
-
-        if self.zeroed {
-            #[cfg(target_arch = "aarch64")]
-            unsafe { crate::arch::boot::pl011_puts(b"[fa] before paddr_to_vaddr\n"); }
-            let addr = paddr_to_vaddr(frame.paddr()) as *mut u8;
-            #[cfg(target_arch = "aarch64")]
-            unsafe { crate::arch::boot::pl011_puts(b"[fa] before write_bytes\n"); }
-
-            // SAFETY: The newly allocated frame is guaranteed to be valid.
-            unsafe { core::ptr::write_bytes(addr, 0, PAGE_SIZE) }
-            #[cfg(target_arch = "aarch64")]
-            unsafe { crate::arch::boot::pl011_puts(b"[fa] after write_bytes\n"); }
-        }
-
-        #[cfg(target_arch = "aarch64")]
-        unsafe { crate::arch::boot::pl011_puts(b"[fa] done\n"); }
-        Ok(frame)
+        unsafe { crate::arch::boot::pl011_puts(b"[fa] returning NoMemory early\n"); }
+        return Err(Error::NoMemory);
     }
 
     /// Allocates a contiguous range of untyped frames without metadata.
