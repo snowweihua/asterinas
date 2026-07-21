@@ -309,6 +309,30 @@ fn early_marker(ch: u8) {
     }
 }
 
+/// Print a hex value to the mini-UART. Used for diagnostic markers.
+/// Pure-register implementation: no stack frame, no local allocations.
+/// Uses the same UART address as pl011_puts (RPi3 mini-UART DR at 0x3F215040).
+#[inline(never)]
+pub unsafe fn pl011_puts_hex(val: usize) {
+    // Write "0x" prefix
+    for &byte in b"0x" {
+        // Busy-wait for TX FIFO to have space (LSR bit 5)
+        unsafe { core::arch::asm!("movz x4, #0x3F21, lsl #16", "movk x4, #0x5054", "1: ldrb w5, [x4]", "tst w5, #0x20", "beq 1b", out("x4") _, out("w5") _, options(nostack)); }
+        unsafe { core::arch::asm!("movz x4, #0x3F21, lsl #16", "movk x4, #0x5040", "strb {w}, [x4]", w = in(reg) byte as u32, out("x4") _, options(nostack)); }
+    }
+    // Write 16 hex nibbles
+    for nibble_pos in 0..16 {
+        let shift = (15 - nibble_pos) * 4;
+        let nibble = (val >> shift) & 0xf;
+        let c = if nibble < 10 { b'0' + nibble as u8 } else { b'a' + nibble as u8 - 10 };
+        unsafe { core::arch::asm!("movz x4, #0x3F21, lsl #16", "movk x4, #0x5054", "1: ldrb w5, [x4]", "tst w5, #0x20", "beq 1b", out("x4") _, out("w5") _, options(nostack)); }
+        unsafe { core::arch::asm!("movz x4, #0x3F21, lsl #16", "movk x4, #0x5040", "strb {w}, [x4]", w = in(reg) c as u32, out("x4") _, options(nostack)); }
+    }
+    // newline
+    unsafe { core::arch::asm!("movz x4, #0x3F21, lsl #16", "movk x4, #0x5054", "1: ldrb w5, [x4]", "tst w5, #0x20", "beq 1b", out("x4") _, out("w5") _, options(nostack)); }
+    unsafe { core::arch::asm!("movz x4, #0x3F21, lsl #16", "movk x4, #0x5040", "mov w5, #10", "strb w5, [x4]", out("x4") _, out("w5") _, options(nostack)); }
+}
+
 /// The entry point of the Rust code portion of Asterinas.
 ///
 /// AArch64 Linux boot protocol: x0 = physical address of DTB, x1 = 0 (reserved).

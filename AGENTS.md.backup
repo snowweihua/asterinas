@@ -29,14 +29,12 @@ git add -A && git commit -m "WIP: <description>"
 Example: `aarch64/cpu: replace spin::Once with SimpleOnce — fixes RPi3 boot hang at enable_cpu_features`
 
 
-## Current Session: RPi3 Function Return Crash
+## Current Session: RPi3 Boot Hang Investigation
 
-**Symptom**: Synchronous Abort at function return on RPi3 hardware
-- ESR=0x02000000, ELR=0x3af610a8, x29=0x3, x26/x28=0xd00dfeed (poison)
-- Crash at `ret` instruction of `alloc_frame_with` — persists even with all allocator bypasses
-**Current Investigation**: Stack or code-page corruption during `init_after_heap()` / `kspace::init_kernel_page_table()`. Corruption happens DURING function execution, not in allocator logic.
-**Status**: All bypasses active; need to add stack canary to pinpoint corruption source.
-**Details**: `specs/001-rpi3-hardware-bringup/SESSION_CONTEXT.md`
+**Symptom**: Kernel hangs at `call_ostd_main()` on RPi3 hardware
+**Root Cause Found**: `ostd/src/arch/aarch64/cpu/extension.rs` uses `spin::Once` (external crate) which hangs on RPi3
+**Fix Applied**: Changed to use `crate::boot::SimpleOnce` instead
+**Status**: Fix deployed, awaiting test confirmation
 
 
 

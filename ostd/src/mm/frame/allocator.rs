@@ -53,11 +53,77 @@ impl FrameAllocOptions {
     /// Allocates a single frame with additional metadata.
     pub fn alloc_frame_with<M: AnyFrameMeta>(&self, _metadata: M) -> Result<Frame<M>> {
         #[cfg(target_arch = "aarch64")]
+        {
+            // Stack canary: save FP/LR to global statics at entry, compare at exit.
+            // This lets us detect if something corrupts the stack frame during execution.
+            use core::sync::atomic::{AtomicUsize, Ordering};
+            static CANARY_ENTRY_FP: AtomicUsize = AtomicUsize::new(0);
+            static CANARY_ENTRY_LR: AtomicUsize = AtomicUsize::new(0);
+            let _entry_fp: usize;
+            let _entry_lr: usize;
+            unsafe {
+                core::arch::asm!(
+                    "mov {fp}, x29",
+                    "mov {lr}, x30",
+                    fp = out(reg) _entry_fp,
+                    lr = out(reg) _entry_lr,
+                );
+            }
+            CANARY_ENTRY_FP.store(_entry_fp, Ordering::Relaxed);
+            CANARY_ENTRY_LR.store(_entry_lr, Ordering::Relaxed);
+            unsafe { crate::arch::boot::pl011_puts(b"[fa.canary] entry fp="); }
+            unsafe { crate::arch::boot::pl011_puts_hex(_entry_fp); }
+            unsafe { crate::arch::boot::pl011_puts(b" lr="); }
+            unsafe { crate::arch::boot::pl011_puts_hex(_entry_lr); }
+            unsafe { crate::arch::boot::pl011_puts(b"\n"); }
+        }
+
+        #[cfg(target_arch = "aarch64")]
         unsafe { crate::arch::boot::pl011_puts(b"[fa.0] alloc_frame_with start\n"); }
         let _single_layout = Layout::from_size_align(PAGE_SIZE, PAGE_SIZE).unwrap();
 
         #[cfg(target_arch = "aarch64")]
         unsafe { crate::arch::boot::pl011_puts(b"[fa] returning NoMemory early\n"); }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            use core::sync::atomic::{AtomicUsize, Ordering};
+            static CANARY_EXIT_FP: AtomicUsize = AtomicUsize::new(0);
+            static CANARY_EXIT_LR: AtomicUsize = AtomicUsize::new(0);
+            let _exit_fp: usize;
+            let _exit_lr: usize;
+            unsafe {
+                core::arch::asm!(
+                    "mov {fp}, x29",
+                    "mov {lr}, x30",
+                    fp = out(reg) _exit_fp,
+                    lr = out(reg) _exit_lr,
+                );
+            }
+            CANARY_EXIT_FP.store(_exit_fp, Ordering::Relaxed);
+            CANARY_EXIT_LR.store(_exit_lr, Ordering::Relaxed);
+
+            // Read entry values
+            let _entry_fp = CANARY_ENTRY_FP.load(Ordering::Relaxed);
+            let _entry_lr = CANARY_ENTRY_LR.load(Ordering::Relaxed);
+
+            let ok = _exit_fp == _entry_fp && _exit_lr == _entry_lr;
+            unsafe { crate::arch::boot::pl011_puts(b"[fa.canary] exit fp="); }
+            unsafe { crate::arch::boot::pl011_puts_hex(_exit_fp); }
+            unsafe { crate::arch::boot::pl011_puts(b" lr="); }
+            unsafe { crate::arch::boot::pl011_puts_hex(_exit_lr); }
+            if ok {
+                unsafe { crate::arch::boot::pl011_puts(b" OK\n"); }
+            } else {
+                unsafe { crate::arch::boot::pl011_puts(b" CORRUPTED!\n"); }
+                unsafe { crate::arch::boot::pl011_puts(b"[fa.canary] entry fp="); }
+                unsafe { crate::arch::boot::pl011_puts_hex(_entry_fp); }
+                unsafe { crate::arch::boot::pl011_puts(b" lr="); }
+                unsafe { crate::arch::boot::pl011_puts_hex(_entry_lr); }
+                unsafe { crate::arch::boot::pl011_puts(b"\n"); }
+            }
+        }
+
         return Err(Error::NoMemory);
     }
 
