@@ -148,14 +148,11 @@ pub(super) fn dealloc(
     global_pool.update_global_size_if_locked();
 }
 
+#[inline(never)]
 pub(super) fn add_free_memory(_guard: &DisabledLocalIrqGuard, addr: Paddr, size: usize) {
-    let mut global_pool = OnDemandGlobalLock::new();
-
-    split_to_chunks(addr, size).for_each(|(addr, order)| {
-        global_pool.get().insert_chunk(addr, order);
-    });
-
-    global_pool.update_global_size_if_locked();
+    #[cfg(target_arch = "aarch64")]
+    ostd::arch::boot::pl011_puts_safe(b"[pafm.0]\n");
+    return;
 }
 
 fn do_dealloc(

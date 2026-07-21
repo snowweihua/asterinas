@@ -225,11 +225,19 @@ pub(super) fn get_global_frame_allocator() -> &'static dyn GlobalFrameAllocator 
 ///
 /// This function should be called only once.
 pub(crate) unsafe fn init() {
+    #[cfg(target_arch = "aarch64")]
+    unsafe { crate::arch::boot::pl011_puts(b"[alloc.init.0]\n"); }
     let regions = &crate::boot::EARLY_INFO.get().unwrap().memory_regions;
+    #[cfg(target_arch = "aarch64")]
+    unsafe { crate::arch::boot::pl011_puts(b"[alloc.init.1]\n"); }
 
     // Retire the early allocator.
     let early_allocator = unsafe { (*(addr_of_mut!(EARLY_ALLOCATOR))).take().unwrap() };
+    #[cfg(target_arch = "aarch64")]
+    unsafe { crate::arch::boot::pl011_puts(b"[alloc.init.2]\n"); }
     let (range_1, range_2) = early_allocator.allocated_regions();
+    #[cfg(target_arch = "aarch64")]
+    unsafe { crate::arch::boot::pl011_puts(b"[alloc.init.3]\n"); }
 
     let frame_paddr_base = crate::arch::mm::frame_paddr_base();
 
@@ -246,13 +254,20 @@ pub(crate) unsafe fn init() {
                         r2.start
                     };
                     if r2_start < r2.end {
-                        log::info!("Adding free frames to the allocator: {:x?}..{:x?}", r2_start, r2.end);
+                        #[cfg(target_arch = "aarch64")]
+                        {
+                            unsafe { crate::arch::boot::pl011_puts(b"[alloc.afm] "); }
+                        }
                         get_global_frame_allocator().add_free_memory(r2_start, r2.end - r2_start);
+                        #[cfg(target_arch = "aarch64")]
+                        unsafe { crate::arch::boot::pl011_puts(b"[alloc.afm-done]\n"); }
                     }
                 }
             }
         }
     }
+    #[cfg(target_arch = "aarch64")]
+    unsafe { crate::arch::boot::pl011_puts(b"[alloc.init.done]\n"); }
 }
 
 /// An allocator in the early boot phase when frame metadata is not available.

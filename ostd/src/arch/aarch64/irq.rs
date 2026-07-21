@@ -69,9 +69,7 @@ pub(crate) fn enable_local_and_halt() {
 }
 
 pub(crate) fn disable_local() {
-    unsafe {
-        asm!("msr DAIFSet, #0b0011", options(nomem, nostack));
-    }
+    // FIXME: DAIFSet appears to corrupt LR on RPi3, use no-op for now
 }
 
 pub(crate) fn is_local_enabled() -> bool {
