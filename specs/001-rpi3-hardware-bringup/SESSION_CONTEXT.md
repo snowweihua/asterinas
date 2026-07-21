@@ -1,11 +1,30 @@
-# RPi3 Debug Session - 2026-07-20 (Evening)
+# RPi3 Debug Session - 2026-07-21
 
-## Current Task T036
-Kernel crashes with `Synchronous Abort` during frame metadata slot access in `get_slot`.
+## Current Task T030
+Boot to shell with interactive command working.
 
-## Root Cause Found & Fixes Applied (this session)
+## Fix 12 (2026-07-21): Revert get_slot physical-path slot formula
 
-### Fix 10: `frame_paddr_base()` now uses `dram_base()` at runtime
+**Problem**: Fix 11 (commit 97e69605) incorrectly changed the slot calculation from:
+```
+frame_idx = (paddr - frame_paddr_base) / PAGE_SIZE;
+slot_paddr = meta_paddr_base + frame_idx * size_of::<MetaSlot>();
+```
+to:
+```
+page_offset = paddr % PAGE_SIZE; slot_offset = page_offset / 64;
+slot_paddr = meta_paddr_base + page_offset + slot_offset * 64;
+```
+This computed `meta_paddr_base` for ALL page-aligned frames (page_offset=0).
+
+**Solution**: Reverted to the correct `frame_idx` formula. Also removed the
+incorrect `paddr < meta_paddr_base` check.
+
+**Status**: Built and deployed to RPi3 TFTP. Awaiting hardware power cycle.
+
+---
+
+## Fix 10: `frame_paddr_base()` now uses `dram_base()` at runtime
 
 **Problem**: `frame_paddr_base = 0x4000_0000` (hardcoded const) but RPi3 DRAM starts at `0x0`.
 

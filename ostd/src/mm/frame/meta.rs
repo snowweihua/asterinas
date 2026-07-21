@@ -235,7 +235,7 @@ pub(super) fn get_slot(paddr: Paddr) -> Result<&'static MetaSlot, GetFrameError>
         unsafe { crate::arch::boot::pl011_puts(b" fpb!=0="); }
         pl011_puts_hex((frame_paddr_base != 0) as usize);
     }
-    let ptr = if !crate::IN_BOOTSTRAP_CONTEXT.load(Ordering::Relaxed) && frame_paddr_base != 0 {
+    let ptr = if !crate::IN_BOOTSTRAP_CONTEXT.load(Ordering::Relaxed) {
         let vaddr = mapping::frame_to_meta::<PagingConsts>(paddr);
         #[cfg(target_arch = "aarch64")]
         {
