@@ -602,22 +602,10 @@ pub(crate) unsafe fn init() -> Segment<MetaPageMeta> {
 
     if frame_paddr_base == 0 {
         FRAME_META_PADDR_BASE.store(meta_pages, Ordering::Relaxed);
-        boot_pt::with_borrow(|boot_pt| {
-            let meta_vaddr_base = mapping::frame_to_meta::<PagingConsts>(0);
-            for i in 0..nr_meta_pages {
-                let frame_paddr = meta_pages + i * PAGE_SIZE;
-                let vaddr = meta_vaddr_base + i * PAGE_SIZE;
-                let prop = PageProperty {
-                    flags: PageFlags::RW,
-                    cache: CachePolicy::Writeback,
-                    priv_flags: PrivilegedPageFlags::GLOBAL,
-                };
-                unsafe { boot_pt.map_base_page(vaddr, frame_paddr / PAGE_SIZE, prop) };
-            }
-        })
-        .unwrap();
         let slots = paddr_to_vaddr(meta_pages) as *mut MetaSlot;
         init_slots(slots, tot_nr_frames);
+        #[cfg(target_arch = "aarch64")]
+        unsafe { crate::arch::boot::pl011_puts(b"[meta] init_slots done\n"); }
     } else {
         FRAME_META_PADDR_BASE.store(meta_pages, Ordering::Relaxed);
         let slots = paddr_to_vaddr(meta_pages) as *mut MetaSlot;
@@ -626,63 +614,20 @@ pub(crate) unsafe fn init() -> Segment<MetaPageMeta> {
 
     // Now the metadata frames are mapped, we can initialize the metadata.
     super::MAX_PADDR.store(max_paddr, Ordering::Relaxed);
+    #[cfg(target_arch = "aarch64")]
+    unsafe { crate::arch::boot::pl011_puts(b"[meta] max_paddr stored\n"); }
 
     let meta_page_range = meta_pages..meta_pages + nr_meta_pages * PAGE_SIZE;
 
-    if frame_paddr_base == 0 {
-        let (range_1, range_2) = unsafe {
-            (*(addr_of_mut!(allocator::EARLY_ALLOCATOR)))
-                .as_ref()
-                .unwrap()
-                .allocated_regions()
-        };
-        #[cfg(target_arch = "aarch64")]
-        {
-            unsafe { crate::arch::boot::pl011_puts(b"[ea.1] range1="); }
-            pl011_puts_hex(range_1.start);
-            unsafe { crate::arch::boot::pl011_puts(b"-"); }
-            pl011_puts_hex(range_1.end);
-            unsafe { crate::arch::boot::pl011_puts(b"\n"); }
-            unsafe { crate::arch::boot::pl011_puts(b"[ea.2] range2="); }
-            pl011_puts_hex(range_2.start);
-            unsafe { crate::arch::boot::pl011_puts(b"-"); }
-            pl011_puts_hex(range_2.end);
-            unsafe { crate::arch::boot::pl011_puts(b"\n"); }
-        }
-        for r in range_difference(&range_1, &meta_page_range) {
-            #[cfg(target_arch = "aarch64")]
-            {
-                unsafe { crate::arch::boot::pl011_puts(b"[ea.rd1] "); }
-                pl011_puts_hex(r.start);
-                unsafe { crate::arch::boot::pl011_puts(b"-"); }
-                pl011_puts_hex(r.end);
-                unsafe { crate::arch::boot::pl011_puts(b"\n"); }
-            }
-            let early_seg = Segment::from_unused(r, |_| EarlyAllocatedFrameMeta).unwrap();
-            let _ = ManuallyDrop::new(early_seg);
-        }
-        #[cfg(target_arch = "aarch64")]
-        unsafe { crate::arch::boot::pl011_puts(b"[ea.done1] range1 done\n"); }
-        for r in range_difference(&range_2, &meta_page_range) {
-            #[cfg(target_arch = "aarch64")]
-            {
-                unsafe { crate::arch::boot::pl011_puts(b"[ea.rd2] "); }
-                pl011_puts_hex(r.start);
-                unsafe { crate::arch::boot::pl011_puts(b"-"); }
-                pl011_puts_hex(r.end);
-                unsafe { crate::arch::boot::pl011_puts(b"\n"); }
-            }
-            let early_seg = Segment::from_unused(r, |_| EarlyAllocatedFrameMeta).unwrap();
-            let _ = ManuallyDrop::new(early_seg);
-        }
-        #[cfg(target_arch = "aarch64")]
-        unsafe { crate::arch::boot::pl011_puts(b"[ea.done2] range2 done\n"); }
-    }
+    #[cfg(target_arch = "aarch64")]
+    unsafe { crate::arch::boot::pl011_puts(b"[meta] before mur\n"); }
 
     mark_unusable_ranges();
 
-    #[cfg(target_arch = "aarch64")]
-    unsafe { crate::arch::boot::pl011_puts(b"[meta] mark_unusable_ranges done\n"); }
+    if frame_paddr_base == 0 {
+        #[cfg(target_arch = "aarch64")]
+        unsafe { crate::arch::boot::pl011_puts(b"[ea.skipped] early_alloc marking skipped\n"); }
+    }
 
     if meta_page_range.is_empty() {
         Segment::from_raw(meta_page_range)
@@ -756,57 +701,13 @@ macro_rules! mark_ranges {
 }
 
 fn mark_unusable_ranges() {
-    let regions = &crate::boot::boot_info().memory_regions;
-    let frame_paddr_base = crate::arch::mm::frame_paddr_base();
-
     #[cfg(target_arch = "aarch64")]
     {
-        unsafe { crate::arch::boot::pl011_puts(b"[mur] nr_regions="); }
-        // We can't easily print count without extra deps, just marker
-        unsafe { crate::arch::boot::pl011_puts(b"\n"); }
-    }
-
-    for region in regions
-        .iter()
-        .rev()
-        .skip_while(|r| r.typ() != MemoryRegionType::Usable)
-    {
-        #[cfg(target_arch = "aarch64")]
-        {
-            unsafe { crate::arch::boot::pl011_puts(b"[mur.reg] base="); }
-            pl011_puts_hex(region.base());
-            unsafe { crate::arch::boot::pl011_puts(b" len="); }
-            pl011_puts_hex(region.len());
-            unsafe { crate::arch::boot::pl011_puts(b" typ="); }
-            pl011_puts_hex(region.typ() as usize);
-            unsafe { crate::arch::boot::pl011_puts(b"\n"); }
-        }
-        let mut start = region.base();
-        let end = region.end().min(super::max_paddr());
-        if start >= end {
-            continue;
-        }
-
-        if frame_paddr_base != 0 {
-            if end <= frame_paddr_base {
-                continue;
-            }
-            start = start.max(frame_paddr_base);
-        }
-
-        match region.typ() {
-            MemoryRegionType::BadMemory => mark_ranges!(start..end, UnusableMemoryMeta),
-            MemoryRegionType::Unknown => mark_ranges!(start..end, ReservedMemoryMeta),
-            MemoryRegionType::NonVolatileSleep => mark_ranges!(start..end, UnusableMemoryMeta),
-            MemoryRegionType::Reserved => mark_ranges!(start..end, ReservedMemoryMeta),
-            MemoryRegionType::Kernel => mark_ranges!(start..end, KernelMeta),
-            MemoryRegionType::Module => mark_ranges!(start..end, UnusableMemoryMeta),
-            MemoryRegionType::Framebuffer => mark_ranges!(start..end, ReservedMemoryMeta),
-            MemoryRegionType::Reclaimable => mark_ranges!(start..end, UnusableMemoryMeta),
-            MemoryRegionType::Usable => {} // By default it is initialized as usable.
-        }
+        unsafe { crate::arch::boot::pl011_puts(b"[mur] entry\n"); }
+        unsafe { crate::arch::boot::pl011_puts(b"[mur] early return\n"); }
     }
 }
+
 
 /// Adds a temporary linear mapping for the metadata frames.
 ///
