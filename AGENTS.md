@@ -29,11 +29,12 @@ git add -A && git commit -m "WIP: <description>"
 Example: `aarch64/cpu: replace spin::Once with SimpleOnce — fixes RPi3 boot hang at enable_cpu_features`
 
 
-## Current Session: Compiler Epilogue Codegen Bug
+## Current Session: Generic Result Return Crash at `ret` on AArch64 RPi3
 
-**Root Cause**: Rust nightly (2025-02-01) epilogue codegen bug — `return Err(Error::NoMemory)` from generic `Result<Frame<M>, Error>` corrupts saved x30 on stack.
-**Evidence**: Spin loop in `alloc_frame_with` works perfectly (no crash). Every return approach crashes identically.
-**Status**: Bypass using spin loop (hangs kernel). Needs compiler update or code restructure.
+**Root Cause**: `alloc_frame_with<M>() -> Result<Frame<M>, Error>` crashes at `ret` when returning ANY value on AArch64 RPi3. Not a compiler bug, not boot PT. Spin loop works (avoids return).
+**Fixes applied this session**: boot PT slots 1-3 zeroed on RPi3, `new_kernel_page_table()` copies boot PT entries, linear+meta mapping skipped on AArch64, `KERNEL_PAGE_TABLE` → `SimpleOnce`.
+**Blocker**: `PageTableNode::alloc()` still calls `alloc_frame_with()` → spin loop. Need to provide a working Frame allocation that returns `Ok` instead of `Err`.
+**MCP tools**: serial_mcp_server (port 8910), deploy_mcp_server (port 8911) — ready for next session.
 **Details**: `specs/001-rpi3-hardware-bringup/SESSION_CONTEXT.md`
 
 
