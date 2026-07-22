@@ -104,6 +104,10 @@ impl FrameAllocOptions {
             }
         }
 
+        // Prevent drop of _metadata which may corrupt the stack frame
+        #[cfg(target_arch = "aarch64")]
+        core::mem::forget(_metadata);
+
         return Err(Error::NoMemory);
     }
 
