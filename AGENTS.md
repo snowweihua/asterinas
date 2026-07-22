@@ -29,12 +29,11 @@ git add -A && git commit -m "WIP: <description>"
 Example: `aarch64/cpu: replace spin::Once with SimpleOnce — fixes RPi3 boot hang at enable_cpu_features`
 
 
-## Current Session: RPi3 Stack Slot Corruption
+## Current Session: Compiler Epilogue Codegen Bug
 
-**Symptom**: Synchronous Abort at `ret` instruction on RPi3 — saved x30 on stack overwritten with 0xFFFFFFFFC900A8
-**Key Canary Finding**: FP register (0x3af4c380) is UNCHANGED at exit. Static canaries NOT corrupted. Only the specific stack slot holding saved x30 is overwritten.
-**Current Investigation**: Focus on the `return Err(Error::NoMemory)` path — compiler epilogue may write to the saved-x30 stack slot when dropping `_metadata: M` and building the `Result<Frame<M>, Error>` return value.
-**Status**: Stack canary fixed (shared statics). Need to investigate epilogue/drop behavior. Try `#[inline(never)]` or explicit `core::mem::forget(_metadata)`.
+**Root Cause**: Rust nightly (2025-02-01) epilogue codegen bug — `return Err(Error::NoMemory)` from generic `Result<Frame<M>, Error>` corrupts saved x30 on stack.
+**Evidence**: Spin loop in `alloc_frame_with` works perfectly (no crash). Every return approach crashes identically.
+**Status**: Bypass using spin loop (hangs kernel). Needs compiler update or code restructure.
 **Details**: `specs/001-rpi3-hardware-bringup/SESSION_CONTEXT.md`
 
 
