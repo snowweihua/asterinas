@@ -314,6 +314,24 @@ impl PageTable<KernelPtConfig> {
             let preempt_guard = disable_preempt();
             let mut root_node = kpt.root.borrow().lock(&preempt_guard);
 
+            // On AArch64, copying boot page table entries is more reliable than
+            // allocating new page table pages (which triggers a codegen crash in
+            // the generic alloc_frame_with function).
+            #[cfg(target_arch = "aarch64")]
+            {
+                use crate::arch::mm::PageTableEntry;
+                let boot_root_pa = crate::arch::mm::current_page_table_paddr();
+                for i in KernelPtConfig::TOP_LEVEL_INDEX_RANGE {
+                    // Read the PTE from boot page table slot i
+                    let boot_pte = unsafe {
+                        let ptr = (boot_root_pa + i * 8) as *const PageTableEntry;
+                        ptr.read_volatile()
+                    };
+                    // Write it into the new kernel page table slot i
+                    unsafe { root_node.write_pte(i, boot_pte) };
+                }
+            }
+            #[cfg(not(target_arch = "aarch64"))]
             for i in KernelPtConfig::TOP_LEVEL_INDEX_RANGE {
                 let mut root_entry = root_node.entry(i);
                 let _ = root_entry.alloc_if_none(&preempt_guard).unwrap();
