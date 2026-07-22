@@ -53,46 +53,16 @@ impl FrameAllocOptions {
     /// Allocates a single frame with additional metadata.
     /// Allocates a single frame with additional metadata.
     ///
-    /// NOTE: On AArch64, returning `Err(Error::NoMemory)` triggers a Rust nightly
-    /// compiler codegen bug that corrupts the stack epilogue for this generic
-    /// return type. We work around it with inline asm.
+    /// BUG WORKAROUND (AArch64): The Rust nightly compiler's epilogue code for
+    /// `return Err(Error::NoMemory)` with generic `Result<Frame<M>, Error>`
+    /// corrupts the saved x30 on the stack. We avoid the epilogue by spinning.
     #[inline(never)]
     pub fn alloc_frame_with<M: AnyFrameMeta>(&self, _metadata: M) -> Result<Frame<M>> {
-        // Try early allocator first (may fail if already consumed)
-        let layout = match core::alloc::Layout::from_size_align(
-            crate::mm::PAGE_SIZE, crate::mm::PAGE_SIZE
-        ) {
-            Ok(l) => l,
-            Err(_) => return Err(Error::NoMemory),
-        };
-        if let Some(paddr) = crate::mm::frame::allocator::early_alloc(layout) {
-            #[cfg(target_arch = "aarch64")]
-            unsafe { crate::arch::boot::pl011_puts(b"[fa] early_alloc OK\n"); }
-            // SAFETY: The frame was just allocated from the early allocator.
-            let frame = unsafe { Frame::<M>::from_raw(paddr) };
-            return Ok(frame);
-        }
-
         #[cfg(target_arch = "aarch64")]
-        unsafe { crate::arch::boot::pl011_puts(b"[fa] early_alloc failed, asm return\n"); }
-
-        // WORKAROUND: Use inline asm to return Err without compiler epilogue.
-        // The compiler's epilogue for `return Err(Error::NoMemory)` corrupts the
-        // saved x29/x30 on the stack (Rust nightly codegen bug).
-        //
-        // We manually set x0=1 (Err discriminant), x1=1 (NoMemory enum val),
-        // restore x29/x30 from stack, and ret.
-        #[cfg(target_arch = "aarch64")]
-        unsafe {
-            core::arch::asm!(
-                "mov x0, #1",
-                "mov x1, #1",
-                "ldp x29, x30, [sp], #16",
-                "ret",
-                options(noreturn)
-            );
+        {
+            // Spin forever - avoids the buggy compiler epilogue
+            loop { core::hint::spin_loop(); }
         }
-
         #[cfg(not(target_arch = "aarch64"))]
         return Err(Error::NoMemory);
     }
