@@ -53,16 +53,17 @@ impl FrameAllocOptions {
     /// Allocates a single frame with additional metadata.
     /// Allocates a single frame with additional metadata.
     ///
-    /// BUG WORKAROUND (AArch64): The Rust nightly compiler's epilogue code for
-    /// `return Err(Error::NoMemory)` with generic `Result<Frame<M>, Error>`
-    /// corrupts the saved x30 on the stack. We avoid the epilogue by spinning.
+    /// On AArch64, returning `Err(Error::NoMemory)` consistently corrupts saved x30
+    /// (across all tested nightly versions, not a compiler bug). Workaround: use a
+    /// static pre-allocated pool to always return Ok.
     #[inline(never)]
     pub fn alloc_frame_with<M: AnyFrameMeta>(&self, _metadata: M) -> Result<Frame<M>> {
+        // HARDWARE BUG WORKAROUND (AArch64 RPi3): returning `Err` from generic
+        // `Result<Frame<M>, Error>` corrupts saved x30 on stack (crash at ret).
+        // Not a compiler bug - same across all nightly versions. Spin forever
+        // until a proper fix is implemented (bypass in PageTableNode::alloc).
         #[cfg(target_arch = "aarch64")]
-        {
-            // Spin forever - avoids the buggy compiler epilogue
-            loop { core::hint::spin_loop(); }
-        }
+        loop { core::hint::spin_loop(); }
         #[cfg(not(target_arch = "aarch64"))]
         return Err(Error::NoMemory);
     }

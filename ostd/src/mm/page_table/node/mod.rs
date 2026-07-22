@@ -74,8 +74,7 @@ impl<C: PageTableConfig> PageTableNode<C> {
         #[cfg(target_arch = "aarch64")]
         unsafe { crate::arch::boot::pl011_puts(b"[node.alloc] meta created\n"); }
 
-        #[cfg(target_arch = "aarch64")]
-        unsafe { crate::arch::boot::pl011_puts(b"[node.alloc] before FrameAllocOptions\n"); }
+        // Try the normal frame allocator first
         #[cfg(target_arch = "aarch64")]
         unsafe { crate::arch::boot::pl011_puts(b"[node.alloc] calling alloc_frame_with\n"); }
         let frame = FrameAllocOptions::new()

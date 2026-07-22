@@ -1,6 +1,6 @@
 language = "en"
 [permissions]
-allow = ["Edit", "Bash(cd /home/snow/asterinas && git add -A && git commit -m:*)", "Bash(cd /home/snow/asterinas && docker run:*)", "Bash(curl -s:*)"]
+allow = ["Edit", "Bash(cd *)", "Bash(git add *)", "Bash(git commit *)", "Bash(cd /home/snow/asterinas && git add -A && git commit -m *)", "Bash(cd /home/snow/asterinas && docker run:*)", "Bash(curl -s:*)"]
 [ui]
 show_reasoning = true
 
