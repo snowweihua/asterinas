@@ -365,6 +365,16 @@ impl PageTable<KernelPtConfig> {
         // Make shared the page tables mapped by the root table in the kernel space.
         {
             let preempt_guard = disable_preempt();
+            // WORKAROUND (AArch64 RPi3): Skip the spinlock (AtomicU8::swap) in
+            // PageTableGuard::lock() because exclusive-monitor instructions
+            // (LDADDB / LDXRB+STXRB) can silently fail on Cortex-A53 when any
+            // page-table entry covers both DRAM and peripheral MMIO — which our
+            // boot 1 GiB block entry does.  During single-core boot with preempt
+            // disabled the lock is unnecessary.
+            #[cfg(target_arch = "aarch64")]
+            let mut root_node =
+                unsafe { kpt.root.borrow().make_guard_unchecked(&preempt_guard) };
+            #[cfg(not(target_arch = "aarch64"))]
             let mut root_node = kpt.root.borrow().lock(&preempt_guard);
 
             // On AArch64, copying boot page table entries is more reliable than
