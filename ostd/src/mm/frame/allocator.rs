@@ -58,10 +58,8 @@ impl FrameAllocOptions {
     /// static pre-allocated pool to always return Ok.
     #[inline(never)]
     pub fn alloc_frame_with<M: AnyFrameMeta>(&self, _metadata: M) -> Result<Frame<M>> {
-        // HARDWARE BUG WORKAROUND (AArch64 RPi3): returning `Err` from generic
-        // `Result<Frame<M>, Error>` corrupts saved x30 on stack (crash at ret).
-        // Not a compiler bug - same across all nightly versions. Spin forever
-        // until a proper fix is implemented (bypass in PageTableNode::alloc).
+        // WORKAROUND: Spinning avoids the crash at `ret` (saved x30 corrupted).
+        // Root cause unclear — not a compiler bug, not boot page table.
         #[cfg(target_arch = "aarch64")]
         loop { core::hint::spin_loop(); }
         #[cfg(not(target_arch = "aarch64"))]

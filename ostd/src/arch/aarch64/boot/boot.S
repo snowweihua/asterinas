@@ -283,6 +283,26 @@ jump_to_main:
     adr     x10, boot_l3pt_high
     str     x9,  [x10]
 
+    /* On RPi3 (DRAM_BASE == 0), only the first 1 GB of the linear map
+     * (PA 0x00000000-0x3FFFFFFF) is valid.  Slots 1-3 of boot_l3pt_linear
+     * point to PA 0x40000000-0xFFFFFFFF which does NOT exist on RPi3.
+     *
+     * Zero them out so speculative page walks or accidental accesses
+     * through those addresses get a translation fault instead of silently
+     * accessing non-existent memory (which can cause external aborts).
+     *
+     * On QEMU (DRAM_BASE == 0x40000000) slots 1-3 are valid and left alone. */
+    cbz     x21, 0f                 /* if DRAM_BASE == 0 (RPi3): zero slots 1-3 */
+    b       1f
+0:
+    adr     x10, boot_l3pt_linear
+    str     xzr, [x10, #(1 * 8)]    /* slot 1 → 0 (invalid) */
+    str     xzr, [x10, #(2 * 8)]    /* slot 2 → 0 (invalid) */
+    str     xzr, [x10, #(3 * 8)]    /* slot 3 → 0 (invalid) */
+    dsb     sy
+    isb
+1:
+
     dsb     sy
     isb
 
