@@ -29,13 +29,12 @@ git add -A && git commit -m "WIP: <description>"
 Example: `aarch64/cpu: replace spin::Once with SimpleOnce — fixes RPi3 boot hang at enable_cpu_features`
 
 
-## Current Session: RPi3 Function Return Crash
+## Current Session: RPi3 Stack Slot Corruption
 
-**Symptom**: Synchronous Abort at function return on RPi3 hardware
-- ESR=0x02000000, ELR=0x3af610a8, x29=0x3, x26/x28=0xd00dfeed (poison)
-- Crash at `ret` instruction of `alloc_frame_with` — persists even with all allocator bypasses
-**Current Investigation**: Stack or code-page corruption during `init_after_heap()` / `kspace::init_kernel_page_table()`. Corruption happens DURING function execution, not in allocator logic.
-**Status**: All bypasses active; need to add stack canary to pinpoint corruption source.
+**Symptom**: Synchronous Abort at `ret` instruction on RPi3 — saved x30 on stack overwritten with 0xFFFFFFFFC900A8
+**Key Canary Finding**: FP register (0x3af4c380) is UNCHANGED at exit. Static canaries NOT corrupted. Only the specific stack slot holding saved x30 is overwritten.
+**Current Investigation**: Focus on the `return Err(Error::NoMemory)` path — compiler epilogue may write to the saved-x30 stack slot when dropping `_metadata: M` and building the `Result<Frame<M>, Error>` return value.
+**Status**: Stack canary fixed (shared statics). Need to investigate epilogue/drop behavior. Try `#[inline(never)]` or explicit `core::mem::forget(_metadata)`.
 **Details**: `specs/001-rpi3-hardware-bringup/SESSION_CONTEXT.md`
 
 
