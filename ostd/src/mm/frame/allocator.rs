@@ -54,8 +54,8 @@ impl FrameAllocOptions {
     pub fn alloc_frame_with<M: AnyFrameMeta>(&self, _metadata: M) -> Result<Frame<M>> {
         #[cfg(target_arch = "aarch64")]
         {
-            // Stack canary: save FP/LR to global statics at entry, compare at exit.
-            // This lets us detect if something corrupts the stack frame during execution.
+            // Stack canary: capture FP/LR at entry and exit using safe Rust only
+            // (no pl011_puts_hex, which uses many inline asm blocks).
             use core::sync::atomic::{AtomicUsize, Ordering};
             static CANARY_FP: AtomicUsize = AtomicUsize::new(0);
             static CANARY_LR: AtomicUsize = AtomicUsize::new(0);
@@ -71,10 +71,29 @@ impl FrameAllocOptions {
             }
             CANARY_FP.store(entry_fp, Ordering::Relaxed);
             CANARY_LR.store(entry_lr, Ordering::Relaxed);
-            unsafe { crate::arch::boot::pl011_puts(b"[fa.canary] entry fp="); }
-            unsafe { crate::arch::boot::pl011_puts_hex(entry_fp); }
+            // Print FP as decimal using pl011_puts only
+            unsafe { crate::arch::boot::pl011_puts(b"[fa.entry] fp="); }
+            let mut fpbuf = [0u8; 20];
+            let mut tmp = entry_fp;
+            let mut idx = 19;
+            loop {
+                fpbuf[idx] = b'0' + (tmp % 10) as u8;
+                tmp /= 10;
+                if idx == 0 || tmp == 0 { break; }
+                idx -= 1;
+            }
+            unsafe { crate::arch::boot::pl011_puts(&fpbuf[idx..]); }
             unsafe { crate::arch::boot::pl011_puts(b" lr="); }
-            unsafe { crate::arch::boot::pl011_puts_hex(entry_lr); }
+            let mut lrbuf = [0u8; 20];
+            let mut tmp = entry_lr;
+            let mut idx = 19;
+            loop {
+                lrbuf[idx] = b'0' + (tmp % 10) as u8;
+                tmp /= 10;
+                if idx == 0 || tmp == 0 { break; }
+                idx -= 1;
+            }
+            unsafe { crate::arch::boot::pl011_puts(&lrbuf[idx..]); }
             unsafe { crate::arch::boot::pl011_puts(b"\n"); }
         }
 
@@ -88,7 +107,6 @@ impl FrameAllocOptions {
         #[cfg(target_arch = "aarch64")]
         {
             use core::sync::atomic::Ordering;
-            // Re-declare the statics (they're function-scoped, OK to repeat)
             static CANARY_FP: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
             static CANARY_LR: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
             let exit_fp: usize;
@@ -103,20 +121,54 @@ impl FrameAllocOptions {
             }
             let entry_fp = CANARY_FP.load(Ordering::Relaxed);
             let entry_lr = CANARY_LR.load(Ordering::Relaxed);
-
             let ok = exit_fp == entry_fp && exit_lr == entry_lr;
-            unsafe { crate::arch::boot::pl011_puts(b"[fa.canary] exit fp="); }
-            unsafe { crate::arch::boot::pl011_puts_hex(exit_fp); }
+            unsafe { crate::arch::boot::pl011_puts(b"[fa.exit] fp="); }
+            let mut fpbuf = [0u8; 20];
+            let mut tmp = exit_fp;
+            let mut idx = 19;
+            loop {
+                fpbuf[idx] = b'0' + (tmp % 10) as u8;
+                tmp /= 10;
+                if idx == 0 || tmp == 0 { break; }
+                idx -= 1;
+            }
+            unsafe { crate::arch::boot::pl011_puts(&fpbuf[idx..]); }
             unsafe { crate::arch::boot::pl011_puts(b" lr="); }
-            unsafe { crate::arch::boot::pl011_puts_hex(exit_lr); }
+            let mut lrbuf = [0u8; 20];
+            let mut tmp = exit_lr;
+            let mut idx = 19;
+            loop {
+                lrbuf[idx] = b'0' + (tmp % 10) as u8;
+                tmp /= 10;
+                if idx == 0 || tmp == 0 { break; }
+                idx -= 1;
+            }
+            unsafe { crate::arch::boot::pl011_puts(&lrbuf[idx..]); }
             if ok {
                 unsafe { crate::arch::boot::pl011_puts(b" OK\n"); }
             } else {
-                unsafe { crate::arch::boot::pl011_puts(b" CORRUPTED!\n"); }
-                unsafe { crate::arch::boot::pl011_puts(b"[fa.canary] entry fp="); }
-                unsafe { crate::arch::boot::pl011_puts_hex(entry_fp); }
-                unsafe { crate::arch::boot::pl011_puts(b" lr="); }
-                unsafe { crate::arch::boot::pl011_puts_hex(entry_lr); }
+                unsafe { crate::arch::boot::pl011_puts(b" CORRUPTED entry_fp="); }
+                let mut fpbuf = [0u8; 20];
+                let mut tmp = entry_fp;
+                let mut idx = 19;
+                loop {
+                    fpbuf[idx] = b'0' + (tmp % 10) as u8;
+                    tmp /= 10;
+                    if idx == 0 || tmp == 0 { break; }
+                    idx -= 1;
+                }
+                unsafe { crate::arch::boot::pl011_puts(&fpbuf[idx..]); }
+                unsafe { crate::arch::boot::pl011_puts(b" entry_lr="); }
+                let mut lrbuf = [0u8; 20];
+                let mut tmp = entry_lr;
+                let mut idx = 19;
+                loop {
+                    lrbuf[idx] = b'0' + (tmp % 10) as u8;
+                    tmp /= 10;
+                    if idx == 0 || tmp == 0 { break; }
+                    idx -= 1;
+                }
+                unsafe { crate::arch::boot::pl011_puts(&lrbuf[idx..]); }
                 unsafe { crate::arch::boot::pl011_puts(b"\n"); }
             }
         }

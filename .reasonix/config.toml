@@ -1,2 +1,7 @@
 [sandbox]
 bash = "off"
+
+[[plugins]]
+name = "serial-mcp"
+type = "http"
+url = "http://localhost:8910"
