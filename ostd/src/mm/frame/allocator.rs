@@ -58,8 +58,11 @@ impl FrameAllocOptions {
     /// static pre-allocated pool to always return Ok.
     #[inline(never)]
     pub fn alloc_frame_with<M: AnyFrameMeta>(&self, _metadata: M) -> Result<Frame<M>> {
-        // WORKAROUND: Spinning avoids the crash at `ret` (saved x30 corrupted).
-        // Root cause unclear — not a compiler bug, not boot page table.
+        // WORKAROUND: On AArch64 RPi3 this function crashes at `ret` with
+        // corrupted x30 (saved link register).  The root cause is still under
+        // investigation.  The kernel page table bypasses this issue entirely
+        // via `PageTable::empty()` which uses a pre-allocated frame.
+        // Spin to prevent this function from ever returning on AArch64.
         #[cfg(target_arch = "aarch64")]
         loop { core::hint::spin_loop(); }
         #[cfg(not(target_arch = "aarch64"))]

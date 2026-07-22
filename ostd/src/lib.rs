@@ -139,6 +139,16 @@ unsafe fn init() {
     let meta_pages = unsafe { mm::frame::meta::init() };
     unsafe { crate::arch::boot::pl011_puts(b"[init.9] after meta::init\n"); }
 
+    // On AArch64, reserve a page for the kernel page table root BEFORE the
+    // early allocator is retired.  This avoids calling the broken
+    // alloc_frame_with() later (which crashes at `ret` on RPi3 hardware).
+    #[cfg(target_arch = "aarch64")]
+    {
+        unsafe { crate::arch::boot::pl011_puts(b"[init.9b] before reserve_root_pt_page\n"); }
+        mm::page_table::reserve_root_pt_page();
+        unsafe { crate::arch::boot::pl011_puts(b"[init.9c] after reserve_root_pt_page\n"); }
+    }
+
     // The frame allocator should be initialized immediately after the metadata
     // is initialized. Otherwise the boot page table can't allocate frames.
     // SAFETY: This function is called only once.

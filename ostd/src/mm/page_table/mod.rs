@@ -28,6 +28,43 @@ mod cursor;
 
 pub(crate) use cursor::{Cursor, CursorMut, PageTableFrag};
 
+#[cfg(target_arch = "aarch64")]
+use crate::mm::Frame;
+#[cfg(target_arch = "aarch64")]
+use node::PageTablePageMeta;
+
+/// Holds the pre-allocated root page table frame for AArch64.
+///
+/// This is necessary because `alloc_frame_with()` crashes at `ret` on RPi3
+/// (saved x30 corrupted).  We allocate one page via `early_alloc` (before the
+/// early allocator is retired) and initialize its metadata as a
+/// `PageTablePageMeta` with level = NR_LEVELS, then stash the `Frame` here.
+/// `PageTable::empty()` picks it up on AArch64 instead of calling
+/// `PageTableNode::alloc()`.
+#[cfg(target_arch = "aarch64")]
+static mut AARCH64_ROOT_PT_FRAME: Option<Frame<PageTablePageMeta<KernelPtConfig>>> = None;
+
+/// Reserves the root page table page for AArch64.
+///
+/// Must be called after `meta::init()` and **before** `allocator::init()`
+/// (which retires the early allocator).  Panics if called twice.
+#[cfg(target_arch = "aarch64")]
+pub(crate) fn reserve_root_pt_page() {
+    use core::alloc::Layout;
+    use crate::mm::frame::allocator::early_alloc;
+    use crate::mm::PAGE_SIZE;
+
+    let paddr = early_alloc(Layout::from_size_align(PAGE_SIZE, PAGE_SIZE).unwrap())
+        .expect("AArch64 root PT page: early_alloc failed (ran out of low-DRAM pages?)");
+    let meta = PageTablePageMeta::new(crate::arch::mm::PagingConsts::NR_LEVELS);
+    let frame = Frame::from_unused(paddr, meta)
+        .expect("AArch64 root PT page: from_unused failed (page already in use?)");
+
+    unsafe {
+        AARCH64_ROOT_PT_FRAME = Some(frame);
+    }
+}
+
 #[cfg(ktest)]
 mod test;
 
@@ -306,9 +343,25 @@ impl PageTable<UserPtConfig> {
 
 impl PageTable<KernelPtConfig> {
     /// Create a new kernel page table.
-    pub(crate) fn new_kernel_page_table() -> Self {
-        let kpt = Self::empty();
+    /// Creates an empty kernel page table (uses pre-allocated root on AArch64).
+    pub(crate) fn empty_kernel() -> Self {
+        #[cfg(target_arch = "aarch64")]
+        unsafe { crate::arch::boot::pl011_puts(b"[ek] empty_kernel start\n"); }
+        #[cfg(target_arch = "aarch64")]
+        {
+            let root = unsafe { (*core::ptr::addr_of_mut!(AARCH64_ROOT_PT_FRAME)).take() }
+                .expect("AArch64 root PT page not reserved");
+            return PageTable { root };
+        }
+        #[cfg(not(target_arch = "aarch64"))]
+        Self::empty()
+    }
 
+    pub(crate) fn new_kernel_page_table() -> Self {
+        let kpt = Self::empty_kernel();
+
+        #[cfg(target_arch = "aarch64")]
+        unsafe { crate::arch::boot::pl011_puts(b"[npt] after empty_kernel\n"); }
         // Make shared the page tables mapped by the root table in the kernel space.
         {
             let preempt_guard = disable_preempt();
@@ -321,13 +374,17 @@ impl PageTable<KernelPtConfig> {
             {
                 use crate::arch::mm::PageTableEntry;
                 let boot_root_pa = crate::arch::mm::current_page_table_paddr();
+                // Only copy valid boot PT entries. On RPi3, slots 1-3 of
+                // boot_l3pt_linear are zeroed (non-existent PA > 1GB).
                 for i in KernelPtConfig::TOP_LEVEL_INDEX_RANGE {
-                    // Read the PTE from boot page table slot i
                     let boot_pte = unsafe {
                         let ptr = (boot_root_pa + i * 8) as *const PageTableEntry;
                         ptr.read_volatile()
                     };
-                    // Write it into the new kernel page table slot i
+                    // Skip zero entries (they map non-existent memory)
+                    if boot_pte.as_usize() == 0 {
+                        continue;
+                    }
                     unsafe { root_node.write_pte(i, boot_pte) };
                 }
             }
@@ -433,9 +490,7 @@ impl PageTable<KernelPtConfig> {
 }
 
 impl<C: PageTableConfig> PageTable<C> {
-    /// Create a new empty page table.
-    ///
-    /// Useful for the IOMMU page tables only.
+    /// Creates an empty page table.
     pub fn empty() -> Self {
         PageTable {
             root: PageTableNode::<C>::alloc(C::NR_LEVELS),
