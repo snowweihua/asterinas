@@ -1,30 +1,46 @@
-# RPi3 Debug Session - 2026-07-21 (Session 3)
+# RPi3 Debug Session - 2026-07-21 (Session 3) — Updated after stack canary fix
 
 ## Current Task T030
 Boot to shell with interactive command working.
 
-## Current Status: Function Return Crash
-**Symptom**: Synchronous Abort at function return on RPi3
-- ESR=0x02000000, ELR=0x3af610a8 (or 0x3af620a8), x29=0x3, x26/x28=0xd00dfeed
-- Crash happens at `ret` instruction of `alloc_frame_with` (and other functions)
-- **Bypass active**: `alloc_frame_with` returns `Err(NoMemory)` early → crash STILL occurs
-- This proves corruption happens DURING function execution (stack frame setup/teardown), NOT in allocator logic
+## Current Status: Stack Slot Corruption (Not Stack Overflow)
+
+**Key Serial Log Evidence** (from fixed canary with SHARED statics):
+```
+[fa.e] entry 0x000000003af4c380          ← FP register at entry
+[fa.0] start
+[fa] ret NoMemory                         ← bypass returns immediately
+[fa.x] exit 0x000000003af4c380            ← FP register at exit (IDENTICAL!)
+[fa.x] lr 0xffff00000030b0e8              ← current LR (changed by pl011_puts calls)
+[fa.x] CORRUPT saved fp 0x000000003af4c380 ← static CANARY_FP (NOT zeroed!)
+[fa.x] saved lr 0xffff000000308878         ← static CANARY_LR (original return address, correct!)
+```
+
+**What This Proves**:
+1. **FP register is NOT corrupted** (0x3af4c380 == 0x3af4c380)
+2. **Static variables are NOT corrupted** (CANARY_FP/LR retain entry values)
+3. **The stack slot at [sp] IS corrupted** — the saved x30 is overwritten with `0xFFFFFFFFC900A8`
+4. The false "CORRUPTED" from the BUGGY canary (separate per-block statics) was misleading
+
+**Crash Mechanism** (confirmed):
+1. Function prologue: `stp x29, x30, [sp, #-16]!` — saves FP=0x3af4c380, LR=0xffff000000308878 to stack
+2. During function body: something writes 0xFFFFFFFFC900A8 to [sp] (where x30 was saved)
+3. Function epilogue: `ldp x29, x30, [sp], #16` — loads x29=0x3, x30=0xFFFFFFFFC900A8
+4. `ret` jumps to 0xFFFFFFFFC900A8 — unmapped address → Synchronous External Abort (ESR=0x02000000)
+
+**Value Analysis**: 0xFFFFFFFFC900A8 (physical 0x3AF610A8 after relocation) is consistently the same across boots. It's near the stack region (~970 MB). This suggests a **pointer aliasing or stack buffer overflow** in a called function, writing to the specific stack slot of `alloc_frame_with`.
+
+### Previous Session Note (deprecated)
+The earlier hypothesis about `spin::Once` and SimpleOnce was already fixed. The current issue is stack slot corruption, NOT allocator logic.
 
 ## Progress Summary
-
-### Fixes Applied (verified working)
-- Fix 10: `frame_paddr_base()` calls `dram_base()` (runtime, not const)
-- Fix 11: `get_slot` uses `!IN_BOOTSTRAP` path selection
-- Fix 12: Reverted `get_slot` slot formula to correct `frame_idx`-based calculation
-- Fix 13: Path selection changed to `!IN_BOOTSTRAP` (no fpb check)
-- Fix 14: `mark_unusable_ranges` uses `EARLY_INFO.get()` (not `boot_info()`)
-- Fix 15: Stripped verbose per-frame debug markers
 
 ### What Works Now
 - `meta::init()` completes successfully
 - `allocator::init()` completes (with `add_free_memory` no-op)
 - `init_after_heap()` completes
 - `kspace::init()` starts and reaches `alloc_frame_with`
+- **Stack canary works correctly** (fixed shared statics)
 
 ### Current Bypasses (will need proper fix)
 - `FrameAllocator::alloc` → returns `None` early
@@ -37,64 +53,42 @@ Boot to shell with interactive command working.
 ## Crash Analysis
 
 ### Consistent Crash Signature
-- **ESR**: 0x02000000 (Synchronous Abort, ISS=0)
-- **ELR/LR**: 0x3af610a8 (~944MB, near top of 948MB RAM)
-- **x29**: 0x3 (corrupted frame pointer)
-- **x26/x28**: 0xd00dfeed (memory poisoning pattern)
+- **ESR**: 0x02000000 (Synchronous External Abort)
+- **Overwrite value**: 0xFFFFFFFFC900A8 (physical 0x3AF610A8)
+- **Stack FP at entry**: 0x3AF4C380
+- **Stack FP at exit**: 0x3AF4C380 (unchanged!)
+- **Saved LR (static)**: 0xFFFF000000308878 (original return address, preserved in static!)
 
 ### Key Observations
-1. 0x3af610a8 is NOT in kernel binary, initramfs, or valid code region
-2. x29=0x3 is NOT random — specific small value suggesting deliberate write
-3. x26/x28=0xd00dfeed is "dead feed" poisoning pattern from early allocator
-4. With ALL bypasses active, crash STILL occurs at function return point
-5. The crash is at the `ret` instruction itself, not inside the function body
+1. FP register is correct — this is NOT a stack overflow or frame corruption
+2. Static variables are fine — the memory zeroing hypothesis is WRONG
+3. The overwrite is TARGETED to the specific stack slot of the saved x30
+4. The overwrite value (0xFFFFFFFFC900A8) is consistent across boots
+5. The crash is a Synchronous External Abort (bus error), not a page fault
+6. The `ret` instruction tries to fetch from 0xFFFFFFFFC900A8 which is unmapped
 
-### Hypothesis
-**Stack corruption** or **code page mapping corruption** happening during kernel bootstrap. The corrupted frame pointer (x29=0x3) is saved on the stack, and when the function tries to return (`ret`), it loads this corrupted value into PC.
-
-## Files Modified (current state)
-- `ostd/src/arch/aarch64/mm/mod.rs` - `frame_paddr_base()` calls `dram_base()`
-- `ostd/src/mm/frame/meta.rs` - Debug markers, slot formula, path selection
-- `ostd/src/mm/frame/allocator.rs` - Early return bypass in `alloc_frame_with`
-- `ostd/src/arch/aarch64/irq.rs` - `disable_local`/`enable_local` made no-ops
-- `osdk/deps/frame-allocator/src/lib.rs` - `alloc` returns `None` early
-- `osdk/deps/frame-allocator/src/pools/mod.rs` - `add_free_memory` no-op
-
-## Remaining Work
-
-### Immediate: Investigate Stack Corruption
-1. **Check `init_after_heap()`**: Located at `ostd/src/boot/mod.rs:147`. Sets up `INFO` (boot info) — might corrupt stack
-2. **Check `kspace::init_kernel_page_table`**: Builds page tables using `meta_pages` — could corrupt memory
-3. **Add stack canary**: Write known pattern before/after return address slot, check if corrupted
-4. **Check `boot_stack_top`**: Verify stack pointer at function entry
-
-### After Crash Fixed
-1. Remove all bypasses one by one
-2. Fix `add_free_memory` properly
-3. Fix `alloc_frame_with` properly
-4. Remove `disable_local`/`enable_local` no-ops
-5. Boot to shell prompt
+### New Hypothesis
+**Stack buffer overflow in a called function** — some function called from within `alloc_frame_with` (or the function body itself) has a stack buffer that overlaps with the saved x30 slot. The only functions called are `pl011_puts()` and `Layout::from_size_align()`. Since `pl011_puts` is heavily used elsewhere without issues, the most likely culprit is the compiler's epilogue code generation for `return Err(Error::NoMemory)` when the return type (`Result<Frame<M>, Error>`) involves dropping the `_metadata: M` parameter.
 
 ## Next Action
-Investigate `init_after_heap()` and `kspace::init_kernel_page_table()` for stack corruption. These are the two functions that execute between "kernel works" and "crash occurs".
+Investigate the epilogue/drop behavior: when `alloc_frame_with` returns `Err(NoMemory)`, the compiler needs to drop `_metadata: M` (the uninitialized frame metadata) and the partially-constructed `Frame<M>` in the `Err` path. This drop code might corrupt the stack. Try:
+1. Making the function `#[inline(never)]` to force a clean stack frame
+2. Explicitly dropping `_metadata` before the return
+3. Checking if `core::mem::forget(_metadata)` before returning changes behavior
 
-## Key Files
-- `ostd/src/boot/mod.rs:147` - `init_after_heap()`
-- `ostd/src/mm/kspace/mod.rs` - `kspace::init_kernel_page_table()`
-- `ostd/src/mm/frame/meta.rs` - metadata initialization
-- `ostd/src/mm/frame/allocator.rs` - frame allocation
-- `osdk/deps/frame-allocator/src/lib.rs` - FrameAllocator implementation
+## Files Modified (current state)
+- `ostd/src/mm/frame/allocator.rs` - Stack canary with shared statics + bypass
+- `ostd/src/arch/aarch64/boot/mod.rs` - pl011_puts_hex diagnostic function
+- `tools/serial_mcp_server.py` - MCP serial reader server
+- `tools/deploy_mcp_server.py` - MCP deploy server
 
 ## Git Log (recent)
 ```
+82bc112c aarch64/diag: fix stack canary — use shared statics so entry+exit blocks compare same variables
+db7b7106 aarch64/diag: fix stack canary — use pl011_puts with utf8 decimal conversion instead of pl011_puts_hex
+7648bcb7 aarch64/diag: fix inline asm — use direct register w3 instead of named operand with explicit reg
+cd4846ed aarch64/diag: fix scope error in stack canary — use single static pair for both entry and exit
+c10ac3e4 aarch64/diag: add stack canary and pl011_puts_hex to alloc_frame_with
 52b7215d aarch64: bypass alloc_frame_with — crash at function return persists
 745a155c aarch64: session 2026-07-21 final state — kernel reaches kspace::init
-d0e1abbb aarch64: bypass FrameAllocator::alloc (crash persists in virtual call)
-15d5841f aarch64: make enable_local no-op (no effect, crash persists at return)
-aaabcea6 aarch64: confirmed alloc return crash (no progress, same crash location)
-8c45d3c8 aarch64: bypass pools::add_free_memory — kernel reaches init_after_heap and kspace::init
-92611588 aarch64/rpi3: strip debug markers from get_slot/get_from_unused — meta::init() now completes
-2e682946 aarch64/meta: fix mark_unusable_ranges — use EARLY_INFO instead of boot_info()
-29d50912 aarch64/rpi3: BREAKTHROUGH — meta::init() completes with mark_unusable_ranges no-op
-ad728eb4 aarch64/meta: add early_alloc region debug markers to pinpoint crash location
 ```
