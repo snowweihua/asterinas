@@ -41,7 +41,7 @@ pub(crate) mod kvirt_area;
 use core::ops::Range;
 
 use log::info;
-use spin::Once;
+use crate::boot::SimpleOnce as Once;
 #[cfg(ktest)]
 mod test;
 
@@ -193,7 +193,11 @@ pub fn init_kernel_page_table(meta_pages: Segment<MetaPageMeta>) {
     unsafe { crate::arch::boot::pl011_puts(b"[kspace.Y] after disable_preempt\n"); }
 
     // In LoongArch64, we don't need to do linear mappings for the kernel because of DMW0.
-    #[cfg(not(target_arch = "loongarch64"))]
+    // On AArch64, the boot page table already has linear mapping entries.
+    #[cfg(all(
+        not(target_arch = "loongarch64"),
+        not(target_arch = "aarch64")
+    ))]
     // Do linear mappings for the kernel.
     {
         #[cfg(target_arch = "aarch64")]
@@ -215,10 +219,14 @@ pub fn init_kernel_page_table(meta_pages: Segment<MetaPageMeta>) {
         }
     }
 
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(target_arch = "aarch64", target_arch = "never"))]
     unsafe { crate::arch::boot::pl011_puts(b"[kspace.c] before meta mapping\n"); }
 
     // Map the metadata pages.
+    // On AArch64, the metadata is already accessible through the linear mapping
+    // (paddr_to_vaddr), so this extra mapping at FRAME_METADATA_RANGE is optional.
+    // Skip it to avoid requiring page table allocations for L4 slots 448+.
+    #[cfg(not(target_arch = "aarch64"))]
     {
         let start_va = mapping::frame_to_meta::<PagingConsts>(crate::arch::mm::frame_paddr_base());
         let from = start_va..start_va + meta_pages.size();
