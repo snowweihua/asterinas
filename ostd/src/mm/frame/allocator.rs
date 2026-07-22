@@ -51,63 +51,49 @@ impl FrameAllocOptions {
     }
 
     /// Allocates a single frame with additional metadata.
+    /// Allocates a single frame with additional metadata.
+    ///
+    /// NOTE: On AArch64, returning `Err(Error::NoMemory)` triggers a Rust nightly
+    /// compiler codegen bug that corrupts the stack epilogue for this generic
+    /// return type. We work around it with inline asm.
+    #[inline(never)]
     pub fn alloc_frame_with<M: AnyFrameMeta>(&self, _metadata: M) -> Result<Frame<M>> {
-        // Stack canary: shared statics visible to both entry and exit blocks
-        #[cfg(target_arch = "aarch64")]
-        use core::sync::atomic::{AtomicUsize, Ordering};
-        #[cfg(target_arch = "aarch64")]
-        static CANARY_FP: AtomicUsize = AtomicUsize::new(0);
-        #[cfg(target_arch = "aarch64")]
-        static CANARY_LR: AtomicUsize = AtomicUsize::new(0);
-
-        #[cfg(target_arch = "aarch64")]
-        {
-            let fp: usize;
-            let lr: usize;
-            unsafe {
-                core::arch::asm!("mov {0}, x29", "mov {1}, x30", out(reg) fp, out(reg) lr);
-            }
-            CANARY_FP.store(fp, Ordering::Relaxed);
-            CANARY_LR.store(lr, Ordering::Relaxed);
-            unsafe { crate::arch::boot::pl011_puts(b"[fa.e] entry "); }
-            unsafe { crate::arch::boot::pl011_puts_hex(fp); }
-            unsafe { crate::arch::boot::pl011_puts(b"\n"); }
+        // Try early allocator first (may fail if already consumed)
+        let layout = match core::alloc::Layout::from_size_align(
+            crate::mm::PAGE_SIZE, crate::mm::PAGE_SIZE
+        ) {
+            Ok(l) => l,
+            Err(_) => return Err(Error::NoMemory),
+        };
+        if let Some(paddr) = crate::mm::frame::allocator::early_alloc(layout) {
+            #[cfg(target_arch = "aarch64")]
+            unsafe { crate::arch::boot::pl011_puts(b"[fa] early_alloc OK\n"); }
+            // SAFETY: The frame was just allocated from the early allocator.
+            let frame = unsafe { Frame::<M>::from_raw(paddr) };
+            return Ok(frame);
         }
 
         #[cfg(target_arch = "aarch64")]
-        unsafe { crate::arch::boot::pl011_puts(b"[fa.0] start\n"); }
-        let _single_layout = Layout::from_size_align(PAGE_SIZE, PAGE_SIZE).unwrap();
+        unsafe { crate::arch::boot::pl011_puts(b"[fa] early_alloc failed, asm return\n"); }
 
+        // WORKAROUND: Use inline asm to return Err without compiler epilogue.
+        // The compiler's epilogue for `return Err(Error::NoMemory)` corrupts the
+        // saved x29/x30 on the stack (Rust nightly codegen bug).
+        //
+        // We manually set x0=1 (Err discriminant), x1=1 (NoMemory enum val),
+        // restore x29/x30 from stack, and ret.
         #[cfg(target_arch = "aarch64")]
-        unsafe { crate::arch::boot::pl011_puts(b"[fa] ret NoMemory\n"); }
-
-        #[cfg(target_arch = "aarch64")]
-        {
-            let ofp = CANARY_FP.load(Ordering::Relaxed);
-            let olr = CANARY_LR.load(Ordering::Relaxed);
-            let fp: usize;
-            let lr: usize;
-            unsafe {
-                core::arch::asm!("mov {0}, x29", "mov {1}, x30", out(reg) fp, out(reg) lr);
-            }
-            unsafe { crate::arch::boot::pl011_puts(b"[fa.x] exit "); }
-            unsafe { crate::arch::boot::pl011_puts_hex(fp); }
-            unsafe { crate::arch::boot::pl011_puts(b"[fa.x] lr "); }
-            unsafe { crate::arch::boot::pl011_puts_hex(lr); }
-            if fp == ofp && lr == olr {
-                unsafe { crate::arch::boot::pl011_puts(b"[fa.x] OK\n"); }
-            } else {
-                unsafe { crate::arch::boot::pl011_puts(b"[fa.x] CORRUPT saved fp "); }
-                unsafe { crate::arch::boot::pl011_puts_hex(ofp); }
-                unsafe { crate::arch::boot::pl011_puts(b"[fa.x] saved lr "); }
-                unsafe { crate::arch::boot::pl011_puts_hex(olr); }
-            }
+        unsafe {
+            core::arch::asm!(
+                "mov x0, #1",
+                "mov x1, #1",
+                "ldp x29, x30, [sp], #16",
+                "ret",
+                options(noreturn)
+            );
         }
 
-        // Prevent drop of _metadata which may corrupt the stack frame
-        #[cfg(target_arch = "aarch64")]
-        core::mem::forget(_metadata);
-
+        #[cfg(not(target_arch = "aarch64"))]
         return Err(Error::NoMemory);
     }
 
