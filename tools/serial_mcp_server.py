@@ -1,170 +1,87 @@
 #!/usr/bin/env python3
-"""MCP HTTP server that reads from /dev/ttyUSB0.
+"""MCP HTTP server for reading RPi3 serial console.
 
 Run in your WSL2 terminal where /dev/ttyUSB0 is accessible:
   python3 tools/serial_mcp_server.py
 
-The server listens on http://localhost:8910 for MCP HTTP POST requests.
-
-Install: pip install pyserial
+Listens on http://localhost:8910
+Tool: serial_read — reads buffered data from RPi3 serial console.
 """
 
-import json
-import sys
-import os
-import time
-import threading
+import json, sys, os, time, threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from urllib.parse import urlparse
 
 SERIAL_DEVICE = "/dev/ttyUSB0"
 BAUD = 115200
-HOST = "localhost"
-PORT = 8910
+HOST, PORT = "localhost", 8910
 
-# Global buffer
-serial_buffer = []
-buffer_lock = threading.Lock()
-reader_thread = None
-stop_event = threading.Event()
-initialized = False
+buf, lock = [], threading.Lock()
+stop = threading.Event()
 
-def serial_reader():
-    import serial as pyserial
+def reader():
+    import serial
     try:
-        ser = pyserial.Serial(SERIAL_DEVICE, BAUD, timeout=0.1)
+        ser = serial.Serial(SERIAL_DEVICE, BAUD, timeout=0.1)
         ser.flushInput()
-        with buffer_lock:
-            serial_buffer.append(b"[Serial reader started]\n")
-        while not stop_event.is_set():
+        lock.acquire(); buf.append(b"[Serial reader started]\n"); lock.release()
+        while not stop.is_set():
             try:
                 if ser.in_waiting > 0:
-                    data = ser.read(ser.in_waiting)
-                    with buffer_lock:
-                        serial_buffer.append(data)
-            except Exception:
-                time.sleep(0.1)
-    except FileNotFoundError:
-        with buffer_lock:
-            serial_buffer.append(f"ERROR: {SERIAL_DEVICE} not found\n".encode())
+                    lock.acquire(); buf.append(ser.read(ser.in_waiting)); lock.release()
+            except: time.sleep(0.1)
     except Exception as e:
-        with buffer_lock:
-            serial_buffer.append(f"ERROR: {e}\n".encode())
+        lock.acquire(); buf.append(f"ERROR: {e}\n".encode()); lock.release()
 
 def read_serial(timeout_ms=5000, clear=False):
     if clear:
-        with buffer_lock:
-            serial_buffer.clear()
-    
-    initial_len = len(serial_buffer)
-    waited = 0
+        lock.acquire(); buf.clear(); lock.release()
+    n = len(buf); waited = 0
     while waited < timeout_ms:
-        with buffer_lock:
-            if len(serial_buffer) > initial_len:
-                break
-        time.sleep(0.05)
-        waited += 50
-    
-    with buffer_lock:
-        data = b"".join(serial_buffer)
-        serial_buffer.clear()
+        lock.acquire(); ok = len(buf) > n; lock.release()
+        if ok: break
+        time.sleep(0.05); waited += 50
+    lock.acquire(); data = b"".join(buf); buf.clear(); lock.release()
     return data
 
-class MCPHandler(BaseHTTPRequestHandler):
+class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
-        content_length = int(self.headers.get('Content-Length', 0))
-        body = self.rfile.read(content_length)
-        
-        try:
-            request = json.loads(body)
-        except json.JSONDecodeError:
-            self.send_error(400, "Invalid JSON")
-            return
-        
-        req_id = request.get("id")
-        method = request.get("method", "")
-        params = request.get("params", {})
-        
-        response = self.handle_mcp(method, params, req_id)
-        if response is not None:
+        body = self.rfile.read(int(self.headers.get('Content-Length', 0)))
+        try: req = json.loads(body)
+        except: self.send_error(400); return
+        rid, method, params = req.get("id"), req.get("method",""), req.get("params",{})
+        resp = self._mcp_dispatch(method, params, rid)
+        if resp:
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
-            self.wfile.write(json.dumps(response).encode())
+            self.wfile.write(json.dumps(resp).encode())
         else:
-            self.send_response(202)  # Accepted (for notifications)
-            self.end_headers()
-    
-    def handle_mcp(self, method, params, req_id):
+            self.send_response(202); self.end_headers()
+
+    def _mcp_dispatch(self, method, params, rid):
         if method == "initialize":
-            return {
-                "jsonrpc": "2.0", "id": req_id,
-                "result": {
-                    "protocolVersion": "2024-11-05",
-                    "capabilities": {"tools": {"listChanged": False}},
-                    "serverInfo": {"name": "serial-mcp", "version": "1.0.0"}
-                }
-            }
-        elif method == "notifications/initialized":
-            global initialized
-            initialized = True
-            return None
-        elif method == "tools/list":
-            return {
-                "jsonrpc": "2.0", "id": req_id,
-                "result": {
-                    "tools": [{
-                        "name": "serial_read",
-                        "description": "Read accumulated data from RPi3 serial console (buffered since last call).",
-                        "inputSchema": {
-                            "type": "object",
-                            "properties": {
-                                "timeout_ms": {"type": "integer", "description": "Wait ms for new data (default 5000, 0=immediate)", "default": 5000},
-                                "clear_buffer": {"type": "boolean", "description": "Clear stale data before waiting", "default": False}
-                            }
-                        }
-                    }]
-                }
-            }
-        elif method == "tools/call":
-            tool = params.get("name", "")
-            args = params.get("arguments", {})
+            return {"jsonrpc":"2.0","id":rid,"result":{"protocolVersion":"2024-11-05","capabilities":{"tools":{"listChanged":False}},"serverInfo":{"name":"serial-mcp","version":"1.0.0"}}}
+        if method == "notifications/initialized": return None
+        if method == "tools/list":
+            return {"jsonrpc":"2.0","id":rid,"result":{"tools":[{
+                "name":"serial_read",
+                "description":"Read accumulated data from RPi3 serial console (buffered since last call).",
+                "inputSchema":{"type":"object","properties":{
+                    "timeout_ms":{"type":"integer","default":5000},
+                    "clear_buffer":{"type":"boolean","default":False}
+                }}
+            }]}}
+        if method == "tools/call":
+            tool = params.get("name","")
+            args = params.get("arguments",{})
             if tool == "serial_read":
-                data = read_serial(args.get("timeout_ms", 5000), args.get("clear_buffer", False))
-                text = data.decode("utf-8", errors="replace")
-                return {"jsonrpc": "2.0", "id": req_id, "result": {"content": [{"type": "text", "text": text}]}}
-            return {"jsonrpc": "2.0", "id": req_id, "error": {"code": -32601, "message": f"Unknown tool: {tool}"}}
-        else:
-            return {"jsonrpc": "2.0", "id": req_id, "error": {"code": -32601, "message": f"Unknown method: {method}"}}
-    
-    def log_message(self, format, *args):
-        sys.stderr.write(f"[MCP] {args[0]} {args[1]} {args[2]}\n")
+                data = read_serial(args.get("timeout_ms",5000), args.get("clear_buffer",False))
+                return {"jsonrpc":"2.0","id":rid,"result":{"content":[{"type":"text","text":data.decode("utf-8",errors="replace")}]}}
+            return {"jsonrpc":"2.0","id":rid,"error":{"code":-32601,"message":f"Unknown tool: {tool}"}}
+        return {"jsonrpc":"2.0","id":rid,"error":{"code":-32601,"message":f"Unknown method: {method}"}}
+    def log_message(self, *a): pass
 
-def main():
-    # Install pyserial if needed
-    try:
-        import serial
-    except ImportError:
-        print("Installing pyserial...", file=sys.stderr)
-        os.system(f"{sys.executable} -m pip install pyserial 2>/dev/null")
-    
-    # Start serial reader
-    t = threading.Thread(target=serial_reader, daemon=True)
-    t.start()
-    time.sleep(0.5)
-    
-    # Start HTTP server
-    server = HTTPServer((HOST, PORT), MCPHandler)
-    print(f"\n=== Serial MCP Server running on http://{HOST}:{PORT} ===", file=sys.stderr)
-    print(f"=== Reading from {SERIAL_DEVICE} ===", file=sys.stderr)
-    print("=== Press Ctrl+C to stop ===", file=sys.stderr)
-    
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        print("\nShutting down...", file=sys.stderr)
-        stop_event.set()
-        server.shutdown()
-
-if __name__ == "__main__":
-    main()
+t = threading.Thread(target=reader, daemon=True); t.start(); time.sleep(0.5)
+print(f"\n=== Serial MCP on http://{HOST}:{PORT} ===", file=sys.stderr)
+try: HTTPServer((HOST, PORT), Handler).serve_forever()
+except KeyboardInterrupt: stop.set()
