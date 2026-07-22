@@ -45,10 +45,16 @@ impl<T> SimpleOnce<T> {
     }
 
     pub fn call_once<F: FnOnce() -> T>(&self, f: F) -> &T {
-        if self.initialized.load(Ordering::Acquire) == 0 {
+        // WORKAROUND (AArch64 RPi3): Use Relaxed instead of Acquire.
+        // AtomicU8::load(Ordering::Acquire) compiles to LDARB on AArch64,
+        // which on Cortex-A53 can trigger external aborts when the page-table
+        // entry covering the addressed memory is a block entry that spans both
+        // DRAM and peripheral MMIO.  During single-core boot there is no
+        // concurrent writer, so ordering guarantees are irrelevant.
+        if self.initialized.load(Ordering::Relaxed) == 0 {
             unsafe {
                 *self.value.get() = Some(f());
-                self.initialized.store(1, Ordering::Release);
+                self.initialized.store(1, Ordering::Relaxed);
             }
         }
         unsafe { (*self.value.get()).as_ref().unwrap_unchecked() }
