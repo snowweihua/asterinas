@@ -277,6 +277,14 @@ pub fn init_kernel_page_table(meta_pages: Segment<MetaPageMeta>) {
         }
     }
 
+    // WORKAROUND (AArch64 RPi3): Bypass SimpleOnce::call_once which does
+    // AtomicU8::load(Ordering::Acquire) — on Cortex-A53 this compiles to LDARB
+    // which can trigger external aborts when the page-table entry is a 1 GiB
+    // block that covers both DRAM and the peripheral MMIO region.
+    // Single-core boot guarantees no race.
+    #[cfg(target_arch = "aarch64")]
+    unsafe { KERNEL_PAGE_TABLE.store_direct(kpt); }
+    #[cfg(not(target_arch = "aarch64"))]
     KERNEL_PAGE_TABLE.call_once(|| kpt);
 }
 

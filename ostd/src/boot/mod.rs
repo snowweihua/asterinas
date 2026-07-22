@@ -54,6 +54,28 @@ impl<T> SimpleOnce<T> {
         unsafe { (*self.value.get()).as_ref().unwrap_unchecked() }
     }
 
+    /// Directly stores a value WITHOUT atomic load/acquire.
+    ///
+    /// This is a workaround for Cortex-A53 on RPi3 where `AtomicU8::load`
+    /// (compiled to LDARB) can trigger instruction-fetch external aborts.
+    /// The underlying mechanism appears to be a hardware interaction between
+    /// acquire semantics and the 1 GiB block entry that spans both DRAM and
+    /// the peripheral MMIO region in the boot page table.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure single‑threaded execution (no concurrent
+    /// `call_once` or `store_direct` calls).  Safe during single‑core boot.
+    pub unsafe fn store_direct(&self, val: T) -> &T {
+        unsafe {
+            *self.value.get() = Some(val);
+            // Use a bare store (not atomic Release) — the caller is
+            // single‑threaded, so ordering guarantees are meaningless here.
+            self.initialized.store(1, Ordering::Relaxed);
+        }
+        unsafe { (*self.value.get()).as_ref().unwrap_unchecked() }
+    }
+
     pub fn is_completed(&self) -> bool {
         self.initialized.load(Ordering::Acquire) == 1
     }
