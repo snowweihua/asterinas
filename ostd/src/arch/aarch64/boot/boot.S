@@ -275,13 +275,20 @@ jump_to_main:
     adr     x10, boot_l3pt_low
     str     x9,  [x10]
 
-    /* boot_l3pt_high[0] = PTE_NORMAL_1G | DRAM_BASE
-     *   QEMU: 0x705 | 0x40000000 = 0x40000705 (maps VA[0-1GB) → PA 0x40000000)
-     *   RPi3: 0x705 | 0x00000000 = 0x00000705 (maps VA[0-1GB) → PA 0x00000000) */
-    ldr     x9,  =0x705             /* PTE_NORMAL_1G flags */
-    add     x9,  x9,  x21           /* | DRAM_BASE */
-    adr     x10, boot_l3pt_high
-    str     x9,  [x10]
+	/* boot_l3pt_high[0] = runtime PA(boot_l2pt_gb0) | MM_TYPE_TABLE
+	 *
+	 * Use a TABLE descriptor pointing to boot_l2pt_gb0 instead of a 1 GiB
+	 * block descriptor.  boot_l2pt_gb0 maps the first 1 GB with per‑2 MiB
+	 * attributes (Normal for DRAM, Device for the peripheral window at
+	 * 0x3F000000+).  On Cortex‑A53 a 1 GiB block entry spanning both DRAM
+	 * and Device memory causes speculative instruction fetches to hit the
+	 * peripheral bus, which can corrupt x30 (return address) and trigger
+	 * external aborts — the root cause of the persistent "Synchronous
+	 * Abort" at 0x3AF610A8. */
+	adr     x9,  boot_l2pt_gb0
+	add     x9,  x9,  #MM_TYPE_TABLE
+	adr     x10, boot_l3pt_high
+	str     x9,  [x10]
 
     /* On RPi3 (DRAM_BASE == 0), only the first 1 GB of the linear map
      * (PA 0x00000000-0x3FFFFFFF) is valid.  Slots 1-3 of boot_l3pt_linear
@@ -385,10 +392,10 @@ boot_l3pt_low:
     .quad ( PTE_NORMAL_1G | (3 << 30) )     /* 0xC0000000–0xFFFFFFFF */
     .zero 8 * (512 - 4)
 
-/* L3 (PUD) for the kernel high half: maps to DRAM (PA + 0x40000000) */
+/* L3 (PUD) for the kernel high half: maps to DRAM via boot_l2pt_gb0 (per-2MB) */
 .balign 4096
 boot_l3pt_high:
-    .quad ( PTE_NORMAL_1G | (1 << 30) )     /* VA[0–1GB)   → PA 0x40000000–0x7FFFFFFF (DRAM) */
+    .quad boot_l2pt_gb0 + MM_TYPE_TABLE     /* VA[0–1GB)   → via L2 table  (DRAM + peripherals) */
     .quad ( PTE_NORMAL_1G | (2 << 30) )     /* VA[1–2GB)   → PA 0x80000000–0xBFFFFFFF */
     .quad ( PTE_NORMAL_1G | (3 << 30) )     /* VA[2–3GB)   → PA 0xC0000000–0xFFFFFFFF */
     .zero 8 * (512 - 3)
