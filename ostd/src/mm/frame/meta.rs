@@ -337,13 +337,18 @@ impl MetaSlot {
     pub(super) fn frame_paddr(&self) -> Paddr {
         let frame_paddr_base = crate::arch::mm::frame_paddr_base();
         let meta_va = self as *const MetaSlot as usize;
-        // If frame_paddr_base is zero, DRAM starts at 0 and FRAME_METADATA_RANGE
-        // base is also 0, so meta_to_frame always applies.
-        // If frame_paddr_base is non-zero (e.g., AArch64 where DRAM starts at 0x4000_0000),
-        // MetaSlot pointers from bootstrap time are physical addresses (low addresses),
-        // while post-bootstrap VAs are in FRAME_METADATA_RANGE (high kernel addresses).
-        // Use the VA range check to decide which calculation to use.
-        if frame_paddr_base == 0 || meta_va >= crate::mm::kspace::FRAME_METADATA_RANGE.start {
+        // If we are NOT in bootstrap context, MetaSlot pointers are always VAs
+        // in FRAME_METADATA_RANGE, so meta_to_frame applies regardless of
+        // frame_paddr_base (DRAM base).
+        //
+        // During bootstrap, MetaSlot pointers returned by get_slot() are raw
+        // physical addresses (even when frame_paddr_base == 0).  Using
+        // meta_to_frame on those PAs underflows because
+        // FRAME_METADATA_RANGE.start is a high kernel VA (0xFFFF_E*),
+        // producing a garbage frame PA — which then causes a synchronous
+        // abort when the MMU tries to access the metadata lock in the MMIO
+        // region.
+        if !crate::IN_BOOTSTRAP_CONTEXT.load(Ordering::Relaxed) {
             return mapping::meta_to_frame::<PagingConsts>(meta_va);
         }
 

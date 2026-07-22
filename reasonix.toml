@@ -1,6 +1,6 @@
 language = "en"
 [permissions]
-allow = ["Edit", "Bash(cd:*)", "Bash(cat:*)", "Bash(git add:*)", "Bash(git commit:*)", "Bash(cd /home/snow/asterinas && git add -A && git commit -m:*)", "Bash(cd /home/snow/asterinas && docker run:*)", "Bash(curl -s:*)", "kill_shell", "Bash(sed -i:*)"]
+allow = ["Edit", "Bash(cd:*)", "Bash(cat:*)", "Bash(git add:*)", "Bash(git commit:*)", "Bash(cd /home/snow/asterinas && git add -A && git commit -m:*)", "Bash(cd /home/snow/asterinas && docker run:*)", "Bash(curl -s:*)", "kill_shell", "Bash(sed -i:*)", "install_source"]
 [ui]
 show_reasoning = true
 
