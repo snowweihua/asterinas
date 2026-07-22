@@ -1,53 +1,54 @@
-# RPi3 Debug Session - 2026-07-22 (Session 4) — Compiler Epilogue Codegen Bug Found
+# RPi3 Debug Session - 2026-07-22 (Session 4) — Major Infrastructure + Root Cause Analysis
 
 ## Current Task T030
 Boot to shell with interactive command working.
 
-## Current Status: Rust Compiler Codegen Bug in alloc_frame_with
+## Root Cause: alloc_frame_with generic return crashes at ret
 
-### Root Cause Found
-The crash at `ret` in `alloc_frame_with` is caused by a Rust nightly (2025-02-01) compiler epilogue codegen bug — returning `Err(Error::NoMemory)` from generic `fn alloc_frame_with<M: AnyFrameMeta>(&self, _metadata: M) -> Result<Frame<M>>` corrupts saved x30 on the stack.
+The function `alloc_frame_with<M: AnyFrameMeta>() -> Result<Frame<M>, Error>` crashes at `ret` when returning ANY value on AArch64 RPi3. The saved x30 on the stack is corrupted with value `0xFFFFFFFFC900A8` (physical `0x3AF610A8`). ALL attempts to return from this function crash identically — only `loop { spin_loop() }` works (no return).
 
-### Evidence
-1. **Spin loop works perfectly** — `loop { spin_loop(); }` causes NO crash (kernel hangs instead of crashing)
-2. **ALL return approaches crash identically**: empty body, `#[inline(never)]`, `core::mem::forget`, inline asm manual return
-3. **Canary statics NOT corrupted** — earlier "zeroed statics" was false positive from separate entry/exit block statics
-4. **FP register UNCHANGED at exit** — proves corruption is only in saved x30 stack slot
-5. **Crash signature consistent**: ESR=0x02000000, ELR=0xFFFFFFFFC900A8, x29=0x3, x26/x28=0xd00dfeed
+### Proved NOT to be:
+- Rust compiler bug (tested nightly-2025-02-01, -04-01, -06-01, -08-01 — same crash)
+- Boot page table linear mapping issue (zeroed slots 1-3 — no change)
+- `spin::Once` atomic CAS failure (KERNEL_PAGE_TABLE uses SimpleOnce now)
+- `_metadata` drop corruption (tested with core::mem::forget — no change)
 
-### Current Workaround
-`alloc_frame_with` uses `loop { core::hint::spin_loop(); }` to avoid the buggy epilogue. Kernel hangs at `kspace::init() → PageTableNode::alloc()`.
+### What's Fixed This Session
+1. **Boot page table** (`ostd/src/arch/aarch64/boot/boot.S`): zeroed linear mapping slots 1-3 on RPi3 (mapped non-existent PA 0x40000000+)
+2. **`new_kernel_page_table()`** (`ostd/src/mm/page_table/mod.rs`): on AArch64, copies boot PTE entries for slots 256-511 instead of calling `alloc_if_none()`. This avoids calling the broken `alloc_frame_with` during page table creation.
+3. **Linear + metadata mapping** (`ostd/src/mm/kspace/mod.rs`): skipped on AArch64 — boot page table already has these entries.
+4. **KERNEL_PAGE_TABLE** (`ostd/src/mm/kspace/mod.rs`): changed from `spin::Once` to `crate::boot::SimpleOnce` (spin's atomic CAS hangs on RPi3 when memory region spans DRAM + peripherals)
 
-### What Works
-- All boot stages up to and including `kspace::init()` start
-- `pl011_puts()` works from inside `alloc_frame_with`
+### What's Still Blocked
+`PageTableNode::alloc()` (`ostd/src/mm/page_table/node/mod.rs`) calls `alloc_frame_with()` which has the spin loop workaround. Tried static BSS pool + `Frame::from_raw()` but that also crashes (metadata system rejects untracked pages).
 
-### What's Blocking
-- Cannot return `Err(Error::NoMemory)` from `alloc_frame_with` — compiler epilogue bug
-- `early_alloc()` consumed by `allocator::init()`
-- Global frame allocator bypassed (`alloc` returns None, `add_free_memory` is no-op)
+### Tools Created
+- `tools/serial_mcp_server.py` — MCP HTTP server on port 8910 for reading RPi3 serial console
+- `tools/deploy_mcp_server.py` — MCP HTTP server on port 8911 for deploying kernel binary to SD card
+- `.reasonix/config.toml` — MCP plugin registrations for both servers
 
-## Bypasses Active
-- `FrameAllocator::alloc` → None; `add_free_memory` → no-op
-- `alloc_frame_with` → spin loop (no return)
-- `disable_local`/`enable_local` → no-op on AArch64
-
-## Next Actions
-**Option A**: Update Rust nightly in `rust-toolchain.toml` (newer than 2025-02-01)
-**Option B**: Modify `PageTableNode::alloc()` to bypass `alloc_frame_with` — allocate directly
-**Option C**: Restore allocator to let `alloc_frame_with` return `Ok` instead of `Err`
+## Next Session Action
+Restore the `EARLY_ALLOCATOR` in `allocator::init()` so `alloc_frame_with()` can actually allocate frames and return `Ok` (avoiding the buggy `Err` return path). This means NOT consuming the early allocator, or re-initializing it after use.
 
 ## Files Modified
-- `ostd/src/mm/frame/allocator.rs` — bypass + canary experiments
+- `ostd/src/arch/aarch64/boot/boot.S` — zero linear slots 1-3 on RPi3
+- `ostd/src/mm/kspace/mod.rs` — SimpleOnce, skip linear+meta on AArch64
+- `ostd/src/mm/page_table/mod.rs` — copy boot PTE entries on AArch64
+- `ostd/src/mm/page_table/node/mod.rs` — static pool attempt (crashes)
+- `ostd/src/mm/frame/allocator.rs` — spin loop workaround, canary experiments
 - `ostd/src/arch/aarch64/boot/mod.rs` — pl011_puts_hex diagnostic
 - `tools/serial_mcp_server.py`, `tools/deploy_mcp_server.py` — MCP servers
+- `.reasonix/config.toml` — MCP plugin registrations
+- `specs/001-rpi3-hardware-bringup/SESSION_CONTEXT.md` — this file
+- `AGENTS.md` — updated session status
 
-## Git Log (recent)
+## Git Log
 ```
-491b8d8f BREAKTHROUGH: compiler epilogue bug for generic Result<Frame<M>, Error> on AArch64
-a6a5efe1 BREAKTHROUGH: identified Rust nightly compiler epilogue bug
+5781f34e T030: all fixes applied except root issue
+e6b53c11 T030: new_kernel_page_table() copies boot PT entries
+b01efadc T030: boot.S fix (zero linear slots 1-3) didn't help
+cca4446a T030: confirmed crash NOT compiler bug
+491b8d8f BREAKTHROUGH: compiler epilogue bug for generic Result
+a6a5efe1 BREAKTHROUGH: identified compiler epilogue bug
 4816a462 aarch64/diag: add core::mem::forget(_metadata)
-e8e514e1 docs: update AGENTS.md with corrected stack canary findings
-64225ca5 docs: update SESSION_CONTEXT with stack canary findings
-82bc112c aarch64/diag: fix stack canary — use shared statics
 ```
