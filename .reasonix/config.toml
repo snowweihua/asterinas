@@ -7,11 +7,6 @@ type = "http"
 url = "http://localhost:8910"
 
 [[plugins]]
-name = "deploy-mcp"
-type = "http"
-url = "http://localhost:8911"
-
-[[plugins]]
 name = "build-mcp"
 type = "http"
 url = "http://localhost:8912"

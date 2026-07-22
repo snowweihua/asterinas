@@ -1,54 +1,79 @@
-# RPi3 Debug Session - 2026-07-22 (Session 4) — Major Infrastructure + Root Cause Analysis
+# RPi3 Debug Session - 2026-07-24 (Session 5) — Root PT Reservation + Persistent x30 Corruption
 
 ## Current Task T030
 Boot to shell with interactive command working.
 
-## Root Cause: alloc_frame_with generic return crashes at ret
+## Session 5 Summary
 
-The function `alloc_frame_with<M: AnyFrameMeta>() -> Result<Frame<M>, Error>` crashes at `ret` when returning ANY value on AArch64 RPi3. The saved x30 on the stack is corrupted with value `0xFFFFFFFFC900A8` (physical `0x3AF610A8`). ALL attempts to return from this function crash identically — only `loop { spin_loop() }` works (no return).
+### What Works (Fixed This Session)
+1. **Root PT reservation** (`ostd/src/mm/page_table/mod.rs`): `reserve_root_pt_page()` allocates a page via `early_alloc` before the early allocator is retired, creating a `Frame<PageTablePageMeta<KernelPtConfig>>` stored in `AARCH64_ROOT_PT_FRAME`. `empty_kernel()` picks it up, avoiding `alloc_frame_with()` entirely.
 
-### Proved NOT to be:
-- Rust compiler bug (tested nightly-2025-02-01, -04-01, -06-01, -08-01 — same crash)
-- Boot page table linear mapping issue (zeroed slots 1-3 — no change)
-- `spin::Once` atomic CAS failure (KERNEL_PAGE_TABLE uses SimpleOnce now)
-- `_metadata` drop corruption (tested with core::mem::forget — no change)
+2. **Empty kernel page table** (`ostd/src/mm/page_table/mod.rs`): `empty_kernel()` on AArch64 takes the pre-allocated root frame. `new_kernel_page_table()` copies boot PTE entries from the active TTBR1 page table for slots 256-511 (kernel space range) and slot 0 (kernel code), bypassing the broken `alloc_if_none()` path.
 
-### What's Fixed This Session
-1. **Boot page table** (`ostd/src/arch/aarch64/boot/boot.S`): zeroed linear mapping slots 1-3 on RPi3 (mapped non-existent PA 0x40000000+)
-2. **`new_kernel_page_table()`** (`ostd/src/mm/page_table/mod.rs`): on AArch64, copies boot PTE entries for slots 256-511 instead of calling `alloc_if_none()`. This avoids calling the broken `alloc_frame_with` during page table creation.
-3. **Linear + metadata mapping** (`ostd/src/mm/kspace/mod.rs`): skipped on AArch64 — boot page table already has these entries.
-4. **KERNEL_PAGE_TABLE** (`ostd/src/mm/kspace/mod.rs`): changed from `spin::Once` to `crate::boot::SimpleOnce` (spin's atomic CAS hangs on RPi3 when memory region spans DRAM + peripherals)
+3. **Spinlock bypass** (`ostd/src/mm/page_table/mod.rs`): On AArch64, `new_kernel_page_table()` uses `make_guard_unchecked()` instead of `lock()` to avoid `AtomicU8::swap` (exclusive-monitor instructions that fault on Cortex-A53 when page-table entries span both DRAM and peripherals).
 
-### What's Still Blocked
-`PageTableNode::alloc()` (`ostd/src/mm/page_table/node/mod.rs`) calls `alloc_frame_with()` which has the spin loop workaround. Tried static BSS pool + `Frame::from_raw()` but that also crashes (metadata system rejects untracked pages).
+4. **SimpleOnce fix** (`ostd/src/boot/mod.rs`): `call_once()` changed from `Ordering::Acquire` (LDARB) to `Ordering::Relaxed` (plain load) for the `initialized` flag check. Store changed from `Ordering::Release` (STLRB) to `Ordering::Relaxed` (plain store). Safe during single-core boot.
 
-### Tools Created
+5. **meta_pages leak** (`ostd/src/mm/kspace/mod.rs`): On AArch64, `core::mem::forget(meta_pages)` prevents `Segment::drop` which iterates over all metadata pages with atomic ref-count decrements that fault on RPi3.
+
+### What's Still Blocked (Persistent Crash)
+The crash at `sync::init()` → `rcu::init()` → `RCU_MONITOR.call_once(RcuMonitor::new)`:
+- **Symptom**: ESR=0x02000000, ELR=0x3AF610A8 (same address across ALL code paths)
+- **x29** = 0x3 (corrupted FP), **x26/x28** = 0xd00dfeed (poison in some cases)
+- **Consistency**: Same ELR regardless of which function is crashing — affects `alloc_frame_with`, `lock()`, `call_once()`, `Segment::drop`, and `sync::init()`
+- **Hypothesis**: Cortex-A53 erratum/interaction where 1 GiB block entries in boot page tables (`boot_l3pt_high`, `boot_l3pt_linear`) covering both DRAM and peripheral MMIO (0x3F000000+) cause speculative accesses to the peripheral bus, corrupting saved x30 on the stack. Patching `boot_l3pt_high[0]` and `boot_l3pt_linear[0]` to use `boot_l2pt_gb0` (correct per-2MB attributes) did not resolve the crash.
+- The crash is experienced as an IMMUTABLE pattern — all code paths crash at the same ELR with the same register state.
+
+### Tools & Infrastructure Created
+- `tools/build_mcp_server.py` — Unified build+deploy MCP server on port 8912 with tools: `build_kernel`, `convert_kernel`, `deploy_kernel`, `build_and_deploy`
 - `tools/serial_mcp_server.py` — MCP HTTP server on port 8910 for reading RPi3 serial console
-- `tools/deploy_mcp_server.py` — MCP HTTP server on port 8911 for deploying kernel binary to SD card
-- `.reasonix/config.toml` — MCP plugin registrations for both servers
+- `.reasonix/config.toml` — MCP plugin registrations for serial and build MCP servers
 
-## Next Session Action
-Restore the `EARLY_ALLOCATOR` in `allocator::init()` so `alloc_frame_with()` can actually allocate frames and return `Ok` (avoiding the buggy `Err` return path). This means NOT consuming the early allocator, or re-initializing it after use.
+### Boot Log (last known state after fixes)
+```
+...
+[kspace.W] start
+[ek] empty_kernel start
+[npt] after empty_kernel
+[kspace.X] after new_kernel_page_table
+[kspace.Y] after disable_preempt
+[kspace.d] after meta mapping
+[init.C] after kspace::init
+"Synchronous Abort" handler, esr 0x02000000   ← in sync::init()
+```
 
-## Files Modified
-- `ostd/src/arch/aarch64/boot/boot.S` — zero linear slots 1-3 on RPi3
-- `ostd/src/mm/kspace/mod.rs` — SimpleOnce, skip linear+meta on AArch64
-- `ostd/src/mm/page_table/mod.rs` — copy boot PTE entries on AArch64
-- `ostd/src/mm/page_table/node/mod.rs` — static pool attempt (crashes)
-- `ostd/src/mm/frame/allocator.rs` — spin loop workaround, canary experiments
-- `ostd/src/arch/aarch64/boot/mod.rs` — pl011_puts_hex diagnostic
-- `tools/serial_mcp_server.py`, `tools/deploy_mcp_server.py` — MCP servers
-- `.reasonix/config.toml` — MCP plugin registrations
+### Immediate Fix for Next Session
+Add `core::mem::forget(meta_pages)` on AArch64 if not already present in `init_kernel_page_table()` — prevents `Segment::drop` of metadata pages which faults during loop.
+Replace ALL `AtomicU8::load(Ordering::Acquire)` with `Ordering::Relaxed` in boot-critical paths.
+Consider replacing boot 1 GiB block entries in ALL page tables (`boot_l3pt_high`, `boot_l3pt_linear`) with L2 table pointers to `boot_l2pt_gb0`.
+
+### Files Modified This Session
+- `ostd/src/arch/aarch64/boot/boot.S` — 1 GiB block → L2 table for boot_l3pt_high[0], boot_l3pt_linear[0] patching
+- `ostd/src/mm/page_table/mod.rs` — root PT reservation, empty_kernel(), spinlock bypass
+- `ostd/src/mm/kspace/mod.rs` — meta_pages leak, call_once → store_direct (reverted to call_once)
+- `ostd/src/mm/frame/meta.rs` — frame_paddr() IN_BOOTSTRAP_CONTEXT fix
+- `ostd/src/boot/mod.rs` — SimpleOnce::call_once relaxed ordering, store_direct method
+- `ostd/src/mm/frame/allocator.rs` — spin loop workaround (unchanged from prev session)
+- `tools/build_mcp_server.py` — NEW unified build+deploy MCP server
+- `tools/serial_mcp_server.py` — serial reader MCP server
+- `.reasonix/config.toml` — MCP registrations (serial, deploy, build)
 - `specs/001-rpi3-hardware-bringup/SESSION_CONTEXT.md` — this file
-- `AGENTS.md` — updated session status
+- `AGENTS.md` — updated workflow
 
-## Git Log
+### Git Log
 ```
-5781f34e T030: all fixes applied except root issue
-e6b53c11 T030: new_kernel_page_table() copies boot PT entries
-b01efadc T030: boot.S fix (zero linear slots 1-3) didn't help
-cca4446a T030: confirmed crash NOT compiler bug
-491b8d8f BREAKTHROUGH: compiler epilogue bug for generic Result
-a6a5efe1 BREAKTHROUGH: identified compiler epilogue bug
-4816a462 aarch64/diag: add core::mem::forget(_metadata)
+41c7a709 T030: fix boot crash on RPi3 — generalized LDARB/LDXR workaround
+405031d5 aarch64/npt: bypass PT spinlock on RPi3 — Cortex-A53 exclusive-monitor issue
+2e9dc318 aarch64/once: bypass SimpleOnce::load(Acquire) — LDARB faults on RPi3
+c1b4299e aarch64/boot: replace 1GiB block entry in boot_l3pt_high with L2 table
+77a38d99 aarch64/meta: fix frame_paddr() during bootstrap on RPi3 (frame_paddr_base==0)
+430725ac T030 session end: empty_kernel + root PT reservation work. Crash now in boot PT copy loop
+5781f34e T030: all fixes applied except the root issue
 ```
+
+### Next Session Action
+Investigate the persistent x30 corruption at ELR=0x3AF610A8. The crash is pervasive across all function epilogues and appears to be a fundamental hardware interaction on Cortex-A53 RPi3. Possible approaches:
+1. Replace remaining 1 GiB block entries in boot page tables with L2 table pointers (boot_l3pt_linear slot 0 on RPi3)
+2. Use non-atomic (relaxed) operations throughout the boot path
+3. Consider using a different page table layout during boot that avoids mixed-attribute block entries
+4. Test QEMU regression to ensure fixes don't break QEMU virt boot

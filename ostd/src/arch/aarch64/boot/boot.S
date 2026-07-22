@@ -290,6 +290,14 @@ jump_to_main:
 	adr     x10, boot_l3pt_high
 	str     x9,  [x10]
 
+	/* boot_l3pt_linear[0] = same table descriptor (boot_l2pt_gb0) on RPi3.
+	 * QEMU keeps the static 1 GiB block for slot 0 (PA 0x00000000 not DRAM). */
+	cbz     x21, 2f          /* RPi3 only */
+	b       3f
+2:	adr     x10, boot_l3pt_linear
+	str     x9,  [x10]       /* x9 still holds boot_l2pt_gb0 | MM_TYPE_TABLE */
+3:
+
     /* On RPi3 (DRAM_BASE == 0), only the first 1 GB of the linear map
      * (PA 0x00000000-0x3FFFFFFF) is valid.  Slots 1-3 of boot_l3pt_linear
      * point to PA 0x40000000-0xFFFFFFFF which does NOT exist on RPi3.
