@@ -9,7 +9,7 @@ use alloc::collections::BTreeSet;
 
 pub use dma_coherent::DmaCoherent;
 pub use dma_stream::{DmaDirection, DmaStream};
-use spin::Once;
+use crate::boot::SimpleOnce as Once;
 
 use super::{Daddr, Paddr};
 use crate::{arch::iommu::has_dma_remapping, mm::PAGE_SIZE, sync::SpinLock};
@@ -40,11 +40,8 @@ pub fn dma_type() -> DmaType {
 pub fn init() {
     #[cfg(target_arch = "aarch64")]
     unsafe { crate::arch::boot::pl011_puts(b"[dma.init.0] start\n"); }
-    #[cfg(not(target_arch = "aarch64"))]
     DMA_MAPPING_SET.call_once(|| SpinLock::new(BTreeSet::new()));
     #[cfg(target_arch = "aarch64")]
-    unsafe { crate::arch::boot::pl011_puts(b"[dma.init.1] done (skipped on aarch64)\n"); }
-    #[cfg(not(target_arch = "aarch64"))]
     unsafe { crate::arch::boot::pl011_puts(b"[dma.init.1] done\n"); }
 }
 
