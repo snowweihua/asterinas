@@ -48,9 +48,13 @@ pub(crate) unsafe fn late_init_on_bsp() {
     unsafe { trap::init() };
     #[cfg(target_arch = "aarch64")]
     unsafe { crate::arch::boot::pl011_puts(b"[late.trap] after trap::init\n"); }
-    unsafe { gic::init_on_bsp() };
-    #[cfg(target_arch = "aarch64")]
-    unsafe { crate::arch::boot::pl011_puts(b"[late.gic] after gic::init_on_bsp\n"); }
+    if crate::arch::board::BoardType::cached() == 2 {
+        unsafe { crate::arch::boot::pl011_puts(b"[late.gic.skip] RPi3\n"); }
+    } else {
+        unsafe { gic::init_on_bsp() };
+        #[cfg(target_arch = "aarch64")]
+        unsafe { crate::arch::boot::pl011_puts(b"[late.gic] after gic::init_on_bsp\n"); }
+    }
     unsafe { crate::arch::boot::pl011_puts(b"[late.io_mem.0] before construct_io_mem_allocator_builder\n"); }
     let io_mem_builder = io::construct_io_mem_allocator_builder();
     unsafe { crate::arch::boot::pl011_puts(b"[late.io_mem.1] after construct_io_mem_allocator_builder\n"); }

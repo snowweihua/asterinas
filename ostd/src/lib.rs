@@ -176,23 +176,31 @@ unsafe fn init() {
         arch::serial::init();
     });
 
-    smp::init();
-
-    // SAFETY: This function is called only once on the BSP.
-    unsafe {
-        mm::kspace::activate_kernel_page_table();
+    if cfg!(target_arch = "aarch64") && crate::arch::board::BoardType::cached() == 2 {
+        unsafe { crate::arch::boot::pl011_puts(b"[init.5] smp::init skipped on RPi3\n"); }
+    } else {
+        smp::init();
     }
 
-    // The kernel page table is now active and the linear mapping is set up.
-    // From this point on, paddr_to_vaddr() must use LINEAR_MAPPING_BASE_VADDR,
-    // not the identity mapping. Set the flag before enabling IRQs or running
-    // any component initializers (invoke_ffi_init_funcs) so that DMA/frame
-    // allocations inside those init functions get valid kernel virtual addresses.
+    if cfg!(target_arch = "aarch64") && crate::arch::board::BoardType::cached() == 2 {
+        unsafe { crate::arch::boot::pl011_puts(b"[init.5] activate_kernel_page_table skipped on RPi3\n"); }
+    } else {
+        unsafe { crate::arch::boot::pl011_puts(b"[init.5] before activate_kernel_page_table\n"); }
+        unsafe {
+            mm::kspace::activate_kernel_page_table();
+        }
+        unsafe { crate::arch::boot::pl011_puts(b"[init.5a] after activate_kernel_page_table\n"); }
+    }
+
+    unsafe { crate::arch::boot::pl011_puts(b"[init.6] before IN_BOOTSTRAP_CONTEXT store\n"); }
     IN_BOOTSTRAP_CONTEXT.store(false, Ordering::Relaxed);
+    unsafe { crate::arch::boot::pl011_puts(b"[init.7] before enable_local_irq\n"); }
 
     arch::irq::enable_local();
+    unsafe { crate::arch::boot::pl011_puts(b"[init.8] before invoke_ffi_init_funcs\n"); }
 
     invoke_ffi_init_funcs();
+    unsafe { crate::arch::boot::pl011_puts(b"[init.9] after invoke_ffi_init_funcs\n"); }
 }
 
 /// Indicates whether the kernel is in bootstrap context.
@@ -210,7 +218,15 @@ fn invoke_ffi_init_funcs() {
     for i in 0..call_len {
         unsafe {
             let function = (__sinit_array as usize + 8 * i) as *const fn();
+            // Marker: print "init_fn.N" before each call
+            let fn_ptr = function as usize;
+            if fn_ptr != 0 {
+                crate::arch::boot::pl011_puts(b"[IFF]");
+                crate::arch::boot::pl011_puts_hex(fn_ptr);
+                crate::arch::boot::pl011_puts(b"\n");
+            }
             (*function)();
+            crate::arch::boot::pl011_puts(b"[IFF.R] after call\n");
         }
     }
 }
