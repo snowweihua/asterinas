@@ -29,6 +29,8 @@ impl RcuMonitor {
     /// This function is used to initialize a singleton instance of `RcuMonitor`.
     /// The singleton instance is globally accessible via the `RCU_MONITOR`.
     pub(super) fn new() -> Self {
+        #[cfg(target_arch = "aarch64")]
+        unsafe { crate::arch::boot::pl011_puts(b"[rcu.monitor.new.0] start\n"); }
         Self {
             is_monitoring: AtomicBool::new(false),
             state: SpinLock::new(State::new()),

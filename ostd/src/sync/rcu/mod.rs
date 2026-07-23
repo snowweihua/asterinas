@@ -519,5 +519,9 @@ pub unsafe fn finish_grace_period() {
 static RCU_MONITOR: Once<RcuMonitor> = Once::new();
 
 pub fn init() {
+    #[cfg(target_arch = "aarch64")]
+    unsafe { crate::arch::boot::pl011_puts(b"[rcu.init.0] start\n"); }
     RCU_MONITOR.call_once(RcuMonitor::new);
+    #[cfg(target_arch = "aarch64")]
+    unsafe { crate::arch::boot::pl011_puts(b"[rcu.init.1] call_once done\n"); }
 }

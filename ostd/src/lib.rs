@@ -166,10 +166,10 @@ unsafe fn init() {
     unsafe { crate::arch::boot::pl011_puts(b"[init] after sync::init\n"); }
 
     mm::dma::init();
-    unsafe { crate::arch::boot::pl011_puts(b"[init] after dma::init\n"); }
+    unsafe { crate::arch::boot::pl011_puts(b"[init.dma] after dma::init\n"); }
 
     unsafe { arch::late_init_on_bsp() };
-    unsafe { crate::arch::boot::pl011_puts(b"[init] after late_init_on_bsp\n"); }
+    unsafe { crate::arch::boot::pl011_puts(b"[init.4] after late_init_on_bsp\n"); }
 
     #[cfg(target_arch = "x86_64")]
     arch::if_tdx_enabled!({

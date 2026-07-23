@@ -43,26 +43,26 @@ pub(crate) fn init_cvm_guest() {
 }
 
 pub(crate) unsafe fn late_init_on_bsp() {
-    // SAFETY: This function is called in the boot context of the BSP.
+    #[cfg(target_arch = "aarch64")]
+    unsafe { crate::arch::boot::pl011_puts(b"[late.0] start\n"); }
     unsafe { trap::init() };
-
-    // SAFETY: This function is called once on the BSP after the MMU setup.
+    #[cfg(target_arch = "aarch64")]
+    unsafe { crate::arch::boot::pl011_puts(b"[late.trap] after trap::init\n"); }
     unsafe { gic::init_on_bsp() };
-
+    #[cfg(target_arch = "aarch64")]
+    unsafe { crate::arch::boot::pl011_puts(b"[late.gic] after gic::init_on_bsp\n"); }
     let io_mem_builder = io::construct_io_mem_allocator_builder();
-
-    // SAFETY: We're on the BSP and we're ready to boot all APs.
+    #[cfg(target_arch = "aarch64")]
+    unsafe { crate::arch::boot::pl011_puts(b"[late.io_mem] after construct_io_mem_allocator_builder\n"); }
     unsafe { crate::boot::smp::boot_all_aps() };
-
-    // SAFETY: This function is called once and at most once at a proper timing
-    // in the boot context of the BSP, with no timer-related operations having
-    // been performed.
+    #[cfg(target_arch = "aarch64")]
+    unsafe { crate::arch::boot::pl011_puts(b"[late.smp] after boot_all_aps\n"); }
     unsafe { timer::init() };
-
-    // SAFETY:
-    // 1. All the system device memory have been removed from the builder.
-    // 2. RISC-V platforms do not have port I/O.
+    #[cfg(target_arch = "aarch64")]
+    unsafe { crate::arch::boot::pl011_puts(b"[late.timer] after timer::init\n"); }
     unsafe { crate::io::init(io_mem_builder) };
+    #[cfg(target_arch = "aarch64")]
+    unsafe { crate::arch::boot::pl011_puts(b"[late.io] after io::init\n"); }
 }
 
 pub(crate) unsafe fn init_on_ap() {

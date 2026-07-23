@@ -34,19 +34,37 @@ fn intid_to_irq_num(intid: IntId) -> Option<usize> {
 }
 
 pub(crate) unsafe fn init_on_bsp() {
-    GIC.call_once(|| {
-        let mut gic = unsafe {
-            GicV2::new(
-                QEMU_VIRT_GICD_BASE as *mut Gicd,
-                QEMU_VIRT_GICC_BASE as *mut Gicc,
-            )
-        };
-        gic.setup();
-        Mutex::new(gic)
-    });
+    #[cfg(target_arch = "aarch64")]
+    unsafe { crate::arch::boot::pl011_puts(b"[gic.0] before call_once\n"); }
+    if crate::arch::board::BoardType::cached() != 2 {
+        GIC.call_once(|| {
+            #[cfg(target_arch = "aarch64")]
+            unsafe { crate::arch::boot::pl011_puts(b"[gic.1] inside call_once\n"); }
+            let mut gic = unsafe {
+                GicV2::new(
+                    QEMU_VIRT_GICD_BASE as *mut Gicd,
+                    QEMU_VIRT_GICC_BASE as *mut Gicc,
+                )
+            };
+            #[cfg(target_arch = "aarch64")]
+            unsafe { crate::arch::boot::pl011_puts(b"[gic.2] after GicV2::new\n"); }
+            gic.setup();
+            #[cfg(target_arch = "aarch64")]
+            unsafe { crate::arch::boot::pl011_puts(b"[gic.3] after gic.setup\n"); }
+            Mutex::new(gic)
+        });
+        #[cfg(target_arch = "aarch64")]
+        unsafe { crate::arch::boot::pl011_puts(b"[gic.4] after call_once\n"); }
+    } else {
+        #[cfg(target_arch = "aarch64")]
+        unsafe { crate::arch::boot::pl011_puts(b"[gic.4] skipped on RPi3\n"); }
+    }
 }
 
 pub(crate) fn init_interrupt(irq_num: u8) {
+    if crate::arch::board::BoardType::cached() == 2 {
+        return;
+    }
     let gic = GIC.get().expect("GICv2 is not initialized");
     let mut gic = gic.lock();
 
@@ -60,6 +78,9 @@ pub(crate) fn init_interrupt(irq_num: u8) {
 }
 
 pub(crate) fn acknowledge_interrupt() -> Option<usize> {
+    if crate::arch::board::BoardType::cached() == 2 {
+        return None;
+    }
     let gic = GIC.get().expect("GICv2 is not initialized");
     let mut gic = gic.lock();
     gic.get_and_acknowledge_interrupt()
@@ -67,6 +88,9 @@ pub(crate) fn acknowledge_interrupt() -> Option<usize> {
 }
 
 pub(crate) fn end_interrupt(irq_num: usize) {
+    if crate::arch::board::BoardType::cached() == 2 {
+        return;
+    }
     if irq_num > u8::MAX as usize {
         return;
     }
