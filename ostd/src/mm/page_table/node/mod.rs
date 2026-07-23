@@ -135,16 +135,16 @@ impl<C: PageTableConfig> PageTableNode<C> {
     pub(super) unsafe fn first_activate(&self) {
         use crate::{arch::mm::activate_page_table, mm::CachePolicy};
 
-        crate::arch::boot::pl011_puts(b"[fa.0] start first_activate\n");
+        unsafe { crate::arch::boot::pl011_puts(b"[fa.0] start first_activate\n"); }
         let cloned = Clone::clone(self);
-        crate::arch::boot::pl011_puts(b"[fa.0b] clone done\n");
+        unsafe { crate::arch::boot::pl011_puts(b"[fa.0b] clone done\n"); }
         let raw = cloned.into_raw();
-        crate::arch::boot::pl011_puts(b"[fa.1] into_raw done\n");
-        crate::arch::boot::pl011_puts_hex(raw as usize);
-        crate::arch::boot::pl011_puts(b"\n");
-        crate::arch::boot::pl011_puts(b"[fa.2] calling activate_page_table\n");
-        activate_page_table(raw as usize, CachePolicy::Writeback);
-        crate::arch::boot::pl011_puts(b"[fa.3] activate_page_table done\n");
+        unsafe { crate::arch::boot::pl011_puts(b"[fa.1] into_raw done\n"); }
+        unsafe { crate::arch::boot::pl011_puts_hex(raw as usize); }
+        unsafe { crate::arch::boot::pl011_puts(b"\n"); }
+        unsafe { crate::arch::boot::pl011_puts(b"[fa.2] calling activate_page_table\n"); }
+        unsafe { activate_page_table(raw as usize, CachePolicy::Writeback); }
+        unsafe { crate::arch::boot::pl011_puts(b"[fa.3] activate_page_table done\n"); }
     }
 }
 

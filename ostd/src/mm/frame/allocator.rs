@@ -386,5 +386,5 @@ pub(crate) fn early_alloc(layout: Layout) -> Option<Paddr> {
 ///
 /// This function should be called only once after the memory regions are ready.
 pub(crate) unsafe fn init_early_allocator() {
-    addr_of_mut!(EARLY_ALLOCATOR).write(Some(EarlyFrameAllocator::new()));
+    unsafe { addr_of_mut!(EARLY_ALLOCATOR).write(Some(EarlyFrameAllocator::new())) };
 }

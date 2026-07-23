@@ -30,15 +30,15 @@ def build_kernel() -> str:
     """Run the Dockerised cargo build."""
     cmd = (
         f"docker run --rm -v {WORKSPACE}:/root/asterinas {DOCKER_IMAGE} bash -c "
-        f"'cd /root/asterinas && cargo osdk build --release --target-arch aarch64 --boot-method qemu-direct --scheme aarch64'"
+        f"'cd /root/asterinas && cargo osdk build --release --target-arch aarch64 --boot-method qemu-direct --scheme aarch64-rpi3'"
     )
     start = time.time()
-    r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=600)
+    r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=3600)
     elapsed = time.time() - start
     if r.returncode != 0:
         return (f"BUILD FAILED (exit={r.returncode}, {elapsed:.0f}s)\n"
-                f"stderr:\n{r.stderr[-3000:]}\nstdout:\n{r.stdout[-3000:]}")
-    return f"BUILD OK ({elapsed:.0f}s)\n{r.stdout[-500:]}\n{r.stderr[-500:]}"
+                f"stderr:\n{r.stderr}\nstdout:\n{r.stdout}")
+    return f"BUILD OK ({elapsed:.0f}s)\n{r.stdout[-2000:]}"
 
 def convert_kernel(src: str = None, dst: str = None) -> str:
     """objcopy ELF → raw binary."""

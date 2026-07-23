@@ -550,7 +550,8 @@ pub(crate) unsafe fn init() -> Segment<MetaPageMeta> {
     }
 
     if meta_page_range.is_empty() {
-        Segment::from_raw(meta_page_range)
+        // SAFETY: Empty range is always valid.
+        unsafe { Segment::from_raw(meta_page_range) }
     } else {
         Segment::from_unused(meta_page_range, |_| MetaPageMeta {}).unwrap()
     }

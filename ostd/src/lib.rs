@@ -225,6 +225,7 @@ fn invoke_ffi_init_funcs() {
                 crate::arch::boot::pl011_puts_hex(fn_ptr);
                 crate::arch::boot::pl011_puts(b"\n");
             }
+            crate::arch::boot::pl011_puts(b"[IFF.CALL]\n");
             (*function)();
             crate::arch::boot::pl011_puts(b"[IFF.R] after call\n");
         }
