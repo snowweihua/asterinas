@@ -139,6 +139,7 @@ pub fn do_cached_build(
     rustflags.push(&build.rustflags);
     let aster_elf = build_kernel_elf(
         config.target_arch,
+        config.scheme_name.as_deref(),
         &build.profile,
         &build.features[..],
         build.no_default_features,
@@ -195,6 +196,7 @@ pub fn do_cached_build(
 
 fn build_kernel_elf(
     arch: Arch,
+    scheme_name: Option<&str>,
     profile: &str,
     features: &[String],
     no_default_features: bool,
@@ -203,7 +205,11 @@ fn build_kernel_elf(
     rustflags: &[&str],
 ) -> AsterBin {
     let target_os_string = OsString::from(&arch.triple());
-    let rustc_linker_script_arg = format!("-C link-arg=-T{}.ld", arch);
+    let linker_script_name = match scheme_name {
+        Some("aarch64-rpi3") => "aarch64-rpi3",
+        _ => arch.as_str(),
+    };
+    let rustc_linker_script_arg = format!("-C link-arg=-T{}.ld", linker_script_name);
 
     let mut rustflags = Vec::from(rustflags);
     // Asterinas does not support PIC yet.

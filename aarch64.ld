@@ -1,0 +1,132 @@
+ENTRY(_start)
+OUTPUT_ARCH(aarch64)
+
+/*
+ * Raspberry Pi 3 specific linker script.
+ *
+ * Memory layout:
+ * - Physical RAM: PA 0x0 - 0x3fffffff (1 GB)
+ * - Peripherals: PA 0x3F000000 - 0x3FFFFFFF
+ * - Kernel load address (LMA): 0x80000 (RPi3 firmware loads kernel8.img here)
+ * - Kernel virtual base: 0xffff000000080000 (identity mapping base for PA 0x0)
+ * - Kernel entry VA: 0xffff000000080000
+ *
+ * The kernel expects to run at VA 0xffff000000080000 onwards. With identity
+ * mapping VA 0xffff000000000000 → PA 0x0, this means PA 0x80000 maps to VA
+ * 0xffff000000080000. The boot code sets up the MMU before jumping to kernel.
+ *
+ * The RPi3 firmware:
+ * - Disables the MMU before booting
+ * - Loads kernel8.img at PA 0x80000
+ * - Passes DTB pointer in x0, bootloader magic in x1, ATAGs pointer in x2
+ * - Jumps to PA 0x80000 (entry point, MMU off)
+ *
+ * The early boot code must:
+ * 1. Set up page tables with identity mapping for PA 0x0 - 0x40000000
+ * 2. Enable the MMU
+ * 3. Jump to the kernel proper at VA 0xffff000000080000
+ */
+
+KERNEL_LMA = 0x80000;
+KERNEL_VMA = 0xffff000000080000;
+KERNEL_VMA_OFFSET = KERNEL_VMA - KERNEL_LMA;
+
+SECTIONS
+{
+    /* Boot sections at load address (identity-mapped region) */
+    . = KERNEL_LMA;
+    __kernel_start = . + KERNEL_VMA_OFFSET;
+
+    .boot                   : AT(ADDR(.boot)) {
+        KEEP(*(.boot))
+        KEEP(*(.boot.stack))
+        . = ALIGN(4096);
+    }
+
+    /* AP boot code for SMP spin-table (runs before MMU is enabled) */
+    .ap_boot                : AT(ADDR(.ap_boot)) {
+        KEEP(*(.ap_boot))
+        KEEP(*(.ap_boot.*))
+        . = ALIGN(4096);
+    }
+
+    /* Kernel sections at high VA */
+    . += KERNEL_VMA_OFFSET;
+
+    PROVIDE(__executable_start = .);
+
+    .text                   : AT(ADDR(.text) - KERNEL_VMA_OFFSET) {
+        *(.text .text.*)
+        PROVIDE(__etext = .);
+    }
+
+    /* AArch64 vector table: must be 2KB (0x800) aligned */
+    . = ALIGN(0x800);
+    .vector                 : AT(ADDR(.vector) - KERNEL_VMA_OFFSET) {
+        *(.vector .vector.*)
+    }
+
+    .rodata                 : AT(ADDR(.rodata) - KERNEL_VMA_OFFSET) {
+        *(.rodata .rodata.*)
+    }
+
+    /* Exception table for fallible kernel accesses to user-space memory. */
+    . = ALIGN(8);
+    .ex_table               : AT(ADDR(.ex_table) - KERNEL_VMA_OFFSET) {
+        __ex_table = .;
+        KEEP(*(SORT(.ex_table)))
+        __ex_table_end = .;
+    }
+
+    . = ALIGN(8);
+    .eh_frame               : AT(ADDR(.eh_frame) - KERNEL_VMA_OFFSET) {
+        PROVIDE(__eh_frame = .);
+        KEEP(*(.eh_frame .eh_frame.*))
+    }
+
+    .ktest_array            : AT(ADDR(.ktest_array) - KERNEL_VMA_OFFSET) {
+        __ktest_array = .;
+        KEEP(*(SORT(.ktest_array)))
+        __ktest_array_end = .;
+    }
+
+    .init_array             : AT(ADDR(.init_array) - KERNEL_VMA_OFFSET) {
+        __sinit_array = .;
+        KEEP(*(SORT(.init_array .init_array.*)))
+        __einit_array = .;
+    }
+
+    .sensitive_io_ports     : AT(ADDR(.sensitive_io_ports) - KERNEL_VMA_OFFSET) {
+        __sensitive_io_ports_start = .;
+        KEEP(*(.sensitive_io_ports))
+        __sensitive_io_ports_end = .;
+    }
+
+    .data                   : AT(ADDR(.data) - KERNEL_VMA_OFFSET) {
+        *(.data .data.*)
+    }
+
+    .cpu_local              : AT(ADDR(.cpu_local) - KERNEL_VMA_OFFSET) {
+        __cpu_local_start = .;
+        KEEP(*(SORT(.cpu_local)))
+        __cpu_local_end = .;
+    }
+
+    .bss                    : AT(ADDR(.bss) - KERNEL_VMA_OFFSET) {
+        __bss = .;
+        *(.bss .bss.*)
+        __bss_end = .;
+    }
+
+    /* Initramfs section: embedded CPIO archive for RPi3 boot.
+     * The build system can inject an initramfs here via objcopy.
+     * If empty, __initramfs_start == __initramfs_end. */
+    .initramfs              : AT(ADDR(.initramfs) - KERNEL_VMA_OFFSET) {
+        . = ALIGN(8);
+        __initramfs_start = .;
+        KEEP(*(.initramfs))
+        __initramfs_end = .;
+    }
+
+    __kernel_end = .;
+}

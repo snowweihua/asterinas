@@ -37,6 +37,7 @@ use crate::{
 pub struct Config {
     pub work_dir: PathBuf,
     pub target_arch: Arch,
+    pub scheme_name: Option<String>,
     pub build: Build,
     pub run: Action,
     pub test: Action,
@@ -227,6 +228,7 @@ impl Config {
                 .clone()
                 .unwrap_or_else(|| env::current_dir().unwrap()),
             target_arch,
+            scheme_name: common_args.scheme.clone(),
             build,
             run,
             test,
