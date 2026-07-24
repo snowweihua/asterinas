@@ -10,3 +10,8 @@ url = "http://localhost:8910"
 name = "build-mcp"
 type = "http"
 url = "http://localhost:8912"
+
+[[plugins]]
+name = "power-mcp"
+type = "http"
+url = "http://localhost:8911"
