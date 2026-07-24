@@ -21,7 +21,7 @@ PORT = 8912
 WORKSPACE = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 DEFAULT_DEPLOY_PATH = "/mnt/d/pi_sd/asterina.img"
 DEFAULT_ELF_PATH    = os.path.join(WORKSPACE, "target/osdk/aster-nix/aster-nix-osdk-bin.qemu_elf")
-DEFAULT_RAW_PATH    = os.path.join(WORKSPACE, "target/osdk/aster-nix/asterina.img")
+DEFAULT_RAW_PATH    = "/tmp/asterina.img"
 DOCKER_IMAGE        = "asterinas/aarch64-dev:latest"
 
 # ---------------------------------------------------------------------------

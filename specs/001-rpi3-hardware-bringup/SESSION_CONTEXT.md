@@ -1,38 +1,34 @@
-# RPi3 Debug Session - 2026-07-24 (Session 6) — DMA/GIC Skipped on RPi3, Persistent x30 Corruption Persists
+# RPi3 Debug Session - 2026-07-24 (Session 7) — Build MCP Path Fixed, TTBR1 LMA Investigation
 
 ## Current Task T030
 Boot to shell with interactive command working.
 
-## Session 6 Summary
+## Session 7 Summary
 
 ### What Works (Fixed This Session)
-1. **GIC skip on RPi3** (`ostd/src/arch/aarch64/gic.rs`): `gic::init_on_bsp()` now checks `BoardType::cached() != 2` before calling `GIC.call_once()`. On RPi3 (board type 2), the QEMU virt GIC hardware (at 0x08000000) is skipped. Functions that need GIC return early on RPi3.
+1. **Build MCP path fixed** (`tools/build_mcp_server.py`): `DEFAULT_RAW_PATH` changed from `/home/snow/asterinas/target/osdk/aster-nix/asterina.img` to `/tmp/asterina.img`. The target directory is owned by root and not writable, causing objcopy to fail with "Bad file descriptor". Now `build_and_deploy` works end-to-end (build → convert → deploy all succeed).
 
-2. **DMA init skip on AArch64** (`ostd/src/mm/dma/mod.rs`): `dma::init()` is skipped on AArch64 (no `DMA_MAPPING_SET.call_once()`). DMA mapping tracking uses `spin::Once` which uses Acquire semantics that may trigger the same x30 corruption.
+2. **LMA=0x80000 confirmed in ELF**: OSDK's `aarch64-rpi3.ld.template` linker script correctly sets `KERNEL_LMA=0x80000`. The `.boot` section ELF LOAD offset is 0x80000.
 
-3. **Progress past 4 init stages**: Kernel now boots past:
-   - `sync::init()` (RCU init using SimpleOnce with Relaxed)
-   - `dma::init()` (skipped on aarch64)
-   - `trap::init()` (RPi3 exception vectors)
-   - `gic::init_on_bsp()` (skipped on RPi3)
+3. **OSDK base crate linker override**: Docker build copies `aarch64-rpi3.ld.template` to the base crate's `aarch64.ld` before building, ensuring correct LMA.
 
-### What's Still Blocked (Persistent Crash)
-The crash happens AFTER `[late.gic] after gic::init_on_bsp` — inside `io::construct_io_mem_allocator_builder()`:
-- **Symptom**: ESR=0x02000000, ELR=0x3AF610A8 (SAME address across ALL code paths)
-- **x29** = 0x3 (corrupted FP)
-- **Consistency**: Same ELR regardless of which function is crashing. The crash is NOT function-specific — it happens at the SAME address during execution of ANY function that follows a specific pattern.
-- **Key observation**: The crash is INSIDE `spin::Once::call_once()` before the closure runs (in gic case), OR during simple function calls (construct_io_mem_allocator_builder). The common thread is that ALL functions that involve ANY kind of atomic operation or memory access through the page table eventually trigger the crash.
+### What's Still Blocked (Persistent Crash at init_array)
+- **Crash INSIDE `aster_block` init function body** (not in the call machinery)
+- ELR=0x3AF610A8 — same address as previous sessions
+- TTBR1 boot page table maps VA `0xffff000000XXXXXX` → PA `0x40000000+XXXXXX` (hardcoded for QEMU virt LMA=0x40080000)
+- With actual LMA=0x80000, kernel code is at PA 0xceacc (within low memory), but TTBR1 tries to access PA `0x40000000+0x0ceacc = 0x400ceacc` (wrong!)
+- **Root cause hypothesis**: Boot page table TTBR1 mapping is WRONG for RPi3's LMA=0x80000. The `boot_l2pt_gb0` entries map PA 0x0-0x3FFFFFFF as 2MB blocks (correct for actual RAM), but TTBR1 entry 0 maps VA 0xffff000000000000→0xffff00003FFFFFFF to PA 0x40000000+XXXXXX (wrong offset for LMA=0x80000).
 
-### The Root Cause Hypothesis (Unconfirmed)
-The crash at ELR=0x3AF610A8 appears to be a **speculative execution / page table walking issue** on Cortex-A53. The address 0x3AF610A8 falls within the kernel text region. The MMU page table walk for ANY memory access may trigger a speculative fetch that hits the peripheral MMIO region (0x3F000000+) through a incorrectly attributed page table entry, corrupting the link register (x30) on the stack.
-
-The boot page tables use `boot_l2pt_gb0` for the first 1GB, which correctly maps 0x3F000000+ as Device memory. But there may be OTHER page table entries (e.g., in the new kernel page table, or in the linear mapping table) that still have 1 GiB block entries with Normal memory attributes that cover BOTH DRAM and peripheral MMIO.
+### TTBR1 Boot Page Table Analysis
+- `boot_l4pt` slot 256 → `boot_l3pt_high` for VA 0xffff000000000000+
+- `boot_l3pt_high` entry 0 → `boot_l2pt_gb0` (correct: maps via L2 table)
+- `boot_l2pt_gb0` correctly maps PA 0x00000000-0x3FFFFFFF as 2MB blocks (covering actual kernel at PA 0xceacc)
+- **BUT**: The question is whether the init function pointers being called are correct VA→PA translations
 
 ### Next Steps to Try
-1. **Bypass `io::construct_io_mem_allocator_builder()`** on RPi3 — add `BoardType::cached() == 2` check
-2. **Bypass `boot_all_aps()`** on RPi3 — SMP bringup may be failing
-3. **Bypass `timer::init()`** on RPi3 — timer hardware may not exist
-4. **Add markers BEFORE each function call** in `late_init_on_bsp()` to narrow down further
+1. **Read init function code before calling** — add debug to read first few instructions at fn_val address BEFORE calling, to verify the VA translation is correct
+2. **Update TTBR1 mapping in boot.S** — adjust `boot_l3pt_high` entry 0 to map VA range to correct PA range for LMA=0x80000 (though analysis suggests boot_l2pt_gb0 should already be correct)
+3. **Bypass `invoke_ffi_init_funcs()`** — skip init_array entirely to see if boot proceeds further
 
 ### Tools & Infrastructure
 - `tools/build_mcp_server.py` — Unified build+deploy MCP server on port 8912
@@ -50,23 +46,24 @@ The boot page tables use `boot_l2pt_gb0` for the first 1GB, which correctly maps
 [init.dma] after dma::init
 [late.0] start
 [late.trap] after trap::init
-[gic.0] before call_once
-[gic.4] skipped on RPi3
-[late.gic] after gic::init_on_bsp
-[late.1] after construct_io_mem_allocator_builder  ← NEXT CRASH POINT
+[late.1] after construct_io_mem_allocator_builder
+[late.2] after boot_all_aps
+[late.3] after timer::init
+[late.4] after io::init
+[IFF.len=N] — init_array iteration count
+[IFF.0 ptr=0xXXXXXXXX] — function pointer being called
+[IFF.CALL]
+[IFF.read=0xXXXXXXXX] — first word read from function address
+[CRASH] — inside aster_block init function
 ```
 
 ### Files Modified This Session
-- `ostd/src/arch/aarch64/gic.rs` — GIC init conditional on board type, RPi3 skip
-- `ostd/src/arch/aarch64/mod.rs` — Added debug markers for late_init stages
-- `ostd/src/mm/dma/mod.rs` — Skip DMA init on AArch64
-- `ostd/src/sync/mod.rs` — Added debug markers for sync::init
-- `ostd/src/sync/rcu/mod.rs` — Added debug markers for rcu::init
-- `ostd/src/sync/rcu/monitor.rs` — Added debug markers for RcuMonitor::new
-- `ostd/src/lib.rs` — Debug markers for init stages
+- `tools/build_mcp_server.py` — Fixed DEFAULT_RAW_PATH from target/.../asterina.img to /tmp/asterina.img (writable location)
+- `ostd/src/lib.rs` — Added debug in invoke_ffi_init_funcs: prints init_array contents, reads first word before calling, wraps pl011_puts in unsafe blocks
 
 ### Git Log
 ```
+d04f2504 aarch64: fix LMA to 0x80000 (OSDK fix + base_crate linker script fix)
 71d681ae T030 session end: save session state, update workflow for build MCP
 41c7a709 T030: fix boot crash on RPi3 — generalized LDARB/LDXR workaround
 405031d5 aarch64/npt: bypass PT spinlock on RPi3 — Cortex-A53 exclusive-monitor issue
@@ -76,7 +73,6 @@ c1b4299e aarch64/boot: replace 1GiB block entry in boot_l3pt_high with L2 table
 ```
 
 ### Next Session Action
-Bypass `io::construct_io_mem_allocator_builder()` on RPi3 (add BoardType check), then bypass subsequent functions (`boot_all_aps`, `timer::init`, `io::init`) one by one until we find the actual failing component. The goal is to identify whether this is:
-1. A specific hardware component that's not present/emulated on RPi3
-2. A page table issue that only manifests during certain memory access patterns
-3. Something else entirely
+1. Rebase work on session context — the TTBR1 analysis shows boot_l2pt_gb0 correctly maps PA 0x0-0x3FFFFFFF but the question is whether init function VAs are correctly resolved
+2. Add debug to print the actual instruction bytes at the init function address to verify VA→PA translation is working
+3. Consider bypassing invoke_ffi_init_funcs entirely to see if boot reaches shell without init_array
