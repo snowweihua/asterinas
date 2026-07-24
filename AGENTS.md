@@ -9,11 +9,10 @@
 ### Detailed steps:
 
 1. **Code change** — Edit source files as needed
-2. **Build & Deploy** — Use the build MCP server (port 8912, must be running in user's terminal):
-   - `build-mcp_build_kernel`(opencode mcp tool) `mcp__build-mcp__build_kernel` (reasonix mcp tool) — Docker cargo osdk build for aarch64
-   - `build-mcp_convert_kernel` (opencode mcp tool) `mcp__build-mcp__convert_kernel` (reasonix mcp tool) — objcopy ELF → raw binary (use `/tmp/asterina.img` as output_img)
-   - `build-mcp_deploy_kernel` (opencode mcp tool) `mcp__build-mcp__deploy_kernel` — copy raw binary to SD card mount (`/mnt/d/pi_sd/asterina.img`)
-   - `mcp__build-mcp__build_and_deploy` — all three in sequence (convert may fail with default path; use separate calls if needed)
+ 2. **Build & Deploy** — Use the build MCP server (port 8912, must be running in user's terminal):
+   - `build-mcp_build_kernel` (opencode mcp tool) — Docker cargo osdk build for aarch64
+   - `build-mcp_convert_kernel` (opencode mcp tool) — objcopy ELF → raw binary (use `/tmp/asterina.img` as output_img)
+   - Deploy via bash `cp /tmp/asterina.img /mnt/d/pi_sd/asterina.img` (build-mcp_deploy_kernel fails with permission denied)
 3. **Power cycle** — Use the power MCP server (port 8911, must be running in user's terminal):
    - Power OFF: `power-mcp_power_off` (opencode mcp tool) 
    - Power ON: `power-mcp_power_on` (opencode mcp tool)
