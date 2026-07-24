@@ -4,7 +4,7 @@
 
 ## Current work flow (must follow exactly)
 
-**Research and analysis -> code change -> Build and Deploy (via build MCP) -> Ask user to power on RPi3B -> capture serial log via serial MCP -> analyze log -> If new progress, commit code -> continue next research and analysis**
+**Research and analysis -> code change -> Build and Deploy (via build MCP) -> do power off/on through power MCP -> capture serial log via serial MCP -> analyze log -> If new progress, commit code -> continue next research and analysis**
 
 ### Detailed steps:
 
@@ -14,14 +14,17 @@
    - `mcp__build-mcp__convert_kernel` — objcopy ELF → raw binary (use `/tmp/asterina.img` as output_img)
    - `mcp__build-mcp__deploy_kernel` — copy raw binary to SD card mount (`/mnt/d/pi_sd/asterina.img`)
    - `mcp__build-mcp__build_and_deploy` — all three in sequence (convert may fail with default path; use separate calls if needed)
-3. **Read serial** — Use serial MCP server (port 8910, must be running in user's terminal):
-   - `mcp__serial-mcp__serial_read(clear_buffer=true)` — clear stale data before new boot
-4. **Ask user** — Use `ask` tool with options for power cycling
-5. **Capture log** — Read serial output via `mcp__serial-mcp__serial_read(timeout_ms=300000)`
-6. **Analyze** — Look for kernel boot markers, Synchronous Abort handler, etc.
-7. **Commit** — Only commit when there's actual progress (new understanding, working fix). Use:
+3. **Power cycle** — Use the power MCP server (port 8911, must be running in user's terminal):
+   - Power OFF: `curl -s -X POST http://localhost:8911 -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"power_off","arguments":{}}}'`
+   - Power ON: `curl -s -X POST http://localhost:8911 -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"power_on","arguments":{}}}'`
+   - Wait ~45s after power ON before reading serial for full boot
+4. **Read serial** — Use serial MCP server (port 8910, must be running in user's terminal):
+   - Clear buffer: `curl -s -X POST http://localhost:8910 -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"serial_read","arguments":{"clear_buffer":true,"timeout_ms":5000}}}'`
+   - Capture boot: `curl -s -X POST http://localhost:8910 -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"serial_read","arguments":{"clear_buffer":false,"timeout_ms":300000}}}'`
+5. **Analyze** — Look for kernel boot markers, Synchronous Abort handler, etc.
+6. **Commit** — Only commit when there's actual progress (new understanding, working fix). Use:
    ```bash
-   git add -A && git commit -m "<area>: <what> — <why/result>"
+   git add -A && git commit -m "<area>: <what changed> — <why/result>"
    ```
 
 ### MCP Servers (start in separate terminals before session)
@@ -34,6 +37,11 @@ cd /home/snow/asterinas && python3 tools/serial_mcp_server.py
 **Terminal 2 (build+deploy):**
 ```bash
 cd /home/snow/asterinas && python3 tools/build_mcp_server.py
+```
+
+**Terminal 3 (power control):**
+```bash
+cd /home/snow/asterinas && python3 tools/power_mcp_server.py
 ```
 
 ## Git rules
