@@ -86,14 +86,20 @@ mod vm;
 #[ostd::main]
 #[controlled]
 fn main() {
+    ostd::arch::boot::pl011_puts_safe(b"[KM.main] start\n");
     component::init_all(InitStage::Bootstrap, component::parse_metadata!()).unwrap();
+    ostd::arch::boot::pl011_puts_safe(b"[KM.main] after component::init_all\n");
 
     init();
+    ostd::arch::boot::pl011_puts_safe(b"[KM.main] after init\n");
 
     // Spawn all AP idle threads.
+    ostd::arch::boot::pl011_puts_safe(b"[KM.main] before register_ap_entry\n");
     ostd::boot::smp::register_ap_entry(ap_init);
+    ostd::arch::boot::pl011_puts_safe(b"[KM.main] after register_ap_entry\n");
 
     init_on_each_cpu();
+    ostd::arch::boot::pl011_puts_safe(b"[KM.main] after init_on_each_cpu\n");
 
     // Spawn the first kernel thread on BSP.
     ThreadOptions::new(first_kthread)
@@ -103,14 +109,24 @@ fn main() {
 }
 
 fn init() {
+    ostd::arch::boot::pl011_puts_safe(b"DBG: init() start\n");
     thread::init();
+    ostd::arch::boot::pl011_puts_safe(b"DBG: thread::init() done\n");
     util::random::init();
+    ostd::arch::boot::pl011_puts_safe(b"DBG: util::random::init() done\n");
     driver::init();
+    ostd::arch::boot::pl011_puts_safe(b"DBG: driver::init() done\n");
     time::init();
+    ostd::arch::boot::pl011_puts_safe(b"DBG: time::init() done\n");
     net::init();
+    ostd::arch::boot::pl011_puts_safe(b"DBG: net::init() done\n");
     sched::init();
+    ostd::arch::boot::pl011_puts_safe(b"DBG: sched::init() done\n");
     process::init();
+    ostd::arch::boot::pl011_puts_safe(b"DBG: process::init() done\n");
     fs::init();
+    ostd::arch::boot::pl011_puts_safe(b"DBG: fs::init() done\n");
+    ostd::arch::boot::pl011_puts_safe(b"DBG: init() complete\n");
 }
 
 fn init_on_each_cpu() {

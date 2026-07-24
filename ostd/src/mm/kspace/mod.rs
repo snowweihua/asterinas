@@ -276,6 +276,8 @@ pub fn init_kernel_page_table(meta_pages: Segment<MetaPageMeta>) {
                 .expect("Kernel code mapped twice");
         }
     }
+    #[cfg(target_arch = "aarch64")]
+    unsafe { crate::arch::boot::pl011_puts(b"[kspace.e] skipped (AArch64 uses slot0 copy)\n"); }
 
     // On AArch64, leak meta_pages to prevent its Drop (which iterates over
     // all metadata pages with atomic decrements that fault on Cortex-A53

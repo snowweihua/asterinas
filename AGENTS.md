@@ -10,17 +10,17 @@
 
 1. **Code change** — Edit source files as needed
 2. **Build & Deploy** — Use the build MCP server (port 8912, must be running in user's terminal):
-   - `mcp__build-mcp__build_kernel` — Docker cargo osdk build for aarch64
-   - `mcp__build-mcp__convert_kernel` — objcopy ELF → raw binary (use `/tmp/asterina.img` as output_img)
-   - `mcp__build-mcp__deploy_kernel` — copy raw binary to SD card mount (`/mnt/d/pi_sd/asterina.img`)
+   - `build-mcp_build_kernel`(opencode mcp tool) `mcp__build-mcp__build_kernel` (reasonix mcp tool) — Docker cargo osdk build for aarch64
+   - `build-mcp_convert_kernel` (opencode mcp tool) `mcp__build-mcp__convert_kernel` (reasonix mcp tool) — objcopy ELF → raw binary (use `/tmp/asterina.img` as output_img)
+   - `build-mcp_deploy_kernel` (opencode mcp tool) `mcp__build-mcp__deploy_kernel` — copy raw binary to SD card mount (`/mnt/d/pi_sd/asterina.img`)
    - `mcp__build-mcp__build_and_deploy` — all three in sequence (convert may fail with default path; use separate calls if needed)
 3. **Power cycle** — Use the power MCP server (port 8911, must be running in user's terminal):
-   - Power OFF: `curl -s -X POST http://localhost:8911 -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"power_off","arguments":{}}}'`
-   - Power ON: `curl -s -X POST http://localhost:8911 -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"power_on","arguments":{}}}'`
+   - Power OFF: `power-mcp_power_off` (opencode mcp tool) 
+   - Power ON: `power-mcp_power_on` (opencode mcp tool)
    - Wait ~45s after power ON before reading serial for full boot
 4. **Read serial** — Use serial MCP server (port 8910, must be running in user's terminal):
-   - Clear buffer: `curl -s -X POST http://localhost:8910 -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"serial_read","arguments":{"clear_buffer":true,"timeout_ms":5000}}}'`
-   - Capture boot: `curl -s -X POST http://localhost:8910 -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"serial_read","arguments":{"clear_buffer":false,"timeout_ms":300000}}}'`
+   - Clear buffer: `serial-mcp_serial_read [timeout_ms=300000, clear_buffer=true]`
+   - Capture boot: `serial-mcp_serial_read [timeout_ms=300000, clear_buffer=false]`
 5. **Analyze** — Look for kernel boot markers, Synchronous Abort handler, etc.
 6. **Commit** — Only commit when there's actual progress (new understanding, working fix). Use:
    ```bash

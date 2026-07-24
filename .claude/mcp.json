@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "build-mcp": {
+      "url": "http://localhost:8912"
+    },
+    "serial-mcp": {
+      "url": "http://localhost:8910"
+    },
+    "power-mcp": {
+      "url": "http://localhost:8911"
+    }
+  }
+}

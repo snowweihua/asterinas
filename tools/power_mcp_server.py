@@ -11,7 +11,7 @@ Run:
 Listens on http://localhost:8911
 """
 
-import json, sys, os, time
+import json, sys, os, time, termios, fcntl
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 HOST = "localhost"
@@ -21,8 +21,38 @@ TTY_DEVICE = "/dev/ttyACM0"
 ON_SEQ  = [b"\xa0\x01\x01\xa2", b"\xa0\x02\x01\xa3"]
 OFF_SEQ = [b"\xa0\x01\x00\xa1", b"\xa0\x02\x00\xa2"]
 
+def wait_for_device(path, timeout=5.0):
+    start = time.time()
+    while time.time() - start < timeout:
+        if os.path.exists(path):
+            try:
+                fd = os.open(path, os.O_RDWR | os.O_NOCTTY)
+                termios.tcflush(fd, termios.TCIOFLUSH)
+                os.close(fd)
+                return True
+            except OSError:
+                pass
+        time.sleep(0.2)
+    return False
+
 def send_raw_bytes(data: bytes):
+    if not wait_for_device(TTY_DEVICE):
+        raise OSError(f"Device {TTY_DEVICE} not available")
     with open(TTY_DEVICE, "wb") as f:
+        fd = f.fileno()
+        try:
+            attrs = termios.tcgetattr(fd)
+            attrs[0] = 0
+            attrs[1] = 0
+            attrs[2] = termios.CS8 | termios.CREAD | termios.CLOCAL
+            attrs[3] = 0
+            attrs[4] = termios.B115200
+            attrs[5] = termios.B115200
+            attrs[6][termios.VMIN] = 0
+            attrs[6][termios.VTIME] = 10
+            termios.tcsetattr(fd, termios.TCSANOW, attrs)
+        except termios.error:
+            pass
         f.write(data)
         f.flush()
         time.sleep(0.5)

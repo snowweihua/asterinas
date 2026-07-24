@@ -404,25 +404,31 @@ impl PageTable<KernelPtConfig> {
                 let _ = root_entry.alloc_if_none(&preempt_guard).unwrap();
             }
 
-            // On AArch64 the kernel code is mapped at VA 0xffff_0000_xxxx (L4 slot 0),
-            // which is outside TOP_LEVEL_INDEX_RANGE (256..512). Copy slot 0 from the
-            // bootstrap TTBR1 root (boot_l4pt_kern) so that after activation the CPU
-            // can still fetch kernel instructions. The L3 table pointed to by that PTE
-            // is a static array in the kernel image and is never freed.
             #[cfg(target_arch = "aarch64")]
             {
                 let boot_root_pa = crate::arch::mm::current_page_table_paddr();
-                // Safety: boot_l4pt_kern is a valid 4KB-aligned page table in DRAM,
-                // accessible via the identity (bootstrap) TTBR0 mapping (PA == VA in
-                // bootstrap context).
+                unsafe { crate::arch::boot::pl011_puts(b"[slot0] boot_root_pa=") };
+                unsafe { crate::arch::boot::pl011_puts_hex(boot_root_pa) };
+                unsafe { crate::arch::boot::pl011_puts(b"\n") };
                 let boot_slot0_pte = unsafe {
                     let ptr = boot_root_pa as *const PageTableEntry;
                     ptr.read_volatile()
                 };
-                // Safety: idx 0 is within the 512-entry root node; the PTE is a valid
-                // table descriptor pointing to a permanently live static L3 table.
-                // We do NOT increment nr_children here because the cursor never unmaps
-                // slot 0 (it is outside TOP_LEVEL_INDEX_RANGE), so no ref-count issue.
+                unsafe { crate::arch::boot::pl011_puts(b"[slot0] pte=") };
+                unsafe { crate::arch::boot::pl011_puts_hex(boot_slot0_pte.as_usize()) };
+                unsafe { crate::arch::boot::pl011_puts(b"\n") };
+                let l3table_pa = boot_slot0_pte.as_usize() & 0x0000_FFFF_FFFF_F000;
+                unsafe { crate::arch::boot::pl011_puts(b"[slot0] l3table_pa=") };
+                unsafe { crate::arch::boot::pl011_puts_hex(l3table_pa) };
+                unsafe { crate::arch::boot::pl011_puts(b"\n") };
+                let l3table_va = l3table_pa;
+                let l3entry = unsafe {
+                    let ptr = l3table_va as *const crate::arch::mm::PageTableEntry;
+                    ptr.read_volatile()
+                };
+                unsafe { crate::arch::boot::pl011_puts(b"[slot0] l3table[0]=") };
+                unsafe { crate::arch::boot::pl011_puts_hex(l3entry.as_usize()) };
+                unsafe { crate::arch::boot::pl011_puts(b"\n") };
                 unsafe { root_node.write_pte(0, boot_slot0_pte) };
             }
         }

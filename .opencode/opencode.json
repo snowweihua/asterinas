@@ -15,6 +15,13 @@
       "cwd": "/home/snow/asterinas",
       "enabled": true,
       "timeout": 3600000
+    },
+    "power-mcp": {
+      "type": "local",
+      "command": ["python3", "tools/mcp_power_wrapper.py"],
+      "cwd": "/home/snow/asterinas",
+      "enabled": true,
+      "timeout": 3600000
     }
   }
 }

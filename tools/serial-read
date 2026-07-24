@@ -1,0 +1,9 @@
+#!/bin/bash
+# Serial read via serial-mcp HTTP server
+# Args: clear_buffer (true/false), timeout_ms (number)
+CLEAR=${1:-false}
+TIMEOUT=${2:-5000}
+curl -s -X POST http://localhost:8910 \
+  -H "Content-Type: application/json" \
+  -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"serial_read\",\"arguments\":{\"clear_buffer\":$CLEAR,\"timeout_ms\":$TIMEOUT}}}"
+echo
