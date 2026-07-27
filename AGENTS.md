@@ -9,39 +9,39 @@
 ### Detailed steps:
 
 1. **Code change** — Edit source files as needed
- 2. **Build & Deploy** — Use the build MCP server (port 8912, must be running in user's terminal):
-   - `build-mcp_build_kernel` (opencode mcp tool) — Docker cargo osdk build for aarch64
-   - `build-mcp_convert_kernel` (opencode mcp tool) — objcopy ELF → raw binary (use `/tmp/asterina.img` as output_img)
-   - Deploy via bash `cp /tmp/asterina.img /mnt/d/pi_sd/asterina.img` (build-mcp_deploy_kernel fails with permission denied)
-3. **Power cycle** — Use the power MCP server (port 8911, must be running in user's terminal):
-   - Power OFF: `power-mcp_power_off` (opencode mcp tool) 
-   - Power ON: `power-mcp_power_on` (opencode mcp tool)
+2. **Build & Deploy** — Use the build MCP server:
+   - `build_build_kernel_tool` — Docker cargo osdk build for aarch64
+   - `build_convert_kernel_tool` — objcopy ELF → raw binary (use `/tmp/asterina.img` as output_img)
+   - `build_deploy_kernel_tool` — copy raw binary to SD card mount point
+   - Or use `build_build_and_deploy_tool` — all three in one call
+3. **Power cycle** — Use the power MCP server:
+   - `power_power_off_tool` — Power OFF the RPi3B board
+   - `power_power_on_tool` — Power ON the RPi3B board
+   - `power_power_status_tool` — Check power switch status (returns CH1:ON/OFF CH2:ON/OFF)
    - Wait ~45s after power ON before reading serial for full boot
-4. **Read serial** — Use serial MCP server (port 8910, must be running in user's terminal):
-   - Clear buffer: `serial-mcp_serial_read [timeout_ms=300000, clear_buffer=true]`
-   - Capture boot: `serial-mcp_serial_read [timeout_ms=300000, clear_buffer=false]`
+4. **Read serial** — Use serial MCP server:
+   - `serial_serial_clear` — Clear buffered serial output
+   - `serial_serial_read` — Read accumulated serial output (use `timeout_ms=300000, clear_buffer=true` to capture boot)
+   - `serial_serial_write` — Send text to serial port
+   - `serial_serial_wait` — Wait until regex pattern appears in serial output
+   - `serial_serial_is_open` — Check if serial port is connected
 5. **Analyze** — Look for kernel boot markers, Synchronous Abort handler, etc.
 6. **Commit** — Only commit when there's actual progress (new understanding, working fix). Use:
    ```bash
    git add -A && git commit -m "<area>: <what changed> — <why/result>"
    ```
 
-### MCP Servers (start in separate terminals before session)
+## MCP Servers
 
-**Terminal 1 (serial):**
-```bash
-cd /home/snow/asterinas && python3 tools/serial_mcp_server.py
-```
+MCP servers are registered in `.opencode/opencode.json` and started automatically by OpenCode. No manual server startup required.
 
-**Terminal 2 (build+deploy):**
-```bash
-cd /home/snow/asterinas && python3 tools/build_mcp_server.py
-```
+**Available MCP tools:**
 
-**Terminal 3 (power control):**
-```bash
-cd /home/snow/asterinas && python3 tools/power_mcp_server.py
-```
+| Server | Tools |
+|--------|-------|
+| build | `build_kernel_tool`, `convert_kernel_tool`, `deploy_kernel_tool`, `build_and_deploy_tool` |
+| power | `power_on_tool`, `power_off_tool`, `power_status_tool` |
+| serial | `serial_read`, `serial_write`, `serial_wait`, `serial_clear`, `serial_capture`, `serial_is_open`, `serial_reconnect` |
 
 ## Git rules
 

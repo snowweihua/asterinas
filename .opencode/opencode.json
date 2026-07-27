@@ -2,26 +2,26 @@
   "$schema": "https://opencode.ai/config.json",
   "plugin": [".opencode/plugins/session-context.js", ".opencode/plugins/roleflow.js"],
   "mcp": {
-    "build-mcp": {
+    "build": {
       "type": "local",
-      "command": ["python3", "tools/mcp_build_wrapper.py"],
-      "cwd": "/home/snow/asterinas",
+      "command": ["python3", "-m", "build_mcp.server"],
+      "cwd": "/home/snow/asterinas/tools",
       "enabled": true,
-      "timeout": 3600000
+      "timeout": 300000
     },
-    "serial-mcp": {
+    "serial": {
       "type": "local",
-      "command": ["python3", "tools/mcp_serial_wrapper.py"],
-      "cwd": "/home/snow/asterinas",
+      "command": ["python3", "-m", "serial_mcp.server"],
+      "cwd": "/home/snow/asterinas/tools",
       "enabled": true,
-      "timeout": 3600000
+      "timeout": 300000
     },
-    "power-mcp": {
+    "power": {
       "type": "local",
-      "command": ["python3", "tools/mcp_power_wrapper.py"],
-      "cwd": "/home/snow/asterinas",
+      "command": ["python3", "-m", "power_mcp.server"],
+      "cwd": "/home/snow/asterinas/tools",
       "enabled": true,
-      "timeout": 3600000
+      "timeout": 300000
     }
   }
 }
