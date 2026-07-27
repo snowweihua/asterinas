@@ -1,6 +1,0 @@
-#!/bin/bash
-# Power control via power-mcp HTTP server
-curl -s -X POST http://localhost:8911 \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"power_on","arguments":{}}}'
-echo
