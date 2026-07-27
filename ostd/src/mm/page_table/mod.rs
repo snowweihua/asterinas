@@ -429,6 +429,22 @@ impl PageTable<KernelPtConfig> {
                 unsafe { crate::arch::boot::pl011_puts(b"[slot0] l3table[0]=") };
                 unsafe { crate::arch::boot::pl011_puts_hex(l3entry.as_usize()) };
                 unsafe { crate::arch::boot::pl011_puts(b"\n") };
+
+                const KERNEL_CODE_PA: usize = 0x80000;
+                let l3entry_pa = l3entry.as_usize() & 0x0000_FFFF_FFFF_F000;
+                if l3entry_pa != KERNEL_CODE_PA {
+                    unsafe { crate::arch::boot::pl011_puts(b"[slot0] FIX: updating l3table[0] from ") };
+                    unsafe { crate::arch::boot::pl011_puts_hex(l3entry.as_usize()) };
+                    unsafe { crate::arch::boot::pl011_puts(b" to ") };
+                    let corrected_entry = PageTableEntry::from_usize(KERNEL_CODE_PA | 0x3);
+                    unsafe { crate::arch::boot::pl011_puts_hex(corrected_entry.as_usize()) };
+                    unsafe { crate::arch::boot::pl011_puts(b"\n") };
+                    unsafe {
+                        let ptr = l3table_va as *mut crate::arch::mm::PageTableEntry;
+                        ptr.write_volatile(corrected_entry);
+                    }
+                }
+
                 unsafe { root_node.write_pte(0, boot_slot0_pte) };
             }
         }

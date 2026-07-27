@@ -100,13 +100,15 @@ pub(crate) fn tlb_flush_all_excluding_global() {
 
 pub(crate) fn tlb_flush_all_including_global() {
     unsafe {
+        crate::arch::boot::pl011_puts(b"[tlb.0] before dsb ishst\n");
         asm!("dsb ishst", options(nostack, nomem, preserves_flags));
-        // NOTE: tlbi alle1 and alle1is appear to stall on QEMU virt/cortex-a72.
-        // Use vmalle1 (invalidates all EL1 TLB entries incl. global) as a workaround.
-        // TODO: investigate and use alle1 when QEMU behavior is understood.
-        asm!("tlbi vmalle1", options(nostack, nomem, preserves_flags));
-        asm!("dsb ish", options(nostack, nomem, preserves_flags));
+        crate::arch::boot::pl011_puts(b"[tlb.1] after dsb ishst\n");
+        crate::arch::boot::pl011_puts(b"[tlb.2] before dsb sy (skipping tlbi)\n");
+        asm!("dsb sy", options(nostack, nomem, preserves_flags));
+        crate::arch::boot::pl011_puts(b"[tlb.3] after dsb sy\n");
+        crate::arch::boot::pl011_puts(b"[tlb.4] before isb\n");
         asm!("isb", options(nostack, nomem, preserves_flags));
+        crate::arch::boot::pl011_puts(b"[tlb.5] after isb\n");
     }
 }
 

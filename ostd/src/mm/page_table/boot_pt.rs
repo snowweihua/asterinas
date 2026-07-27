@@ -76,7 +76,9 @@ where
 ///  - no [`with_borrow`] calls are performed on this CPU after the activation
 ///    of another page table and before this dismissal.
 pub(crate) unsafe fn dismiss() {
+    crate::arch::boot::pl011_puts(b"[dism.0] start dismiss\n");
     IS_DISMISSED.store(true);
+    crate::arch::boot::pl011_puts(b"[dism.1] after IS_DISMISSED.store\n");
     if DISMISS_COUNT.fetch_add(1, Ordering::SeqCst) as usize == num_cpus() - 1 {
         let Some(boot_pt) = BOOT_PAGE_TABLE.lock().take() else {
             // The boot page table was never lazily initialized (e.g. on AArch64 where
