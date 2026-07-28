@@ -51,12 +51,16 @@ class SerialBackend:
             return
 
         log(f"SerialBackend.start: opening {self.device} at {self.baudrate}")
-        self._serial = serial.Serial(
-            self.device,
-            self.baudrate,
-            timeout=self.timeout,
-        )
-        log(f"SerialBackend.start: opened successfully")
+        try:
+            self._serial = serial.Serial(
+                self.device,
+                self.baudrate,
+                timeout=self.timeout,
+            )
+            log(f"SerialBackend.start: opened successfully")
+        except serial.SerialException as e:
+            log(f"SerialBackend.start: initial open failed: {e}, will retry in reader loop")
+            self._serial = None
 
         self._running = True
 
@@ -76,8 +80,21 @@ class SerialBackend:
             self._serial.close()
 
     def _reader_loop(self):
+        reconnect_delay = 1
         while self._running:
             try:
+                if self._serial is None or not self._serial.is_open:
+                    log(f"_reader_loop: serial device not open, waiting {reconnect_delay}s to reconnect")
+                    time.sleep(reconnect_delay)
+                    reconnect_delay = min(reconnect_delay * 2, 30)
+                    try:
+                        self._serial = serial.Serial(self.device, self.baudrate, timeout=self.timeout)
+                        log(f"_reader_loop: reconnected to {self.device}")
+                        reconnect_delay = 1
+                    except Exception as e:
+                        log(f"_reader_loop: reconnect failed: {e}")
+                        continue
+
                 waiting = self._serial.in_waiting
 
                 if waiting:
@@ -88,8 +105,16 @@ class SerialBackend:
                 else:
                     time.sleep(0.02)
 
-            except Exception:
-                time.sleep(0.1)
+            except Exception as e:
+                log(f"_reader_loop: exception: {e}, will reconnect")
+                if self._serial:
+                    try:
+                        self._serial.close()
+                    except:
+                        pass
+                self._serial = None
+                time.sleep(reconnect_delay)
+                reconnect_delay = min(reconnect_delay * 2, 30)
 
     def clear(self):
         with self._lock:
@@ -150,7 +175,10 @@ class SerialBackend:
         return True
 
     def is_open(self):
-        return self._serial is not None and self._serial.is_open
+        try:
+            return self._serial is not None and self._serial.is_open and self._running
+        except Exception:
+            return False
 
 
 backend = SerialBackend()
