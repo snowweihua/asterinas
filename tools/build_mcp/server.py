@@ -17,6 +17,16 @@ DEFAULT_DEPLOY_PATH = "/mnt/d/pi_sd/asterina.img"
 DEFAULT_ELF_PATH = os.path.join(WORKSPACE, "target/osdk/aster-nix/aster-nix-osdk-bin.qemu_elf")
 DEFAULT_RAW_PATH = "/tmp/asterina.img"
 DOCKER_IMAGE = "asterinas/aarch64-dev:latest"
+LOG_FILE = "/home/snow/asterinas/tools/logs/build_mcp.log"
+
+
+def log(msg):
+    os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
+    with open(LOG_FILE, "a", encoding="utf-8") as f:
+        f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {msg}\n")
+
+
+log("=== Build MCP server starting ===")
 
 
 def build_kernel() -> str:
@@ -83,30 +93,42 @@ mcp = FastMCP(
 @mcp.tool
 def build_kernel_tool() -> str:
     """Run 'cargo osdk build --release' for aarch64 inside Docker. Takes 2-5 minutes."""
-    return build_kernel()
+    log("build_kernel_tool called")
+    result = build_kernel()
+    log(f"build_kernel_tool result: {result[:200]}")
+    return result
 
 
 @mcp.tool
 def convert_kernel_tool(source_elf: str = DEFAULT_ELF_PATH, output_img: str = DEFAULT_RAW_PATH) -> str:
     """Convert ELF to raw binary via objcopy."""
-    return convert_kernel(source_elf, output_img)
+    log(f"convert_kernel_tool called: source_elf={source_elf}, output_img={output_img}")
+    result = convert_kernel(source_elf, output_img)
+    log(f"convert_kernel_tool result: {result}")
+    return result
 
 
 @mcp.tool
 def deploy_kernel_tool(source_img: str = DEFAULT_RAW_PATH, deploy_path: str = DEFAULT_DEPLOY_PATH) -> str:
     """Copy raw binary to SD card mount point."""
-    return deploy(source_img, deploy_path)
+    log(f"deploy_kernel_tool called: source_img={source_img}, deploy_path={deploy_path}")
+    result = deploy(source_img, deploy_path)
+    log(f"deploy_kernel_tool result: {result}")
+    return result
 
 
 @mcp.tool
 def build_and_deploy_tool(deploy_path: str = DEFAULT_DEPLOY_PATH) -> str:
     """Build → convert → deploy in one call."""
+    log("build_and_deploy_tool called")
     text = build_kernel()
     if "BUILD OK" in text:
         text += "\n---\n" + convert_kernel()
         text += "\n---\n" + deploy(deploy_path=deploy_path)
+    log(f"build_and_deploy_tool result: {text[:200]}")
     return text
 
 
 if __name__ == "__main__":
+    log("=== Build MCP server running ===")
     mcp.run()

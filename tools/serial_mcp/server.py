@@ -5,6 +5,7 @@ Run directly as a script (uses stdio protocol):
   python3 -m serial_mcp.server
 """
 
+import os
 import re
 import threading
 import time
@@ -15,6 +16,16 @@ from fastmcp import FastMCP
 
 SERIAL_DEVICE = "/dev/ttyUSB0"
 BAUD = 115200
+LOG_FILE = "/home/snow/asterinas/tools/logs/serial_mcp.log"
+
+
+def log(msg):
+    os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
+    with open(LOG_FILE, "a", encoding="utf-8") as f:
+        f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {msg}\n")
+
+
+log("=== Serial MCP server starting ===")
 
 
 class SerialBackend:
@@ -39,11 +50,13 @@ class SerialBackend:
         if self._running:
             return
 
+        log(f"SerialBackend.start: opening {self.device} at {self.baudrate}")
         self._serial = serial.Serial(
             self.device,
             self.baudrate,
             timeout=self.timeout,
         )
+        log(f"SerialBackend.start: opened successfully")
 
         self._running = True
 
@@ -153,12 +166,16 @@ mcp = FastMCP(
 @mcp.tool
 def serial_read(timeout_ms: int = 5000) -> str:
     """Read accumulated serial output. Waits until data is available or timeout expires."""
-    return backend.read_wait(timeout_ms)
+    log(f"serial_read called: timeout_ms={timeout_ms}")
+    result = backend.read_wait(timeout_ms)
+    log(f"serial_read result: {repr(result[:200] if result else '')}")
+    return result
 
 
 @mcp.tool
 def serial_write(text: str) -> str:
     """Send text to the serial port."""
+    log(f"serial_write called: text={repr(text)}")
     backend.write(text)
     return "OK"
 
@@ -166,12 +183,16 @@ def serial_write(text: str) -> str:
 @mcp.tool
 def serial_wait(pattern: str, timeout_ms: int = 30000) -> str:
     """Wait until regex pattern appears in serial output."""
-    return backend.wait_for(pattern, timeout_ms)
+    log(f"serial_wait called: pattern={repr(pattern)}, timeout_ms={timeout_ms}")
+    result = backend.wait_for(pattern, timeout_ms)
+    log(f"serial_wait result: {repr(result[:200])}")
+    return result
 
 
 @mcp.tool
 def serial_clear() -> str:
     """Clear buffered serial output."""
+    log("serial_clear called")
     backend.clear()
     return "Buffer cleared."
 
@@ -179,21 +200,29 @@ def serial_clear() -> str:
 @mcp.tool
 def serial_capture(seconds: int = 5) -> str:
     """Capture serial output for a period of time."""
-    return backend.capture(seconds)
+    log(f"serial_capture called: seconds={seconds}")
+    result = backend.capture(seconds)
+    log(f"serial_capture result: {repr(result[:200] if result else '')}")
+    return result
 
 
 @mcp.tool
 def serial_is_open() -> bool:
     """Check whether the serial port is connected."""
-    return backend.is_open()
+    log("serial_is_open called")
+    result = backend.is_open()
+    log(f"serial_is_open result: {result}")
+    return result
 
 
 @mcp.tool
 def serial_reconnect() -> str:
     """Reopen the serial port."""
+    log("serial_reconnect called")
     backend.reconnect()
     return "Reconnected."
 
 
 if __name__ == "__main__":
+    log("=== Serial MCP server running ===")
     mcp.run()

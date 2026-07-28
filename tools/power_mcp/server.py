@@ -20,6 +20,16 @@ TTY_DEVICE = "/dev/ttyACM0"
 ON_SEQ = [b"\xa0\x01\x01\xa2", b"\xa0\x02\x01\xa3"]
 OFF_SEQ = [b"\xa0\x01\x00\xa1", b"\xa0\x02\x00\xa2"]
 STATUS_SEQ = [b"\xa0\x01\x02\xa3", b"\xa0\x02\x02\xa4"]
+LOG_FILE = "/home/snow/asterinas/tools/logs/power_mcp.log"
+
+
+def log(msg):
+    os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
+    with open(LOG_FILE, "a", encoding="utf-8") as f:
+        f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {msg}\n")
+
+
+log("=== Power MCP server starting ===")
 
 
 def wait_for_device(path, timeout=5.0):
@@ -122,20 +132,30 @@ mcp = FastMCP(
 @mcp.tool
 def power_on_tool() -> str:
     """Power ON the RPi3B board."""
-    return power_on()
+    log("power_on_tool called")
+    result = power_on()
+    log(f"power_on_tool result: {result}")
+    return result
 
 
 @mcp.tool
 def power_off_tool() -> str:
     """Power OFF the RPi3B board."""
-    return power_off()
+    log("power_off_tool called")
+    result = power_off()
+    log(f"power_off_tool result: {result}")
+    return result
 
 
 @mcp.tool
 def power_status_tool() -> str:
     """Check power switch TTY status. Returns CH1:ON/OFF CH2:ON/OFF."""
-    return power_status()
+    log("power_status_tool called")
+    result = power_status()
+    log(f"power_status_tool result: {result}")
+    return result
 
 
 if __name__ == "__main__":
+    log("=== Power MCP server running ===")
     mcp.run()

@@ -87,6 +87,8 @@ mod vm;
 #[controlled]
 fn main() {
     ostd::arch::boot::pl011_puts_safe(b"[KM.main] start\n");
+    ostd::arch::boot::pl011_puts_safe(b"[KM.main] before component::init_all\n");
+    ostd::arch::boot::pl011_puts_safe(b"[mac.1] calling component::init_all\n");
     component::init_all(InitStage::Bootstrap, component::parse_metadata!()).unwrap();
     ostd::arch::boot::pl011_puts_safe(b"[KM.main] after component::init_all\n");
 
@@ -110,20 +112,28 @@ fn main() {
 
 fn init() {
     ostd::arch::boot::pl011_puts_safe(b"DBG: init() start\n");
+    ostd::arch::boot::pl011_puts_safe(b"DBG: before thread::init()\n");
     thread::init();
     ostd::arch::boot::pl011_puts_safe(b"DBG: thread::init() done\n");
+    ostd::arch::boot::pl011_puts_safe(b"DBG: before util::random::init()\n");
     util::random::init();
     ostd::arch::boot::pl011_puts_safe(b"DBG: util::random::init() done\n");
+    ostd::arch::boot::pl011_puts_safe(b"DBG: before driver::init()\n");
     driver::init();
     ostd::arch::boot::pl011_puts_safe(b"DBG: driver::init() done\n");
+    ostd::arch::boot::pl011_puts_safe(b"DBG: before time::init()\n");
     time::init();
     ostd::arch::boot::pl011_puts_safe(b"DBG: time::init() done\n");
+    ostd::arch::boot::pl011_puts_safe(b"DBG: before net::init()\n");
     net::init();
     ostd::arch::boot::pl011_puts_safe(b"DBG: net::init() done\n");
+    ostd::arch::boot::pl011_puts_safe(b"DBG: before sched::init()\n");
     sched::init();
     ostd::arch::boot::pl011_puts_safe(b"DBG: sched::init() done\n");
+    ostd::arch::boot::pl011_puts_safe(b"DBG: before process::init()\n");
     process::init();
     ostd::arch::boot::pl011_puts_safe(b"DBG: process::init() done\n");
+    ostd::arch::boot::pl011_puts_safe(b"DBG: before fs::init()\n");
     fs::init();
     ostd::arch::boot::pl011_puts_safe(b"DBG: fs::init() done\n");
     ostd::arch::boot::pl011_puts_safe(b"DBG: init() complete\n");

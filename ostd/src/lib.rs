@@ -209,28 +209,10 @@ pub(crate) static IN_BOOTSTRAP_CONTEXT: AtomicBool = AtomicBool::new(true);
 /// the components.
 fn invoke_ffi_init_funcs() {
     unsafe extern "C" {
-        fn __sinit_array();
-        fn __einit_array();
+        fn __ostd_main();
     }
-    let call_len = (__einit_array as usize - __sinit_array as usize) / 8;
-    for i in 0..call_len {
-        unsafe {
-            let slot_addr = __sinit_array as usize + 8 * i;
-            let fn_ptr = slot_addr as *const usize;
-            let fn_val = *fn_ptr;
-            crate::arch::boot::pl011_puts(b"[IFF slot=");
-            crate::arch::boot::pl011_puts_hex(slot_addr);
-            crate::arch::boot::pl011_puts(b" val=");
-            crate::arch::boot::pl011_puts_hex(fn_val);
-            crate::arch::boot::pl011_puts(b"]\n");
-            if fn_val != 0 {
-                crate::arch::boot::pl011_puts(b"[IFF.CALL]");
-                let function = fn_val as *const fn();
-                (*function)();
-                crate::arch::boot::pl011_puts(b"[IFF.R] after call\n");
-            }
-        }
-    }
+    unsafe { crate::arch::boot::pl011_puts(b"[IFF] skip init_array, calling __ostd_main directly\n") };
+    unsafe { __ostd_main() };
 }
 
 /// Simple unit tests for the ktest framework.

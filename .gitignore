@@ -39,3 +39,6 @@ test_swap.s
 .cargo/
 .docker-cargo/
 .omo/
+tools/logs/
+*.pyc
+__pycache__/
