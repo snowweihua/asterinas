@@ -135,20 +135,8 @@ class SerialBackend:
             return ""
 
     def read_wait(self, timeout_ms=5000):
-        if timeout_ms > 10000:
-            log(f"read_wait: long timeout {timeout_ms}ms, will poll in chunks to avoid FastMCP bug")
-            result = ""
-            while timeout_ms > 0:
-                chunk_ms = min(timeout_ms, 5000)
-                chunk = self._read_wait_impl(chunk_ms)
-                if chunk:
-                    result += chunk
-                timeout_ms -= chunk_ms
-            return result
-        return self._read_wait_impl(timeout_ms)
-
-    def _read_wait_impl(self, timeout_ms=5000):
-        deadline = time.time() + timeout_ms / 1000
+        max_wait_ms = min(timeout_ms, 5000)
+        deadline = time.time() + max_wait_ms / 1000
 
         while time.time() < deadline:
             with self._lock:
@@ -177,6 +165,12 @@ class SerialBackend:
                 self._serial = None
 
             time.sleep(0.05)
+
+        with self._lock:
+            if self._buffer:
+                data = bytes(self._buffer)
+                self._buffer.clear()
+                return data.decode(errors="replace")
 
         return ""
 
