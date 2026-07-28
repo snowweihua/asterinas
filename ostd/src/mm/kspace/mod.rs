@@ -303,6 +303,23 @@ pub unsafe fn activate_kernel_page_table() {
         kpt.first_activate_unchecked();
 
         crate::arch::boot::pl011_puts(b"[akt.0] after first_activate\n");
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            let ttbr1: usize;
+            core::arch::asm!("mrs {0}, ttbr1_el1", out(reg) ttbr1, options(nostack, nomem, preserves_flags));
+            crate::arch::boot::pl011_puts(b"[akt.0b] TTBR1=");
+            crate::arch::boot::pl011_puts_hex(ttbr1);
+            crate::arch::boot::pl011_puts(b"\n");
+            let kpt_root: usize;
+            core::arch::asm!("mrs {0}, ttbr1_el1", out(reg) kpt_root, options(nostack, nomem, preserves_flags));
+            let l3table_pa = (kpt_root as *const usize).read_volatile() & 0x0000_FFFF_FFFF_F000;
+            let l3entry = (l3table_pa as *const usize).read_volatile();
+            crate::arch::boot::pl011_puts(b"[akt.0c] kpt_root[0]=");
+            crate::arch::boot::pl011_puts_hex(l3entry);
+            crate::arch::boot::pl011_puts(b"\n");
+        }
+
         crate::arch::mm::tlb_flush_all_including_global();
         crate::arch::boot::pl011_puts(b"[akt.1] after tlb_flush\n");
     }

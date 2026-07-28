@@ -4,7 +4,7 @@
 
 ## Current work flow (must follow exactly)
 
-**Research and analysis -> code change -> Build and Deploy (via build MCP) -> do power off/on through power MCP -> capture serial log via serial MCP -> analyze log -> If new progress, commit code -> continue next research and analysis**
+**Research and analysis -> code change -> Build and Deploy -> power off -> serial buffer clear -> power on -> wait 60s and serial read -> analyze log -> If new progress, commit code -> continue next research and analysis**
 
 ### Detailed steps:
 
@@ -18,7 +18,7 @@
    - `power_power_off_tool` — Power OFF the RPi3B board
    - `power_power_on_tool` — Power ON the RPi3B board
    - `power_power_status_tool` — Check power switch status (returns CH1:ON/OFF CH2:ON/OFF)
-   - Wait ~45s after power ON before reading serial for full boot
+   - Wait ~60s after power ON before reading serial for full boot
 4. **Read serial** — Use serial MCP server:
    - `serial_serial_clear` — Clear buffered serial output
    - `serial_serial_read` — Read accumulated serial output (use `timeout_ms=300000, clear_buffer=true` to capture boot)
@@ -54,3 +54,7 @@ MCP servers are registered in `.opencode/opencode.json` and started automaticall
 <area>: <what changed> — <why/result>
 ```
 Example: `aarch64/cpu: replace spin::Once with SimpleOnce — fixes RPi3 boot hang at enable_cpu_features`
+
+## Development rules
+
+### Skipping is not fixing, just avoiding, Don't treat skipping as fixing!

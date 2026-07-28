@@ -436,16 +436,23 @@ impl PageTable<KernelPtConfig> {
                     unsafe { crate::arch::boot::pl011_puts(b"[slot0] FIX: updating l3table[0] from ") };
                     unsafe { crate::arch::boot::pl011_puts_hex(l3entry.as_usize()) };
                     unsafe { crate::arch::boot::pl011_puts(b" to ") };
-                    let corrected_entry = PageTableEntry::from_usize(KERNEL_CODE_PA | 0x3);
+                    let corrected_entry = PageTableEntry::from_usize(KERNEL_CODE_PA | 0x3 | 0x400);
                     unsafe { crate::arch::boot::pl011_puts_hex(corrected_entry.as_usize()) };
                     unsafe { crate::arch::boot::pl011_puts(b"\n") };
                     unsafe {
                         let ptr = l3table_va as *mut crate::arch::mm::PageTableEntry;
                         ptr.write_volatile(corrected_entry);
+                        let verify = ptr.read_volatile();
+                        unsafe { crate::arch::boot::pl011_puts(b"[slot0] verify l3table[0]=") };
+                        unsafe { crate::arch::boot::pl011_puts_hex(verify.as_usize()) };
+                        unsafe { crate::arch::boot::pl011_puts(b"\n") };
                     }
                 }
 
                 unsafe { root_node.write_pte(0, boot_slot0_pte) };
+                unsafe { crate::arch::boot::pl011_puts(b"[slot0] new_root[0]=") };
+                unsafe { crate::arch::boot::pl011_puts_hex(boot_slot0_pte.as_usize()) };
+                unsafe { crate::arch::boot::pl011_puts(b"\n") };
             }
         }
 

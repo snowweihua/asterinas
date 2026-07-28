@@ -1,24 +1,24 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugin": [".opencode/plugins/session-context.js", ".opencode/plugins/roleflow.js"],
+  "plugin": [],
   "mcp": {
     "build": {
       "type": "local",
-      "command": ["python3", "-m", "build_mcp.server"],
+      "command": ["python3", "mcp_wrapper.py", "build_mcp.server"],
       "cwd": "/home/snow/asterinas/tools",
       "enabled": true,
       "timeout": 300000
     },
     "serial": {
       "type": "local",
-      "command": ["python3", "-m", "serial_mcp.server"],
+      "command": ["python3", "mcp_wrapper.py", "serial_mcp.server"],
       "cwd": "/home/snow/asterinas/tools",
       "enabled": true,
       "timeout": 300000
     },
     "power": {
       "type": "local",
-      "command": ["python3", "-m", "power_mcp.server"],
+      "command": ["python3", "mcp_wrapper.py", "power_mcp.server"],
       "cwd": "/home/snow/asterinas/tools",
       "enabled": true,
       "timeout": 300000
