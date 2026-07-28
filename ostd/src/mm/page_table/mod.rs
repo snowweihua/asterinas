@@ -442,10 +442,6 @@ impl PageTable<KernelPtConfig> {
                     unsafe {
                         let ptr = l3table_va as *mut crate::arch::mm::PageTableEntry;
                         ptr.write_volatile(corrected_entry);
-                        let verify = ptr.read_volatile();
-                        unsafe { crate::arch::boot::pl011_puts(b"[slot0] verify l3table[0]=") };
-                        unsafe { crate::arch::boot::pl011_puts_hex(verify.as_usize()) };
-                        unsafe { crate::arch::boot::pl011_puts(b"\n") };
                     }
                 }
 
