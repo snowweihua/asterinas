@@ -10,10 +10,12 @@
 
 1. **Code change** — Edit source files as needed
 2. **Build & Deploy** — Use the build MCP server:
-   - `build_build_kernel_tool` — Docker cargo osdk build for aarch64
+   - `build_build_kernel_tool` — Start Docker cargo osdk build (runs in background, ~2-5 min)
+     - First call starts the build and returns "BUILD STARTED"
+     - Poll repeatedly until result appears (returns "BUILD OK" or "BUILD FAILED")
    - `build_convert_kernel_tool` — objcopy ELF → raw binary (use `/tmp/asterina.img` as output_img)
    - `build_deploy_kernel_tool` — copy raw binary to SD card mount point
-   - Or use `build_build_and_deploy_tool` — all three in one call
+   - `build_build_and_deploy_tool` — Start build, poll for result, then convert and deploy
 3. **Power cycle** — Use the power MCP server:
    - `power_power_off_tool` — Power OFF the RPi3B board
    - `power_power_on_tool` — Power ON the RPi3B board
