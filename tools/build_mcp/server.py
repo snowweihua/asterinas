@@ -119,8 +119,9 @@ def build_kernel_tool() -> str:
         if build_result["status"] == "running":
             return "BUILD IN PROGRESS (check again in ~30s)"
         elif build_result["status"] == "done":
+            result = build_result["result"]
             build_result = {"status": "idle", "result": None}
-            return build_result["result"]
+            return result
 
     log("build_kernel_tool: starting background build")
     with build_lock:
