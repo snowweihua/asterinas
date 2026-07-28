@@ -117,15 +117,22 @@ class SerialBackend:
                 reconnect_delay = min(reconnect_delay * 2, 30)
 
     def clear(self):
-        with self._lock:
-            self._buffer.clear()
+        try:
+            with self._lock:
+                self._buffer.clear()
+            log("clear: buffer cleared")
+        except Exception as e:
+            log(f"clear: exception: {e}")
 
     def read(self):
-        with self._lock:
-            data = bytes(self._buffer)
-            self._buffer.clear()
-
-        return data.decode(errors="replace")
+        try:
+            with self._lock:
+                data = bytes(self._buffer)
+                self._buffer.clear()
+            return data.decode(errors="replace")
+        except Exception as e:
+            log(f"read: exception: {e}")
+            return ""
 
     def read_wait(self, timeout_ms=5000):
         deadline = time.time() + timeout_ms / 1000
@@ -137,12 +144,40 @@ class SerialBackend:
                     self._buffer.clear()
                     return data.decode(errors="replace")
 
+            try:
+                if self._serial is not None and self._serial.is_open:
+                    try:
+                        waiting = self._serial.in_waiting
+                        if waiting > 0:
+                            data = self._serial.read(waiting)
+                            with self._lock:
+                                self._buffer.extend(data)
+                    except (OSError, serial.SerialException) as e:
+                        log(f"read_wait: serial read failed: {e}")
+                        try:
+                            self._serial.close()
+                        except:
+                            pass
+                        self._serial = None
+            except Exception as e:
+                log(f"read_wait: serial access exception: {e}")
+                self._serial = None
+
             time.sleep(0.05)
 
         return ""
 
     def write(self, text):
-        self._serial.write(text.encode())
+        try:
+            if self._serial and self._serial.is_open:
+                self._serial.write(text.encode())
+                return "OK"
+            else:
+                log("write: serial not open")
+                return "ERROR: serial not open"
+        except Exception as e:
+            log(f"write: exception: {e}")
+            return f"ERROR: {e}"
 
     def wait_for(self, pattern, timeout_ms=30000):
         regex = re.compile(pattern)
@@ -150,12 +185,14 @@ class SerialBackend:
         deadline = time.time() + timeout_ms / 1000
 
         while time.time() < deadline:
+            try:
+                with self._lock:
+                    text = self._buffer.decode(errors="replace")
 
-            with self._lock:
-                text = self._buffer.decode(errors="replace")
-
-            if regex.search(text):
-                return text
+                if regex.search(text):
+                    return text
+            except Exception as e:
+                log(f"wait_for: exception: {e}")
 
             time.sleep(0.05)
 
