@@ -21,10 +21,11 @@
    - Wait ~60s after power ON before reading serial for full boot
 4. **Read serial** — Use serial MCP server:
    - `serial_serial_clear` — Clear buffered serial output
-   - `serial_serial_read` — Read accumulated serial output (use `timeout_ms=300000, clear_buffer=true` to capture boot)
+   - `serial_serial_read` — Read accumulated serial output (max 5s wait per call)
    - `serial_serial_write` — Send text to serial port
-   - `serial_serial_wait` — Wait until regex pattern appears in serial output
+   - `serial_serial_wait` — Wait until regex pattern appears (max 30s)
    - `serial_serial_is_open` — Check if serial port is connected
+   - **Note**: For long reads (e.g., boot capture), poll repeatedly with `serial_serial_read timeout_ms=5000` until empty response confirms completion
 5. **Analyze** — Look for kernel boot markers, Synchronous Abort handler, etc.
 6. **Commit** — Only commit when there's actual progress (new understanding, working fix). Use:
    ```bash
