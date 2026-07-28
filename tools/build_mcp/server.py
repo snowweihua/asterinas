@@ -8,7 +8,9 @@ Run directly as a script (uses stdio protocol):
 import os
 import shutil
 import subprocess
+import threading
 import time
+import traceback
 
 from fastmcp import FastMCP
 
@@ -18,6 +20,9 @@ DEFAULT_ELF_PATH = os.path.join(WORKSPACE, "target/osdk/aster-nix/aster-nix-osdk
 DEFAULT_RAW_PATH = "/tmp/asterina.img"
 DOCKER_IMAGE = "asterinas/aarch64-dev:latest"
 LOG_FILE = "/home/snow/asterinas/tools/logs/build_mcp.log"
+
+build_result = {"status": "idle", "result": None}
+build_lock = threading.Lock()
 
 
 def log(msg):
@@ -29,19 +34,31 @@ def log(msg):
 log("=== Build MCP server starting ===")
 
 
-def build_kernel() -> str:
-    """Run the Dockerised cargo build."""
+def do_build_kernel():
+    """Run the Dockerised cargo build in background thread."""
+    global build_result
     cmd = (
         f"docker run --rm -v {WORKSPACE}:/root/asterinas {DOCKER_IMAGE} bash -c "
         f"'cd /root/asterinas && cargo osdk build --release --target-arch aarch64 --boot-method qemu-direct --scheme aarch64-rpi3'"
     )
     start = time.time()
-    r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=3600)
-    elapsed = time.time() - start
-    if r.returncode != 0:
-        return (f"BUILD FAILED (exit={r.returncode}, {elapsed:.0f}s)\n"
-                f"stderr:\n{r.stderr}\nstdout:\n{r.stdout}")
-    return f"BUILD OK ({elapsed:.0f}s)\n{r.stdout[-2000:]}"
+    result = None
+    try:
+        r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=3600)
+        elapsed = time.time() - start
+        if r.returncode != 0:
+            result = (f"BUILD FAILED (exit={r.returncode}, {elapsed:.0f}s)\n"
+                    f"stderr:\n{r.stderr[-1000:]}\nstdout:\n{r.stdout[-1000:]}")
+        else:
+            result = f"BUILD OK ({elapsed:.0f}s)\n{r.stdout[-2000:]}"
+    except subprocess.TimeoutExpired:
+        result = "BUILD FAILED: timeout after 3600s"
+    except Exception as e:
+        result = f"BUILD FAILED: exception {e}\n{traceback.format_exc()}"
+    finally:
+        with build_lock:
+            build_result = {"status": "done", "result": result}
+        log(f"do_build_kernel: completed with status={build_result['status']}")
 
 
 def convert_kernel(src: str = None, dst: str = None) -> str:
@@ -92,36 +109,54 @@ mcp = FastMCP(
 
 @mcp.tool
 def build_kernel_tool() -> str:
-    """Run 'cargo osdk build --release' for aarch64 inside Docker. Takes 2-5 minutes."""
-    log("build_kernel_tool called")
-    result = build_kernel()
-    log(f"build_kernel_tool result: {result[:200]}")
-    return result
+    """Run 'cargo osdk build --release' for aarch64 inside Docker. Takes 2-5 minutes.
+
+    If a build is already running, returns its status. Poll this tool repeatedly to get the result.
+    """
+    global build_result
+
+    with build_lock:
+        if build_result["status"] == "running":
+            return "BUILD IN PROGRESS (check again in ~30s)"
+        elif build_result["status"] == "done":
+            build_result = {"status": "idle", "result": None}
+            return build_result["result"]
+
+    log("build_kernel_tool: starting background build")
+    with build_lock:
+        build_result = {"status": "running", "result": None}
+
+    threading.Thread(target=do_build_kernel, daemon=True).start()
+    return "BUILD STARTED (check again in ~30s for result)"
 
 
 @mcp.tool
 def convert_kernel_tool(source_elf: str = DEFAULT_ELF_PATH, output_img: str = DEFAULT_RAW_PATH) -> str:
     """Convert ELF to raw binary via objcopy."""
-    log(f"convert_kernel_tool called: source_elf={source_elf}, output_img={output_img}")
+    log(f"convert_kernel_tool called")
     result = convert_kernel(source_elf, output_img)
-    log(f"convert_kernel_tool result: {result}")
+    log(f"convert_kernel_tool result: {result[:100]}")
     return result
 
 
 @mcp.tool
 def deploy_kernel_tool(source_img: str = DEFAULT_RAW_PATH, deploy_path: str = DEFAULT_DEPLOY_PATH) -> str:
     """Copy raw binary to SD card mount point."""
-    log(f"deploy_kernel_tool called: source_img={source_img}, deploy_path={deploy_path}")
+    log(f"deploy_kernel_tool called")
     result = deploy(source_img, deploy_path)
-    log(f"deploy_kernel_tool result: {result}")
+    log(f"deploy_kernel_tool result: {result[:100]}")
     return result
 
 
 @mcp.tool
 def build_and_deploy_tool(deploy_path: str = DEFAULT_DEPLOY_PATH) -> str:
-    """Build → convert → deploy in one call."""
+    """Build → convert → deploy. WARNING: May take 5-10 minutes. Use build_kernel_tool first."""
     log("build_and_deploy_tool called")
-    text = build_kernel()
+    text = build_kernel_tool()
+    if "IN PROGRESS" in text:
+        return text
+    if "STARTED" in text:
+        return "BUILD STARTED - check build_kernel_tool for result, then use convert_kernel_tool and deploy_kernel_tool separately"
     if "BUILD OK" in text:
         text += "\n---\n" + convert_kernel()
         text += "\n---\n" + deploy(deploy_path=deploy_path)
