@@ -43,7 +43,6 @@ pub(crate) fn enable_local() {
             "str x30, [sp, #-16]!",
             "msr DAIFClr, #0b0011",
             "ldr x30, [sp], #16",
-            options(nostack),
         );
     }
 }
@@ -79,7 +78,6 @@ pub(crate) fn disable_local() {
             "str x30, [sp, #-16]!",
             "msr DAIFSet, #0b0011",
             "ldr x30, [sp], #16",
-            options(nostack),
         );
     }
 }

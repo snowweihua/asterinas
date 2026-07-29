@@ -1,76 +1,74 @@
-# RPi3 Debug Session - 2026-07-28 (Session 10)
+# RPi3 Debug Session - 2026-07-29 (Session 11)
 
-## Current Task T030
-Boot to shell on RPi3 — persistent crash at `elr=0x3af610a8` (Instruction Abort).
+## Current Task
+Fix x30 (link register) corruption on RPi3 Cortex-A53 — root cause of ALL hangs and crashes.
 
-## Session 10 Summary
+## Session 11 Summary
 
-### Slot0 Fix Verified Working
-The slot0 L3 entry fix IS correctly applied:
-- `l3table[0]` updated from `0x86003` → `0x80403` (PA=0x80000, VALID|TYPE|AF)
-- `kpt_root[0]=0x80403` confirmed via TTBR1 read-back
+### CRITICAL DISCOVERY: x30 Corruption is Sysmatic
+The crash address `0x3af610a8` is in `.eh_frame_hdr` section, NOT executable code. x30 gets corrupted to point at data, causing instruction abort on `ret`. This is deterministic — always the SAME address.
 
-### NEW Finding: Root Cause NOT Slot0 Mapping
-The crash STILL happens at `elr=0x3af610a8` even WITH the slot0 fix.
-This means the issue is NOT the PA mapping - it's something else.
+### Root Cause Chain
+1. Four separate functions were STUBBED OUT as workarounds for x30 corruption:
+   - `alloc_frame_with()` → infinite loop
+   - `FrameAllocator::alloc()` → always returns None
+   - `add_free_memory()` → no-op (never adds memory to buddy pool)
+   - `disable_local()` / `enable_local()` → no-op (DAIFSet/DAIFClr corrupts LR)
 
-### Crash Location Analysis
-The crash happens in `invoke_ffi_init_funcs()` when calling the `aster_block` init:
-```
-[IFF slot=0xffff0000003dcac0 val=0xffff0000000ceacc]
-[IFF.CALL]
-```
-- `__ostd_main` is at VA `0xffff0000001e1a30` (from nm)
-- The init_array contains `0xffff0000000ceacc` which is `aster_block1_25__init___rust_ctor___ctor`
+2. These stubs caused:
+   - `component::init_all` hang (frame alloc infinite loop → heap alloc hangs)
+   - No memory available for allocations (all pools empty)
+   - No IRQ disabling (spin locks unprotected)
 
-The aster_block init function:
-```asm
-ffff0000000ceacc:  adrp    x1, 0xffff0000003dc000
-ffff0000000cead0:  add     x1, x1, #0xb90    ; x1 = 0xffff0000003dcb90
-ffff0000000cead4:  ldp     x0, x8, [x1]       ; load from inventory
-ffff0000000cead8:  ldr     x2, [x8, #24]     ; load fn ptr from vtable
-ffff0000000ceadc:  br      x2                 ; jump to function
-```
+### FIXES Applied
+| Function | Original | Fix | Status |
+|----------|----------|-----|--------|
+| `disable_local/enable_local` | No-op | Save/restore LR around DAIFSet/DAIFClr | ✓ WORKS |
+| `alloc_frame_with` | Infinite loop | Delegate to `alloc_segment_with` | ✓ Returns (not hangs) but x30 crash on return |
+| `FrameAllocator::alloc` | Returns None | Use cache/pools allocation path | ✓ Allocates frames successfully |
+| `add_free_memory` | No-op | Add to GLOBAL_POOL via OnDemandGlobalLock | ✗ Crashes at `SpinLock::lock()` |
+| `pools::alloc` | AArch64 separate path | Unified with standard path | ✓ Code unified |
 
-The crash occurs at `br x2` - the function pointer at offset 24 in the structure is INVALID.
+### Current State
+- Frame allocator CACHE and POOLS work — 3 successful allocations observed
+- Crash at `[pafm.1]` during `add_free_memory` → `global_pool.get()` → `SpinLock::lock()`
+- Crash always at `elr=0x3af610a8` (same address every time)
+- `alloc_frame_with` delegates to `alloc_segment_with` — allocations succeed, but generic Result return still crashes
 
-### What's in the inventory?
-At `0xffff0000003dcb90`: `d _ZN11aster_block1_6__init11__INVENTORY17h1fa541ee970bee5fE`
+### x30 Corruption Analysis
+- **Always deterministic** — crash address `0x3af610a8` never changes
+- Affects: generic `Result<X, Error>` returns, trait object vtable calls, closures
+- `alloc_segment_with` (non-generic Result) works — allocations succeed
+- DAIFSet/DAIFClr corruption fixed with LR save/restore
+- Attempted `target-cpu=cortex-a53` via `.cargo/config.toml` — ignored by Docker OSDK build
 
-The inventory structure contains function pointers that aren't properly initialized, causing the crash.
-
-### Files Modified (This Session)
-- `ostd/src/mm/page_table/mod.rs`: Slot0 PTE fix (PA 0x80000 + AF flag)
-- `ostd/src/mm/kspace/mod.rs`: Debug markers [akt.0b], [akt.0c]
+### Files Modified
+- `ostd/src/arch/aarch64/irq.rs`: disable_local/enable_local with LR save/restore
+- `ostd/src/mm/frame/allocator.rs`: alloc_frame_with delegates to alloc_segment_with
+- `osdk/deps/frame-allocator/src/lib.rs`: FrameAllocator::alloc restores cache/pools
+- `osdk/deps/frame-allocator/src/pools/mod.rs`: add_free_memory, unified alloc
+- `ostd/src/lib.rs`: `#![allow(unsafe_op_in_unsafe_fn)]` for edition 2024
+- `kernel/src/lib.rs`: Debug markers for alloc/frame test
+- `kernel/libs/comp-sys/component/src/lib.rs`: Debug markers, mini_uart_puts
+- All `kernel/comps/*/src/lib.rs`: `#[init_component]` debug markers
 
 ### Git Log (Recent)
 ```
-5df1e685 aarch64/rpi3: slot0 fix applied — crash in aster_block init (not PA mapping issue)
-e93461c4 aarch64/rpi3: slot0 fix with AF flag — PTE verified correct but crash persists
-ccc0e0d3 tools: remove old HTTP-based MCP servers and wrappers
-b0bf5bd4 aarch64/rpi3: skip tlbi vmalle1 (hangs on RPi3) — boot reaches FFI init
+464afdd6 aarch64/x30: investigate x30 corruption — crash always at 0x3af610a8
+06711cda aarch64/pools: fix add_free_memory no-op
+6db6eacf aarch64/frame_alloc: restore FrameAllocator::alloc cache/pools path
+eee02302 aarch64/frame_alloc: fix alloc_frame_with infinite loop
+9c4b108e aarch64/irq: implement disable_local/enable_local with LR save/restore
+e75714e1 debug: isolate component::init_all hang to heap allocator
 ```
 
-### Next Steps
-1. Investigate aster_block inventory initialization failure
-2. OR bypass init_array and call main() directly
-3. OR check if aster_block is designed to work on RPi3
+### Known Blockers
+1. **x30 corruption is systemic** — individual LR save/restore fixes don't scale
+2. **Cannot modify compiler/linker flags** — Docker OSDK build ignores `.cargo/config.toml`
+3. **Crash at 0x3af610a8** in `SpinLock::lock()` during `add_free_memory` prevents pool population
 
-### Boot Log (Current)
-```
-[slot0] FIX: updating l3table[0] from 0x0000000000086003 to 0x0000000000080403
-[slot0] new_root[0]=0x0000000000084003
-[akt.0b] TTBR1=0x000000000337b000
-[akt.0c] kpt_root[0]=0x0000000000080403
-[tlb.0]-[tlb.5] TLB flush (skipping tlbi)
-[akt.1] after tlb_flush
-[akt.2] skipping dismiss
-[akt.3] after dismiss
-[init.5a] after activate_kernel_page_table
-[init.6] before IN_BOOTSTRAP_CONTEXT store
-[init.7] before enable_local_irq
-[init.8] before invoke_ffi_init_funcs
-[IFF slot=0xffff0000003dcac0 val=0xffff0000000ceacc]
-[IFF.CALL]
-[CRASH elr=0x3af610a8 ESR=0x02000000]
-```
+### Next Actions
+1. Find where Docker/OSDK sets compiler/linker flags (MCP build server config?)
+2. Add `-C target-cpu=cortex-a53` or `--fix-cortex-a53-843419` linker flag
+3. As fallback: implement assembly-level LR protection wrapper for critical paths
+4. Or: fix `add_free_memory` to bypass `LOCAL_POOL`/`SpinLock` during init phase
