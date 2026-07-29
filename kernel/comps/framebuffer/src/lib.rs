@@ -18,6 +18,7 @@ pub use pixel::{Pixel, PixelFormat, RenderedPixel};
 
 #[init_component]
 fn init() -> Result<(), ComponentInitError> {
+    ostd::arch::boot::pl011_puts_safe(b"[cmp.fb] init\n");
     framebuffer::init();
     console::init();
     Ok(())

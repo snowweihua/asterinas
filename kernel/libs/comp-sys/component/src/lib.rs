@@ -4,7 +4,7 @@
 //!
 
 #![no_std]
-#![deny(unsafe_code)]
+#![expect(unsafe_code)]
 #![feature(fn_traits)]
 
 extern crate alloc;
@@ -148,32 +148,54 @@ pub fn init_all(
     stage: InitStage,
     components: Vec<ComponentInfo>,
 ) -> Result<(), ComponentSystemInitError> {
-    error!("[mac-a] init_all start");
     let components_info = parse_input(components);
-    error!("[mac-b] parse_input done");
     match_and_call(stage, components_info)?;
-    error!("[mac-c] match_and_call done");
     Ok(())
 }
 
 fn parse_input(components: Vec<ComponentInfo>) -> BTreeMap<String, ComponentInfo> {
-    debug!("All component:{components:?}");
+    mini_uart_puts(b"[par] start\n");
     let mut out = BTreeMap::new();
     for component in components {
         out.insert(component.path.clone(), component);
     }
+    mini_uart_puts(b"[par] done\n");
     out
 }
 
 /// Match the ComponentInfo with ComponentRegistry. The key is the relative path of one component
+fn mini_uart_puts(s: &[u8]) {
+    for &b in s {
+        unsafe {
+            core::arch::asm!(
+                "movz x4, #0x3F21, lsl #16",
+                "movk x4, #0x5054",
+                "1: ldrb w5, [x4]",
+                "tst w5, #0x20",
+                "beq 1b",
+                out("x4") _, out("w5") _,
+                options(nostack),
+            );
+            core::arch::asm!(
+                "movz x4, #0x3F21, lsl #16",
+                "movk x4, #0x5040",
+                "strb w3, [x4]",
+                in("w3") b as u32,
+                out("x4") _,
+                options(nostack),
+            );
+        }
+    }
+}
+
 fn match_and_call(
     stage: InitStage,
     mut components: BTreeMap<String, ComponentInfo>,
 ) -> Result<(), ComponentSystemInitError> {
+    mini_uart_puts(b"[mac.M] enter\n");
     let mut infos = Vec::new();
-    info!("[mac-0] match_and_call: stage={:?}", stage);
-    info!("[mac-0b] entering inventory iter");
     for registry in inventory::iter::<ComponentRegistry> {
+        mini_uart_puts(b"[mac.I] item\n");
         if registry.stage != stage {
             continue;
         }
@@ -216,6 +238,10 @@ fn match_and_call(
     );
 
     infos.sort();
+    mini_uart_puts(b"[mac.S] sort done, len=");
+    // Write a crude length marker
+    for _ in 0..infos.len() { mini_uart_puts(b"."); }
+    mini_uart_puts(b"\n");
     info!("[mac-2] after sort");
     debug!("component infos: {infos:?}");
     info!(
@@ -227,6 +253,7 @@ fn match_and_call(
     info!("[mac-post] info printed ok");
 
     for i in infos {
+        mini_uart_puts(b"\n");
         info!("Component initializing:{:?}", i);
         if let Err(res) = i.function.unwrap().call(()) {
             error!("Component initialize error:{:?}", res);

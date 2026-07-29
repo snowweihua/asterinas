@@ -42,6 +42,7 @@ pub use self::{
 
 #[init_component]
 fn init() -> core::result::Result<(), ComponentInitError> {
+    ostd::arch::boot::pl011_puts_safe(b"[cmp.mlsdisk] init\n");
     // FIXME: add a virtio-blk-pci device in qemu and a image file.
     let Some(device) = aster_block::get_device("raw_mlsdisk") else {
         return Err(ComponentInitError::Unknown);

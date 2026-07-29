@@ -34,6 +34,7 @@ mod transport;
 
 #[init_component]
 fn virtio_component_init() -> Result<(), ComponentInitError> {
+    ostd::arch::boot::pl011_puts_safe(b"[cmp.virtio] init\n");
     // Find all devices and register them to the corresponding crate
     transport::init();
     // For vsock table static init

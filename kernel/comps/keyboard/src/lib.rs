@@ -19,6 +19,7 @@ static KEYBOARD_CALLBACKS: SpinLock<Vec<Box<KeyboardCallback>>, LocalIrqDisabled
 
 #[init_component]
 fn init() -> Result<(), ComponentInitError> {
+    ostd::arch::boot::pl011_puts_safe(b"[cmp.kbd] init\n");
     #[cfg(target_arch = "x86_64")]
     i8042_chip::init();
     Ok(())

@@ -86,6 +86,7 @@ use self::{bus::PciBus, common_device::PciCommonDevice};
 
 #[init_component]
 fn pci_init() -> Result<(), ComponentInitError> {
+    ostd::arch::boot::pl011_puts_safe(b"[cmp.pci] init\n");
     init();
     Ok(())
 }
