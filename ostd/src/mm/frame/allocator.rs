@@ -51,22 +51,11 @@ impl FrameAllocOptions {
     }
 
     /// Allocates a single frame with additional metadata.
-    /// Allocates a single frame with additional metadata.
-    ///
-    /// On AArch64, returning `Err(Error::NoMemory)` consistently corrupts saved x30
-    /// (across all tested nightly versions, not a compiler bug). Workaround: use a
-    /// static pre-allocated pool to always return Ok.
     #[inline(never)]
-    pub fn alloc_frame_with<M: AnyFrameMeta>(&self, _metadata: M) -> Result<Frame<M>> {
-        // WORKAROUND: On AArch64 RPi3 this function crashes at `ret` with
-        // corrupted x30 (saved link register).  The root cause is still under
-        // investigation.  The kernel page table bypasses this issue entirely
-        // via `PageTable::empty()` which uses a pre-allocated frame.
-        // Spin to prevent this function from ever returning on AArch64.
-        #[cfg(target_arch = "aarch64")]
-        loop { core::hint::spin_loop(); }
-        #[cfg(not(target_arch = "aarch64"))]
-        return Err(Error::NoMemory);
+    pub fn alloc_frame_with<M: AnyFrameMeta>(&self, metadata: M) -> Result<Frame<M>> {
+        let mut meta = Some(metadata);
+        let mut segment = self.alloc_segment_with(1, |_| meta.take().unwrap())?;
+        Ok(segment.next().unwrap())
     }
 
     /// Allocates a contiguous range of untyped frames without metadata.

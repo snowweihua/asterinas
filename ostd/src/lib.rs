@@ -23,6 +23,7 @@
 #![feature(unbounded_shifts)]
 #![expect(internal_features)]
 #![no_std]
+#![allow(unsafe_op_in_unsafe_fn)]
 #![warn(missing_docs)]
 
 extern crate alloc;
