@@ -51,7 +51,6 @@ const MAX_BUDDY_ORDER: BuddyOrder = 32;
 /// chunks.
 const MAX_LOCAL_BUDDY_ORDER: BuddyOrder = 18;
 
-#[cfg(not(target_arch = "aarch64"))]
 pub(super) fn alloc(guard: &DisabledLocalIrqGuard, layout: Layout) -> Option<Paddr> {
     let local_pool_cell = LOCAL_POOL.get_with(guard);
     let mut local_pool = local_pool_cell.borrow_mut();
@@ -95,44 +94,6 @@ pub(super) fn alloc(guard: &DisabledLocalIrqGuard, layout: Layout) -> Option<Pad
     chunk_addr
 }
 
-#[cfg(target_arch = "aarch64")]
-pub(super) fn alloc(_guard: &DisabledLocalIrqGuard, layout: Layout) -> Option<Paddr> {
-    #[cfg(target_arch = "aarch64")]
-    ostd::arch::boot::pl011_puts_safe(b"[pools.a] start\n");
-    let mut global_pool = OnDemandGlobalLock::new();
-    #[cfg(target_arch = "aarch64")]
-    ostd::arch::boot::pl011_puts_safe(b"[pools.b] got global_pool\n");
-
-    let size_order = greater_order_of(layout.size());
-    let align_order = greater_order_of(layout.align());
-    let order = size_order.max(align_order);
-    #[cfg(target_arch = "aarch64")]
-    ostd::arch::boot::pl011_puts_safe(b"[pools.c] calling global_pool.get()\n");
-
-    let pool = global_pool.get();
-    #[cfg(target_arch = "aarch64")]
-    ostd::arch::boot::pl011_puts_safe(b"[pools.d] got pool\n");
-
-    let chunk_addr = pool.alloc_chunk(order);
-    #[cfg(target_arch = "aarch64")]
-    ostd::arch::boot::pl011_puts_safe(b"[pools.e] alloc_chunk done\n");
-
-    let allocated_size = size_of_order(order);
-    if allocated_size > layout.size() {
-        if let Some(chunk_addr) = chunk_addr {
-            split_to_chunks(chunk_addr + layout.size(), allocated_size - layout.size()).for_each(
-                |(addr, order)| {
-                    global_pool.get().insert_chunk(addr, order);
-                },
-            );
-        }
-    }
-
-    global_pool.update_global_size_if_locked();
-
-    chunk_addr
-}
-
 pub(super) fn dealloc(
     guard: &DisabledLocalIrqGuard,
     segments: impl Iterator<Item = (Paddr, usize)>,
@@ -152,7 +113,14 @@ pub(super) fn dealloc(
 pub(super) fn add_free_memory(_guard: &DisabledLocalIrqGuard, addr: Paddr, size: usize) {
     #[cfg(target_arch = "aarch64")]
     ostd::arch::boot::pl011_puts_safe(b"[pafm.0]\n");
-    return;
+    let order = greater_order_of(size);
+    let mut global_pool = OnDemandGlobalLock::new();
+    #[cfg(target_arch = "aarch64")]
+    ostd::arch::boot::pl011_puts_safe(b"[pafm.1]\n");
+    global_pool.get().insert_chunk(addr, order);
+    #[cfg(target_arch = "aarch64")]
+    ostd::arch::boot::pl011_puts_safe(b"[pafm.2]\n");
+    global_pool.update_global_size_if_locked();
 }
 
 fn do_dealloc(
