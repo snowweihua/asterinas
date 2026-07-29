@@ -81,12 +81,16 @@ class SerialBackend:
 
     def _reader_loop(self):
         reconnect_delay = 1
+        last_data_time = time.time()
+        stale_threshold = 30
+
         while self._running:
             try:
                 if self._serial is None or not self._serial.is_open:
                     log(f"_reader_loop: serial device not open, waiting {reconnect_delay}s to reconnect")
                     time.sleep(reconnect_delay)
                     reconnect_delay = min(reconnect_delay * 2, 30)
+                    last_data_time = time.time()
                     try:
                         self._serial = serial.Serial(self.device, self.baudrate, timeout=self.timeout)
                         log(f"_reader_loop: reconnected to {self.device}")
@@ -101,8 +105,18 @@ class SerialBackend:
                     data = self._serial.read(waiting)
                     with self._lock:
                         self._buffer.extend(data)
-
+                    last_data_time = time.time()
                 else:
+                    if time.time() - last_data_time > stale_threshold:
+                        log(f"_reader_loop: stale connection detected (no data for {stale_threshold}s), forcing reconnect")
+                        try:
+                            self._serial.close()
+                        except:
+                            pass
+                        self._serial = None
+                        last_data_time = time.time()
+                        reconnect_delay = 1
+                        continue
                     time.sleep(0.02)
 
             except Exception as e:
@@ -115,6 +129,7 @@ class SerialBackend:
                 self._serial = None
                 time.sleep(reconnect_delay)
                 reconnect_delay = min(reconnect_delay * 2, 30)
+                last_data_time = time.time()
 
     def clear(self):
         try:

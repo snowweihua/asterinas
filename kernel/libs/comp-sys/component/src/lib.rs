@@ -148,8 +148,11 @@ pub fn init_all(
     stage: InitStage,
     components: Vec<ComponentInfo>,
 ) -> Result<(), ComponentSystemInitError> {
+    error!("[mac-a] init_all start");
     let components_info = parse_input(components);
+    error!("[mac-b] parse_input done");
     match_and_call(stage, components_info)?;
+    error!("[mac-c] match_and_call done");
     Ok(())
 }
 
@@ -169,6 +172,7 @@ fn match_and_call(
 ) -> Result<(), ComponentSystemInitError> {
     let mut infos = Vec::new();
     info!("[mac-0] match_and_call: stage={:?}", stage);
+    info!("[mac-0b] entering inventory iter");
     for registry in inventory::iter::<ComponentRegistry> {
         if registry.stage != stage {
             continue;
