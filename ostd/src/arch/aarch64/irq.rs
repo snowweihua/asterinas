@@ -40,9 +40,11 @@ impl IrqRemapping {
 pub(crate) fn enable_local() {
     unsafe {
         core::arch::asm!(
-            "str x30, [sp, #-16]!",
+            "mov x17, x30",
             "msr DAIFClr, #0b0011",
-            "ldr x30, [sp], #16",
+            "mov x30, x17",
+            out("x17") _,
+            options(nostack, nomem),
         );
     }
 }
@@ -75,9 +77,11 @@ pub(crate) fn enable_local_and_halt() {
 pub(crate) fn disable_local() {
     unsafe {
         core::arch::asm!(
-            "str x30, [sp, #-16]!",
+            "mov x17, x30",
             "msr DAIFSet, #0b0011",
-            "ldr x30, [sp], #16",
+            "mov x30, x17",
+            out("x17") _,
+            options(nostack, nomem),
         );
     }
 }

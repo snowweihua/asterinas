@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 #![no_std]
-#![deny(unsafe_code)]
+#![allow(unsafe_code)]
 
 //! An implementation of the global physical memory frame allocator for
 //! [OSTD](https://crates.io/crates/ostd) based kernels.

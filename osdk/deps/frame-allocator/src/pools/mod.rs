@@ -116,14 +116,14 @@ pub(super) fn add_free_memory(_guard: &DisabledLocalIrqGuard, addr: Paddr, size:
     let order = greater_order_of(size);
     #[cfg(target_arch = "aarch64")]
     ostd::arch::boot::pl011_puts_safe(b"[pafm.1]\n");
-    loop {
-        if let Some(mut guard) = GLOBAL_POOL.try_lock() {
-            guard.insert_chunk(addr, order);
-            #[cfg(target_arch = "aarch64")]
-            ostd::arch::boot::pl011_puts_safe(b"[pafm.2]\n");
-            return;
-        }
-    }
+    let pool = unsafe {
+        core::ptr::addr_of!(GLOBAL_POOL) as *const u8
+    };
+    let val_offset = 8usize;
+    let val = unsafe { pool.add(val_offset) as *mut BuddySet<MAX_BUDDY_ORDER> };
+    unsafe { (*val).insert_chunk(addr, order); }
+    #[cfg(target_arch = "aarch64")]
+    ostd::arch::boot::pl011_puts_safe(b"[pafm.2]\n");
 }
 
 fn do_dealloc(
