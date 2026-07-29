@@ -51,7 +51,7 @@ impl FrameAllocOptions {
     }
 
     /// Allocates a single frame with additional metadata.
-    #[inline(always)]
+    #[inline(never)]
     pub fn alloc_frame_with<M: AnyFrameMeta>(&self, metadata: M) -> Result<Frame<M>> {
         let mut meta = Some(metadata);
         let mut segment = self.alloc_segment_with(1, |_| meta.take().unwrap())?;
