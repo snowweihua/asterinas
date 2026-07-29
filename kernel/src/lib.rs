@@ -93,14 +93,18 @@ fn main() {
     component::init_all(InitStage::Bootstrap, vec![]).unwrap();
     ostd::arch::boot::pl011_puts_safe(b"[mac.1c] after empty vec test\n");
     ostd::arch::boot::pl011_puts_safe(b"[mac.2] calling real component::init_all\n");
-    ostd::arch::boot::pl011_puts_safe(b"[mac.2b] test alloc\n");
-    let s: alloc::string::String = alloc::borrow::ToOwned::to_owned("hello");
-    ostd::arch::boot::pl011_puts_safe(b"[mac.2c] alloc ok\n");
-    ostd::arch::boot::pl011_puts_safe(b"[mac.2d] test single component\n");
-    component::init_all(InitStage::Bootstrap, alloc::vec![
-        component::ComponentInfo::new("test", "/none", 0),
-    ]).unwrap();
-    ostd::arch::boot::pl011_puts_safe(b"[mac.2e] after single component\n");
+    ostd::arch::boot::pl011_puts_safe(b"[mac.2b] test frame alloc\n");
+    {
+        let mut opts = ostd::mm::FrameAllocOptions::new();
+        let opts = opts.zeroed(false);
+        if let Ok(frame) = opts.alloc_frame() {
+            ostd::arch::boot::pl011_puts_safe(b"[mac.2c] frame alloc ok\n");
+            drop(frame);
+        } else {
+            ostd::arch::boot::pl011_puts_safe(b"[mac.2c] frame alloc FAILED\n");
+        }
+    }
+    ostd::arch::boot::pl011_puts_safe(b"[mac.2d] after frame test\n");
     ostd::arch::boot::pl011_puts_safe(b"[mac.3] before call\n");
     component::init_all(InitStage::Bootstrap, component::parse_metadata!()).unwrap();
     ostd::arch::boot::pl011_puts_safe(b"[mac.4] after call\n");
