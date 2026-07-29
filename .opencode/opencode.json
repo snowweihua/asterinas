@@ -11,15 +11,13 @@
     },
     "serial": {
       "type": "local",
-      "command": ["python3", "-m", "serial_mcp.server"],
-      "cwd": "/home/snow/asterinas/tools",
+      "command": ["python3", "/home/snow/asterinas/tools/tcp_client.py", "--host", "172.19.96.1", "--port", "9002"],
       "enabled": true,
       "timeout": 300000
     },
     "power": {
       "type": "local",
-      "command": ["python3", "-m", "power_mcp.server"],
-      "cwd": "/home/snow/asterinas/tools",
+      "command": ["python3", "/home/snow/asterinas/tools/tcp_client.py", "--host", "172.19.96.1", "--port", "9001"],
       "enabled": true,
       "timeout": 300000
     }
