@@ -38,8 +38,14 @@ impl IrqRemapping {
 // FIXME: Mark this as unsafe. See
 // <https://github.com/asterinas/asterinas/issues/1120#issuecomment-2748696592>.
 pub(crate) fn enable_local() {
-    // FIXME: DAIFClr may corrupt LR on RPi3 when called from Drop
-    // during function return, use no-op for now.
+    unsafe {
+        core::arch::asm!(
+            "str x30, [sp, #-16]!",
+            "msr DAIFClr, #0b0011",
+            "ldr x30, [sp], #16",
+            options(nostack),
+        );
+    }
 }
 
 /// Enables local IRQs and halts the CPU to wait for interrupts.
@@ -68,7 +74,14 @@ pub(crate) fn enable_local_and_halt() {
 }
 
 pub(crate) fn disable_local() {
-    // FIXME: DAIFSet appears to corrupt LR on RPi3, use no-op for now
+    unsafe {
+        core::arch::asm!(
+            "str x30, [sp, #-16]!",
+            "msr DAIFSet, #0b0011",
+            "ldr x30, [sp], #16",
+            options(nostack),
+        );
+    }
 }
 
 pub(crate) fn is_local_enabled() -> bool {
