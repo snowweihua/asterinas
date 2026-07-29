@@ -64,12 +64,8 @@ pub struct FrameAllocator;
 
 impl GlobalFrameAllocator for FrameAllocator {
     fn alloc(&self, layout: Layout) -> Option<Paddr> {
-        // Skip the guard and cache::alloc to see if the crash is at the return.
-        // The crash at 0x3af610a8 is the same on every test, and neither
-        // disable_local nor enable_local affects it, so try the simplest
-        // possible return path to see if returning a value still crashes.
-        let _ = layout;
-        None
+        let guard = irq::disable_local();
+        cache::alloc(&guard, layout)
     }
 
     fn dealloc(&self, addr: Paddr, size: usize) {
