@@ -30,63 +30,26 @@ impl<const MAX_ORDER: BuddyOrder> BuddySet<MAX_ORDER> {
     pub(crate) fn insert_chunk(&mut self, addr: Paddr, order: BuddyOrder) {
         debug_assert!(order < MAX_ORDER);
 
-        #[cfg(target_arch = "aarch64")]
-        ostd::arch::boot::pl011_puts_safe(b"[ic.sz]\n");
         let inserted_size = size_of_order(order);
-        #[cfg(target_arch = "aarch64")]
-        ostd::arch::boot::pl011_puts_safe(b"[ic.fu]\n");
         let mut chunk = FreeChunk::from_unused(addr, order);
-        #[cfg(target_arch = "aarch64")]
-        ostd::arch::boot::pl011_puts_safe(b"[ic.co]\n");
 
         let mut current_order = chunk.order();
-        #[cfg(target_arch = "aarch64")]
-        ostd::arch::boot::pl011_puts_safe(b"[ic.lp]\n");
-        // WORKAROUND (AArch64 RPi3): skip coalescing entirely to isolate crash.
-        #[cfg(not(target_arch = "aarch64"))]
-        {
         loop {
-            #[cfg(target_arch = "aarch64")]
-            ostd::arch::boot::pl011_puts_safe(b"[ic.lp.chk]\n");
             if current_order + 1 >= MAX_ORDER {
                 break;
             }
-            #[cfg(target_arch = "aarch64")]
-            ostd::arch::boot::pl011_puts_safe(b"[ic.lp.bud]\n");
             let buddy_addr = chunk.buddy();
-            #[cfg(target_arch = "aarch64")]
-            ostd::arch::boot::pl011_puts_safe(b"[ic.lp.lst]\n");
             let list = &mut self.lists[current_order + 1];
-            #[cfg(target_arch = "aarch64")]
-            ostd::arch::boot::pl011_puts_safe(b"[ic.lp.cur]\n");
             let Some(mut cursor) = list.cursor_mut_at(buddy_addr) else {
-                #[cfg(target_arch = "aarch64")]
-                ostd::arch::boot::pl011_puts_safe(b"[ic.lp.brk]\n");
                 break;
             };
-            #[cfg(target_arch = "aarch64")]
-            ostd::arch::boot::pl011_puts_safe(b"[ic.lp.tak]\n");
             let taken = cursor.take_current().unwrap();
-            #[cfg(target_arch = "aarch64")]
-            ostd::arch::boot::pl011_puts_safe(b"[ic.lp.mrg]\n");
             debug_assert_eq!(buddy_addr, taken.paddr());
             chunk = chunk.merge_free(FreeChunk::from_free_head(taken));
-            #[cfg(target_arch = "aarch64")]
-            ostd::arch::boot::pl011_puts_safe(b"[ic.lp.ord]\n");
             current_order = chunk.order();
         }
-        }
         let order = chunk.order();
-        #[cfg(target_arch = "aarch64")]
-        ostd::arch::boot::pl011_puts_safe(b"[ic.pf-skip]\n");
-        #[cfg(not(target_arch = "aarch64"))]
         self.lists[order].push_front(chunk.into_unique_head());
-        #[cfg(target_arch = "aarch64")]
-        {
-            let _ = chunk.into_unique_head();
-        }
-        #[cfg(target_arch = "aarch64")]
-        ostd::arch::boot::pl011_puts_safe(b"[ic.ts]\n");
 
         self.total_size += inserted_size;
     }
