@@ -147,8 +147,6 @@ extern "C" fn fiq_current(_f: &mut TrapFrame) {
 extern "C" fn serr_current(f: &mut TrapFrame) {
     panic!("SError (system error) at current EL: {:?}", f);
 }
-    panic!("SError (system error) at current EL: {:?}", f);
-}
 
 /// Handle synchronous exception from lower EL (user mode).
 /// This is the user-space exception entry: SVC, data abort, etc.
