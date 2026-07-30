@@ -43,11 +43,6 @@ impl<const MAX_ORDER: BuddyOrder> BuddySet<MAX_ORDER> {
         #[cfg(target_arch = "aarch64")]
         ostd::arch::boot::pl011_puts_safe(b"[ic.lp]\n");
         // WORKAROUND (AArch64 RPi3): skip coalescing entirely to isolate crash.
-        // The coalescing loop calls cursor_mut_at(buddy_addr) which calls
-        // get_slot(buddy_addr) → frame_to_meta(buddy_addr) → accesses
-        // FRAME_METADATA_RANGE VA (0xFFFF_E000_...). This VA is NOT mapped by
-        // the boot page tables — it's only mapped by init_kernel_page_table()
-        // which hasn't run yet. Accessing it causes a translation fault → SError.
         #[cfg(not(target_arch = "aarch64"))]
         {
         loop {
@@ -83,8 +78,13 @@ impl<const MAX_ORDER: BuddyOrder> BuddySet<MAX_ORDER> {
         }
         let order = chunk.order();
         #[cfg(target_arch = "aarch64")]
-        ostd::arch::boot::pl011_puts_safe(b"[ic.pf]\n");
+        ostd::arch::boot::pl011_puts_safe(b"[ic.pf-skip]\n");
+        #[cfg(not(target_arch = "aarch64"))]
         self.lists[order].push_front(chunk.into_unique_head());
+        #[cfg(target_arch = "aarch64")]
+        {
+            let _ = chunk.into_unique_head();
+        }
         #[cfg(target_arch = "aarch64")]
         ostd::arch::boot::pl011_puts_safe(b"[ic.ts]\n");
 

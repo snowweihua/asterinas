@@ -446,15 +446,33 @@ boot_l3pt_linear:
  *     (all 8 x 2 MB blocks: PL011 at 0x3F201000, aux/mini-uart at 0x3F215000, etc.)
  */
 .balign 4096
+/*
+ * L2 (PMD) page table for the first 1 GB — boot_l2pt_gb0.
+ *
+ * On RPi3 3B DRAM is 948 MiB (PA 0x00000000–0x3B3FFFFF).  The BCM2837
+ * SoC leaves PA 0x3B400000–0x3EFFFFFF *unpopulated* — no device responds
+ * at those addresses.  Speculative instruction fetches (Cortex-A53) into
+ * this gap can trigger an AXI external abort which arrives as an SError
+ * (ESR 0x02000000) at EL3, crashing the kernel through TF-A.
+ *
+ * We therefore leave the gap entries *absent* (zero).  Normal memory
+ * resumes at 0x3F000000 (RPi3 MMIO window) which is mapped Device.
+ *
+ * QEMU virt: DRAM starts at 0x40000000 so this table is ONLY used for
+ * the low 1 GB identity pass-through; the QEMU UART at 0x09000000 is
+ * still mapped as Device.
+ */
 boot_l2pt_gb0:
     .set _mb2, 0
     .rept 512
     .if _mb2 == 0x09000000
     .quad ( PTE_DEVICE_2M | _mb2 )          /* QEMU UART */
+    .elseif _mb2 >= 0x3B400000 && _mb2 < 0x3F000000
+    .quad 0                                  /* gap – no physical memory */
     .elseif _mb2 >= 0x3F000000
-    .quad ( PTE_DEVICE_2M | _mb2 )          /* RPi3 peripheral bus (PL011, AUX, GPIO, ...) */
+    .quad ( PTE_DEVICE_2M | _mb2 )          /* RPi3 peripheral bus */
     .else
-    .quad ( PTE_NORMAL_2M | _mb2 )
+    .quad ( PTE_NORMAL_2M | _mb2 )          /* DRAM */
     .endif
     .set _mb2, _mb2 + (1 << 21)
     .endr
