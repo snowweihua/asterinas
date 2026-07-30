@@ -1,82 +1,72 @@
-# RPi3 Debug Session - 2026-07-29 (Session 12)
+# RPi3 Debug Session — 2026-07-30 (Session 13)
 
 ## Current Task
-Fix `add_free_memory()` stub in `pools/mod.rs` to actually add free memory to the buddy allocator — and resolve the deterministic "Synchronous Abort" crash at `0x3AF610A8`.
+Diagnose and fix the deterministic "Synchronous Abort" (ESR `0x02000000`) crash at `0x3AF610A8` / `0xFFFFFFFFFC900A8`. The crash consistently happens during frame allocator initialization (`add_free_memory → insert_chunk`).
 
-## Session 12 Summary
+## Session 13 Summary
 
-### New Discovery: `add_free_memory` is a Stub
-`pools::add_free_memory()` at `osdk/deps/frame-allocator/src/pools/mod.rs:113` is a **stub** — takes `addr`/`size` but does nothing. Body is only a debug print for aarch64. This means ALL free memory (kernel image, metadata, free RAM) is NEVER added to the buddy allocator.
+### Key Finding: Crash narrowed to `insert_before` metadata access
+With the coalescing loop SKIPPED (workaround), the crash moves from `cursor_mut_at(buddy_addr)` to `push_front → insert_before`. The crash is NOT specific to any single function — it occurs whenever frame metadata is dereferenced through the MetaSlot pointer obtained during `from_unused`.
 
-### Impact
-- Buddy allocator has **ZERO free frames** — all allocations return `Err(NoMemory)`
-- `FrameAllocOptions::alloc_frame()` test prints `[mac.2c] frame alloc FAILED`
-- The x30 corruption crash at `0xFFFFFFFFFC900A8`/`0x3AF610A8` is a **consequence** of the broken allocator (allocator operating on uninitialized/corrupted state), NOT a separate page table bug
-- AArch64 boots past init because it uses the **early allocator** exclusively — `#[cfg(not(target_arch = "aarch64"))]` guards skip frame allocation for linear/meta/kernel mappings
-
-### What We Did
-1. **Identified the stub**: `add_free_memory` at `pools/mod.rs:113`
-2. **Implemented the fix**: Uses `split_to_chunks(addr, size)` to split free memory ranges into buddy chunks, then inserts them into `LOCAL_POOL` (order < 18) or `GLOBAL_POOL` (order >= 18) via `BuddySet::insert_chunk()`
-3. **Confirmed the crash**: With the fix, the crash happens EARLIER in boot — during `add_free_memory` at `[pafm.g]` (inside `local_pool.insert_chunk()`), same address `0x3AF610A8` as before
-
-### Debug Print Trace
+### Boot Marker Trace (latest)
 ```
-[pafm.0]  - start of add_free_memory
-[pafm.a]  - after function entry
-[pafm.b]  - after LOCAL_POOL.get_with(guard)
-[pafm.c]  - after borrow_mut()
-[pafm.d]  - after OnDemandGlobalLock::new()
-[pafm.e]  - inside for_each closure (first chunk yielded)
-[pafm.g]  - about to call local_pool.insert_chunk(addr, order)
-CRASH at 0xFFFFFFFFFC900A8 / 0x3AF610A8
+[ic.sz] [ic.fu] [ic.co] [ic.lp]   ← insert_chunk prologue
+[ic.pf]                            ← about to call push_front → insert_before
+CRASH at 0x3AF610A8
+(no [ic.ts] marker — crash is inside push_front/insert_before)
 ```
 
-### Crash Analysis
-| Property | Value |
-|----------|-------|
-| Virtual ELR | `0xFFFFFFFFFC900A8` |
-| Physical ELR | `0x3AF610A8` (944 MB, top of 948 MB DRAM) |
-| ESR | `0x02000000` — "Unknown reason" (likely undefined instruction) |
-| x29 (FP) | `0x3` — **clearly corrupted** |
-| x16 (IP0) | `0x260612C` — unusual, not a valid code pointer |
-| x17 (IP1) | `0x8` — tiny, definitely corrupted |
-| Code at crash | `00000031 00000000 3af50b30 00000000` — garbage data, not instructions |
+### Previous trace (with coalescing enabled)
+```
+[ic.lp.chk] [ic.lp.bud] [ic.lp.lst] [ic.lp.cur]
+CRASH at 0x3AF610A8
+(crash inside cursor_mut_at → get_slot → ...)
+```
 
-- ELR == LR == `0x3AF610A8` — suggests CPU returned to a corrupted address
-- x29 = 3 confirms stack corruption (frame pointer should point to previous frame)
-- x16/x17 corrupted indicates function pointer dispatch or veneer issue
-- ALL crashes (old code in component::init_all AND new code in add_free_memory) are at EXACTLY the same address
+### Critical discovery: IN_BOOTSTRAP_CONTEXT timing
+`allocator::init()` runs at `lib.rs:init():156`, BEFORE:
+- `init_kernel_page_table()` (line 163)
+- `activate_kernel_page_table()` (line 189)  
+- `IN_BOOTSTRAP_CONTEXT.store(false, ...)` (line 195)
 
-### Common Code Path
-Both old crash path (component::init_all) and new crash path (add_free_memory → insert_chunk) call:
-- `FreeChunk::from_unused()` → `UniqueFrame::from_unused()` → `MetaSlot::get_from_unused()` → `get_slot()`
+Therefore `IN_BOOTSTRAP_CONTEXT` is still **TRUE** during the crash. The `get_slot()` function uses the **bootstrap path**:
+```rust
+let meta_paddr_base = FRAME_META_PADDR_BASE.load(Ordering::Relaxed); // PA
+let frame_idx = (paddr - frame_paddr_base) / PAGE_SIZE;
+let slot_paddr = meta_paddr_base + frame_idx * size_of::<MetaSlot>();
+slot_paddr as *mut MetaSlot  // ← RAW PHYSICAL ADDRESS POINTER
+```
 
-The `get_slot()` function accesses frame metadata in `FRAME_METADATA_RANGE` (VA `0xFFFF_E000_0000_0000`). This is the common code that crashes.
+This raw PA pointer is dereferenced via TTBR0 identity mapping (`boot_l3pt_low[0] → boot_l2pt_gb0`), which correctly maps PA 0x0-0x3FFFFFFF to the same VA.
 
-### Key Address Ranges (aarch64, ADDR_WIDTH=48)
-| Region | VA Base | Description |
-|--------|---------|-------------|
-| Kernel code | `0xFFFF_0000_0000_0000` | .text, .data, .bss |
-| Linear mapping | `0xFFFF_8000_0000_0000` | pa → va via `pa + LINEAR_MAPPING_BASE` |
-| Vmalloc | `0xFFFF_C000_0000_0000` | Dynamic kernel mappings |
-| Frame metadata | `0xFFFF_E000_0000_0000` | `frame_to_meta()` translates pa to here |
-| Crash VA | `0xFFFF_FFFF_FC90_00A8` | Above metadata range — NOT in any defined range |
+### Why SError (ESR 0x02000000) instead of translation fault?
+The ESR `0x02000000` has EC = `0b000000` ("Unknown reason"), characteristic of an **SError** (asynchronous external abort). This suggests the crash is NOT from a data access fault but from:
+1. A **speculative instruction fetch** that crosses the DRAM boundary into non-existent memory (0x3B400000+), triggering AXI external abort → SError
+2. Even with per-2MB boot page table entries (boot_l2pt_gb0 fix), the Cortex-A53 prefetcher may speculatively access past valid DRAM
+3. Or: a bug in the boot page table fix itself — `boot_l2pt_gb0` marks 0x3B000000-0x3EFFFFFF as Normal memory, but only 0x3B000000-0x3B400000 is actual DRAM. Speculative access to 0x3B400000-0x3EFFFFFF goes to non-existent address → external abort
 
-### Hypothesis
-The crash is a **stack corruption / return-address clobber** issue, NOT a page fault. The CPU jumps to `0x3AF610A8` (data in RAM) and tries to execute garbage, getting an undefined instruction exception.
+### The gap: unmapped DRAM tail
+RPi3 DRAM: 0x0 – 0x3B400000 (948 MB).  
+`boot_l2pt_gb0` maps 0x00000000–0x3FFFFFFF with **all Normal memory** entries (except 0x3F000000+ which is Device).  
+The range 0x3B400000–0x3EFFFFFF (60 MB) is mapped as Normal memory but has **no physical memory** — any access triggers AXI external abort.
 
-Possible causes:
-1. **Stack overflow** in `insert_chunk` or its callees — the buddy allocator's coalescing loop or linked-list operations overflow the kernel stack
-2. **Buffer overflow** in frame metadata access — `frame_to_meta()` writes out of bounds, corrupting adjacent memory including stack
-3. **Corrupted linked list** — `LinkedList::cursor_mut_at()` or `push_front()` writes to freed/corrupted memory
-4. **Compiler optimization bug** — the `BuddySet::insert_chunk()` monomorphization generates bad code for aarch64-cortex-a53
+### Relevant registers (consistent across all crashes)
+```
+x16 = 0x0260612C  (IP0, scratch — always the same)
+x17 = 0x00000008  (IP1, scratch — always the same)
+x19 = 0x3AF4C440  (near top of DRAM, ~944 MB)
+x20 = 0x3B35C368  (near top of DRAM, ~947 MB)
+x21 = 0x3AF4C4B0  (x19 + 0x70)
+x29 = 0x00000003  (frame pointer — clearly corrupted)
+```
+
+### Working Theory
+The frame being inserted is at PA 0x3AF4C440 (near end of DRAM). During `insert_before`, the frame's metadata slot is accessed via TTBR0 identity mapping (PA pointer). The instruction stream for `insert_before` is fetched through TTBR1 (kernel mapping). The Cortex-A53 instruction prefetcher may speculatively fetch past the end of DRAM (0x3B400000) into the 60 MB Normal-mapped-but-not-real region, hitting an AXI external abort. This generates a SError, which TF-A at EL3 catches and prints as "Synchronous Abort."
+
+Consistent crash address `0x3AF610A8` may be a stale ELR value from an earlier context (TF-A BL31 initialization) or the PA of a page table entry being walked during the prefetch.
 
 ### Next Actions
-1. Verify `dram_base()` for RPi3 to understand frame_paddr_base
-2. Check if `FRAME_METADATA_RANGE` is properly mapped (page table entries exist for `0xFFFF_E000_0000_0000`)
-3. Add debug prints INSIDE `insert_chunk` / `from_unused` to narrow crash point further
-4. Alternatively: test with QEMU aarch64 virt to see if crash reproduces there with more debug info
-5. If QEMU works, the issue is hardware-specific (Cortex-A53 erratum or MMU/page table bug)
-
-### Files Modified
-- `osdk/deps/frame-allocator/src/pools/mod.rs`: Fixed `add_free_memory()` stub + added debug prints
+1. **Mask gaps in boot_l2pt_gb0**: Change entries from 0x3B400000 to 0x3EFFFFFF from PTE_NORMAL_2M to invalid/absent. This prevents speculative access to non-existent memory.
+2. **Use larger stack**: Increase boot stack from 256 KiB to 512 KiB (ruling out stack overflow).
+3. **Check if crash still happens with completely empty BuddySet**: Skip push_front entirely as a test.
+4. **Try boot with IRQ/FIQ/SError masking at EL1**: Modify DAIF to mask SError interrupts during critical sections.
