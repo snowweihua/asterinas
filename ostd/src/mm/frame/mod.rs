@@ -112,6 +112,18 @@ impl<M: AnyFrameMeta> Frame<M> {
         })
     }
 
+    pub fn init_unused(paddr: Paddr, metadata: M) -> *const () {
+        MetaSlot::get_from_unused(paddr, metadata, false)
+            .expect("Frame::init_unused: frame is not unused") as *const ()
+    }
+
+    /// # Safety
+    ///
+    /// `ptr` must be a pointer returned by [`Self::init_unused`].
+    pub unsafe fn from_init_ptr(ptr: *const ()) -> Self {
+        Self { ptr: ptr as *const MetaSlot, _marker: PhantomData }
+    }
+
     /// Gets the metadata of this page.
     pub fn meta(&self) -> &M {
         // SAFETY: The type is tracked by the type system.

@@ -314,6 +314,15 @@ jump_to_main:
     str     xzr, [x10, #(1 * 8)]    /* slot 1 → 0 (invalid) */
     str     xzr, [x10, #(2 * 8)]    /* slot 2 → 0 (invalid) */
     str     xzr, [x10, #(3 * 8)]    /* slot 3 → 0 (invalid) */
+    /* Same for boot_l3pt_high slots 1-2: non-existent PA on RPi3 */
+    adr     x10, boot_l3pt_high
+    str     xzr, [x10, #(1 * 8)]    /* slot 1: PA 0x80000000 → 0 (invalid) */
+    str     xzr, [x10, #(2 * 8)]    /* slot 2: PA 0xC0000000 → 0 (invalid) */
+    /* Same for boot_l3pt_low slots 1-3 (TTBR0 identity map): non-existent PA on RPi3 */
+    adr     x10, boot_l3pt_low
+    str     xzr, [x10, #(1 * 8)]    /* slot 1: PA 0x40000000 → 0 (invalid) */
+    str     xzr, [x10, #(2 * 8)]    /* slot 2: PA 0x80000000 → 0 (invalid) */
+    str     xzr, [x10, #(3 * 8)]    /* slot 3: PA 0xC0000000 → 0 (invalid) */
     dsb     sy
     isb
 1:

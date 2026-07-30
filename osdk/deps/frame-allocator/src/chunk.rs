@@ -153,8 +153,10 @@ impl FreeChunk {
     pub(crate) fn from_unused(addr: Paddr, order: BuddyOrder) -> FreeChunk {
         assert_eq!(addr % size_of_order(order), 0);
 
-        let head = UniqueFrame::from_unused(addr, Link::new(FreeHeadMeta { order }))
-            .expect("The head frame is not unused");
+        let head = {
+            let ptr = UniqueFrame::init_unused(addr, Link::new(FreeHeadMeta { order }));
+            unsafe { UniqueFrame::from_init_ptr(ptr) }
+        };
 
         #[cfg(debug_assertions)]
         {
@@ -219,11 +221,12 @@ impl FreeChunk {
 
         let left_child = FreeChunk { head: unique_head };
         let right_child = FreeChunk {
-            head: UniqueFrame::from_unused(
-                right_child_addr,
-                Link::new(FreeHeadMeta { order: new_order }),
-            )
-            .expect("Tail frames are not unused"),
+            head: unsafe {
+                UniqueFrame::from_init_ptr(UniqueFrame::init_unused(
+                    right_child_addr,
+                    Link::new(FreeHeadMeta { order: new_order }),
+                ))
+            },
         };
         #[cfg(target_arch = "aarch64")]
         ostd::arch::boot::pl011_puts_safe(b"[split] done\n");

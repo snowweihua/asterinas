@@ -110,9 +110,40 @@ pub(super) fn dealloc(
 }
 
 #[inline(never)]
-pub(super) fn add_free_memory(_guard: &DisabledLocalIrqGuard, addr: Paddr, size: usize) {
+pub(super) fn add_free_memory(guard: &DisabledLocalIrqGuard, addr: Paddr, size: usize) {
     #[cfg(target_arch = "aarch64")]
     ostd::arch::boot::pl011_puts_safe(b"[pafm.0]\n");
+    #[cfg(target_arch = "aarch64")]
+    ostd::arch::boot::pl011_puts_safe(b"[pafm.a]\n");
+    let local_pool_cell = LOCAL_POOL.get_with(guard);
+    #[cfg(target_arch = "aarch64")]
+    ostd::arch::boot::pl011_puts_safe(b"[pafm.b]\n");
+    let mut local_pool = local_pool_cell.borrow_mut();
+    #[cfg(target_arch = "aarch64")]
+    ostd::arch::boot::pl011_puts_safe(b"[pafm.c]\n");
+    let mut global_pool = OnDemandGlobalLock::new();
+    #[cfg(target_arch = "aarch64")]
+    ostd::arch::boot::pl011_puts_safe(b"[pafm.d]\n");
+
+    split_to_chunks(addr, size).for_each(|(addr, order)| {
+        #[cfg(target_arch = "aarch64")]
+        ostd::arch::boot::pl011_puts_safe(b"[pafm.e]\n");
+        if order >= MAX_LOCAL_BUDDY_ORDER {
+            #[cfg(target_arch = "aarch64")]
+            ostd::arch::boot::pl011_puts_safe(b"[pafm.f]\n");
+            global_pool.get().insert_chunk(addr, order);
+        } else {
+            #[cfg(target_arch = "aarch64")]
+            ostd::arch::boot::pl011_puts_safe(b"[pafm.g]\n");
+            local_pool.insert_chunk(addr, order);
+        }
+    });
+
+    #[cfg(target_arch = "aarch64")]
+    ostd::arch::boot::pl011_puts_safe(b"[pafm.h]\n");
+    global_pool.update_global_size_if_locked();
+    #[cfg(target_arch = "aarch64")]
+    ostd::arch::boot::pl011_puts_safe(b"[pafm.i]\n");
 }
 
 fn do_dealloc(

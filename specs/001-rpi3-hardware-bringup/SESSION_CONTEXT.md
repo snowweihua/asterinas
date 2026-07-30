@@ -1,51 +1,82 @@
-# RPi3 Debug Session - 2026-07-29 (Session 11)
+# RPi3 Debug Session - 2026-07-29 (Session 12)
 
 ## Current Task
-Fix x30 (link register) corruption on RPi3 Cortex-A53 — root cause of ALL hangs and crashes.
+Fix `add_free_memory()` stub in `pools/mod.rs` to actually add free memory to the buddy allocator — and resolve the deterministic "Synchronous Abort" crash at `0x3AF610A8`.
 
-## Session 11 Summary
+## Session 12 Summary
 
-### CRITICAL DISCOVERY: x30 Corruption is Sysmatic
-The crash address `0x3af610a8` is in `.eh_frame_hdr` section, NOT executable code. x30 gets corrupted to point at data, causing instruction abort on `ret`. This is deterministic — always the SAME address.
+### New Discovery: `add_free_memory` is a Stub
+`pools::add_free_memory()` at `osdk/deps/frame-allocator/src/pools/mod.rs:113` is a **stub** — takes `addr`/`size` but does nothing. Body is only a debug print for aarch64. This means ALL free memory (kernel image, metadata, free RAM) is NEVER added to the buddy allocator.
 
-### Root Cause Chain
-1. Four separate functions were STUBBED OUT as workarounds for x30 corruption:
-   - `alloc_frame_with()` → infinite loop
-   - `FrameAllocator::alloc()` → always returns None
-   - `add_free_memory()` → no-op (never adds memory to buddy pool)
-   - `disable_local()` / `enable_local()` → no-op (DAIFSet/DAIFClr corrupts LR)
+### Impact
+- Buddy allocator has **ZERO free frames** — all allocations return `Err(NoMemory)`
+- `FrameAllocOptions::alloc_frame()` test prints `[mac.2c] frame alloc FAILED`
+- The x30 corruption crash at `0xFFFFFFFFFC900A8`/`0x3AF610A8` is a **consequence** of the broken allocator (allocator operating on uninitialized/corrupted state), NOT a separate page table bug
+- AArch64 boots past init because it uses the **early allocator** exclusively — `#[cfg(not(target_arch = "aarch64"))]` guards skip frame allocation for linear/meta/kernel mappings
 
-2. These stubs caused:
-   - `component::init_all` hang (frame alloc infinite loop → heap alloc hangs)
-   - No memory available for allocations (all pools empty)
-   - No IRQ disabling (spin locks unprotected)
+### What We Did
+1. **Identified the stub**: `add_free_memory` at `pools/mod.rs:113`
+2. **Implemented the fix**: Uses `split_to_chunks(addr, size)` to split free memory ranges into buddy chunks, then inserts them into `LOCAL_POOL` (order < 18) or `GLOBAL_POOL` (order >= 18) via `BuddySet::insert_chunk()`
+3. **Confirmed the crash**: With the fix, the crash happens EARLIER in boot — during `add_free_memory` at `[pafm.g]` (inside `local_pool.insert_chunk()`), same address `0x3AF610A8` as before
 
-### FIXES Applied
-| Function | Original | Fix | Status |
-|----------|----------|-----|--------|
-| `disable_local/enable_local` | No-op | Save/restore LR around DAIFSet/DAIFClr | ✓ WORKS |
-| `alloc_frame_with` | Infinite loop | Delegate to `alloc_segment_with` | ✓ Returns (not hangs) but x30 crash on return |
-| `FrameAllocator::alloc` | Returns None | Use cache/pools allocation path | ✓ Allocates frames successfully |
-| `add_free_memory` | No-op | Add to GLOBAL_POOL via OnDemandGlobalLock | ✗ Crashes at `SpinLock::lock()` |
-| `pools::alloc` | AArch64 separate path | Unified with standard path | ✓ Code unified |
+### Debug Print Trace
+```
+[pafm.0]  - start of add_free_memory
+[pafm.a]  - after function entry
+[pafm.b]  - after LOCAL_POOL.get_with(guard)
+[pafm.c]  - after borrow_mut()
+[pafm.d]  - after OnDemandGlobalLock::new()
+[pafm.e]  - inside for_each closure (first chunk yielded)
+[pafm.g]  - about to call local_pool.insert_chunk(addr, order)
+CRASH at 0xFFFFFFFFFC900A8 / 0x3AF610A8
+```
 
-### Current State
-- Frame allocator CACHE and POOLS work — 3 successful allocations observed
-- Crash now AFTER [mac.3] in `alloc_frame_with` generic Result return, NOT in `add_free_memory`
-- With no-op `add_free_memory`, AFM cycles complete without crash — confirms add_free_memory is crash-prone, not essential during init
-- Crash always at `elr=0x3af610a8` — same address every time
-- "Synchronous Abort" handler is TF-A/U-Boot, NOT our kernel trap handler
+### Crash Analysis
+| Property | Value |
+|----------|-------|
+| Virtual ELR | `0xFFFFFFFFFC900A8` |
+| Physical ELR | `0x3AF610A8` (944 MB, top of 948 MB DRAM) |
+| ESR | `0x02000000` — "Unknown reason" (likely undefined instruction) |
+| x29 (FP) | `0x3` — **clearly corrupted** |
+| x16 (IP0) | `0x260612C` — unusual, not a valid code pointer |
+| x17 (IP1) | `0x8` — tiny, definitely corrupted |
+| Code at crash | `00000031 00000000 3af50b30 00000000` — garbage data, not instructions |
 
-### x30 Corruption Analysis
-- **Always deterministic** — crash address `0x3af610a8` never changes despite code modifications
-- Affects: generic `Result<Frame<M>, Error>` return, vtable/closure calls
-- `alloc_segment_with` (generic `Result<Segment<M>>`) WORKS — not all generic Results crash, Frame vs Segment layout difference?
-- DAIFSet/DAIFClr corruption fixed with LR save/restore using x9 temp register (no stack ops)
-- `extern "C"` calling convention didn't fix
-- `target-cpu=cortex-a53` via Docker build didn't help (cached)
-- C ABI, raw pointer access, try_lock() — all crash at same address
+- ELR == LR == `0x3AF610A8` — suggests CPU returned to a corrupted address
+- x29 = 3 confirms stack corruption (frame pointer should point to previous frame)
+- x16/x17 corrupted indicates function pointer dispatch or veneer issue
+- ALL crashes (old code in component::init_all AND new code in add_free_memory) are at EXACTLY the same address
+
+### Common Code Path
+Both old crash path (component::init_all) and new crash path (add_free_memory → insert_chunk) call:
+- `FreeChunk::from_unused()` → `UniqueFrame::from_unused()` → `MetaSlot::get_from_unused()` → `get_slot()`
+
+The `get_slot()` function accesses frame metadata in `FRAME_METADATA_RANGE` (VA `0xFFFF_E000_0000_0000`). This is the common code that crashes.
+
+### Key Address Ranges (aarch64, ADDR_WIDTH=48)
+| Region | VA Base | Description |
+|--------|---------|-------------|
+| Kernel code | `0xFFFF_0000_0000_0000` | .text, .data, .bss |
+| Linear mapping | `0xFFFF_8000_0000_0000` | pa → va via `pa + LINEAR_MAPPING_BASE` |
+| Vmalloc | `0xFFFF_C000_0000_0000` | Dynamic kernel mappings |
+| Frame metadata | `0xFFFF_E000_0000_0000` | `frame_to_meta()` translates pa to here |
+| Crash VA | `0xFFFF_FFFF_FC90_00A8` | Above metadata range — NOT in any defined range |
+
+### Hypothesis
+The crash is a **stack corruption / return-address clobber** issue, NOT a page fault. The CPU jumps to `0x3AF610A8` (data in RAM) and tries to execute garbage, getting an undefined instruction exception.
+
+Possible causes:
+1. **Stack overflow** in `insert_chunk` or its callees — the buddy allocator's coalescing loop or linked-list operations overflow the kernel stack
+2. **Buffer overflow** in frame metadata access — `frame_to_meta()` writes out of bounds, corrupting adjacent memory including stack
+3. **Corrupted linked list** — `LinkedList::cursor_mut_at()` or `push_front()` writes to freed/corrupted memory
+4. **Compiler optimization bug** — the `BuddySet::insert_chunk()` monomorphization generates bad code for aarch64-cortex-a53
 
 ### Next Actions
-1. Make `alloc_frame_with` avoid generic Result return — use non-generic helper with raw pointer
-2. Or: use `extern "C"` returning i64 (scalar) instead of Result<Frame<M>> 
-3. Use `alloc_segment_with(1)` + raw paddr extraction as workaround
+1. Verify `dram_base()` for RPi3 to understand frame_paddr_base
+2. Check if `FRAME_METADATA_RANGE` is properly mapped (page table entries exist for `0xFFFF_E000_0000_0000`)
+3. Add debug prints INSIDE `insert_chunk` / `from_unused` to narrow crash point further
+4. Alternatively: test with QEMU aarch64 virt to see if crash reproduces there with more debug info
+5. If QEMU works, the issue is hardware-specific (Cortex-A53 erratum or MMU/page table bug)
+
+### Files Modified
+- `osdk/deps/frame-allocator/src/pools/mod.rs`: Fixed `add_free_memory()` stub + added debug prints

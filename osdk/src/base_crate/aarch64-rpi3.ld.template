@@ -78,10 +78,13 @@ SECTIONS
         __ex_table_end = .;
     }
 
-    . = ALIGN(8);
-    .eh_frame               : AT(ADDR(.eh_frame) - KERNEL_VMA_OFFSET) {
-        PROVIDE(__eh_frame = .);
-        KEEP(*(.eh_frame .eh_frame.*))
+    /* Discard unwinding tables — not needed with panic=abort.
+     * These can cause x30 corruption on RPi3 when generic functions
+     * return Result<Frame<M>> (CPU jumps into .eh_frame data). */
+    /DISCARD/ : {
+        *(.eh_frame)
+        *(.eh_frame_hdr)
+        *(.gcc_except_table)
     }
 
     .ktest_array            : AT(ADDR(.ktest_array) - KERNEL_VMA_OFFSET) {

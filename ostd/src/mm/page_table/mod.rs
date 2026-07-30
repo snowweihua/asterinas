@@ -56,9 +56,16 @@ pub(crate) fn reserve_root_pt_page() {
 
     let paddr = early_alloc(Layout::from_size_align(PAGE_SIZE, PAGE_SIZE).unwrap())
         .expect("AArch64 root PT page: early_alloc failed (ran out of low-DRAM pages?)");
-    let meta = PageTablePageMeta::new(crate::arch::mm::PagingConsts::NR_LEVELS);
-    let frame = Frame::from_unused(paddr, meta)
-        .expect("AArch64 root PT page: from_unused failed (page already in use?)");
+    // Zero the page: early_alloc does NOT zero memory.  Without this,
+    // unused L0 slots retain garbage that can be interpreted as valid
+    // page-table descriptors (e.g. slot 511 maps VA 0xFFFFFFFFFC900A8
+    // to non-existent DRAM, causing a synchronous external abort).
+    unsafe {
+        let va = crate::mm::paddr_to_vaddr(paddr);
+        core::ptr::write_bytes(va as *mut u8, 0, PAGE_SIZE);
+    }
+    let meta = PageTablePageMeta::<KernelPtConfig>::new(crate::arch::mm::PagingConsts::NR_LEVELS);
+    let frame = unsafe { Frame::from_init_ptr(Frame::init_unused(paddr, meta)) };
 
     unsafe {
         AARCH64_ROOT_PT_FRAME = Some(frame);

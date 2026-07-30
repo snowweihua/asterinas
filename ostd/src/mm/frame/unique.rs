@@ -41,6 +41,21 @@ impl<M: AnyFrameMeta> UniqueFrame<M> {
         })
     }
 
+    /// Concrete helper that returns a single-register `*const ()` pointer,
+    /// panicking on error — avoids the 16-byte generic `Result<UniqueFrame<M>>`
+    /// return that triggers a Cortex-A53 epilogue bug (x30 corruption).
+    pub fn init_unused(paddr: Paddr, metadata: M) -> *const () {
+        MetaSlot::get_from_unused(paddr, metadata, true)
+            .expect("UniqueFrame::init_unused: frame is not unused") as *const ()
+    }
+
+    /// # Safety
+    ///
+    /// `ptr` must be a pointer returned by [`Self::init_unused`].
+    pub unsafe fn from_init_ptr(ptr: *const ()) -> Self {
+        Self { ptr: ptr as *const MetaSlot, _marker: PhantomData }
+    }
+
     /// Gets the metadata of this page.
     pub fn meta(&self) -> &M {
         // SAFETY: The type is tracked by the type system.

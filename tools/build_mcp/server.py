@@ -37,8 +37,9 @@ log("=== Build MCP server starting ===")
 def do_build_kernel():
     """Run the Dockerised cargo build in background thread."""
     global build_result
+    env = dict(os.environ, RUSTFLAGS="-C target-cpu=cortex-a53")
     cmd = (
-        f"docker run --rm -v {WORKSPACE}:/root/asterinas {DOCKER_IMAGE} bash -c "
+        f"docker run --rm -v {WORKSPACE}:/root/asterinas -e RUSTFLAGS='-C target-cpu=cortex-a53' {DOCKER_IMAGE} bash -c "
         f"'cd /root/asterinas && cargo osdk build --release --target-arch aarch64 --boot-method qemu-direct --scheme aarch64-rpi3'"
     )
     start = time.time()
