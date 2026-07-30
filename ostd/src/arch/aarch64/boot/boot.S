@@ -195,6 +195,19 @@ switch_to_el1_from_el2:
     orr     x1, x1, #(1 << 1)
     msr     hcr_el2, x1
 
+    /* Install our own EL2 exception vectors.  The BCM2837 routes AXI
+     * bus errors directly to EL2 (bypassing HCR_EL2.AMO=0).  If we
+     * do not replace U-Boot's VBAR_EL2 here, U-Boot's handler will
+     * print "Synchronous Abort" and reset the CPU on any external
+     * abort.  Our handler (vector_table_el2) prints ESR/ELR/FAR and
+     * spins, giving us useful diagnostic output.
+     *
+     * ldr = loads the 64-bit virtual address from a literal pool
+     * (adr cannot span the VA gap between .boot and .vector sections). */
+    ldr     x9, =vector_table_el2
+    msr     vbar_el2, x9
+    isb
+
     /* Ensure MMU disabled at EL1 on entry */
     ldr     x3, =SCTLR_MMU_DISABLED
     msr     sctlr_el1, x3

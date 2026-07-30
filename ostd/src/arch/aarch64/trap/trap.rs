@@ -22,6 +22,8 @@ use crate::arch::cpu::context::GeneralRegs;
 
 #[cfg(target_arch = "aarch64")]
 global_asm!(include_str!("trap.S"));
+#[cfg(target_arch = "aarch64")]
+global_asm!(include_str!("el2_trap.S"));
 
 /// Initialize interrupt handling for the current HART.
 ///
