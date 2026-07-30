@@ -111,10 +111,14 @@ pub(super) fn dealloc(
 
 #[inline(never)]
 pub(super) fn add_free_memory(guard: &DisabledLocalIrqGuard, addr: Paddr, size: usize) {
+    ostd::arch::boot::pl011_puts_safe(b"[pafm.get_with]\n");
     let local_pool_cell = LOCAL_POOL.get_with(guard);
+    ostd::arch::boot::pl011_puts_safe(b"[pafm.borrow_mut]\n");
     let mut local_pool = local_pool_cell.borrow_mut();
+    ostd::arch::boot::pl011_puts_safe(b"[pafm.global_lock]\n");
     let mut global_pool = OnDemandGlobalLock::new();
 
+    ostd::arch::boot::pl011_puts_safe(b"[pafm.split]\n");
     split_to_chunks(addr, size).for_each(|(addr, order)| {
         if order >= MAX_LOCAL_BUDDY_ORDER {
             global_pool.get().insert_chunk(addr, order);

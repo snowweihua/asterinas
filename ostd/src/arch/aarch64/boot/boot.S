@@ -484,7 +484,7 @@ boot_l2pt_gb0:
 .balign 4096
 .globl boot_stack_bottom
 boot_stack_bottom:
-    .skip 0x40000                           /* 256 KiB */
+    .skip 0x80000                           /* 512 KiB */
 .globl boot_stack_top
 boot_stack_top:
 

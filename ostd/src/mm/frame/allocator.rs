@@ -239,8 +239,15 @@ pub(crate) unsafe fn init() {
                     if r2_start < r2.end {
                         #[cfg(target_arch = "aarch64")]
                         {
-                            unsafe { crate::arch::boot::pl011_puts(b"[alloc.afm] "); }
+                            let capped_end = core::cmp::min(r2.end, r2_start + 128 * 1024 * 1024);
+                            unsafe { crate::arch::boot::pl011_puts(b"[alloc.afm] range="); }
+                            unsafe { crate::arch::boot::pl011_puts_hex(r2_start); }
+                            unsafe { crate::arch::boot::pl011_puts(b"+"); }
+                            unsafe { crate::arch::boot::pl011_puts_hex(capped_end - r2_start); }
+                            unsafe { crate::arch::boot::pl011_puts(b"\n"); }
+                            get_global_frame_allocator().add_free_memory(r2_start, capped_end - r2_start);
                         }
+                        #[cfg(not(target_arch = "aarch64"))]
                         get_global_frame_allocator().add_free_memory(r2_start, r2.end - r2_start);
                         #[cfg(target_arch = "aarch64")]
                         unsafe { crate::arch::boot::pl011_puts(b"[alloc.afm-done]\n"); }

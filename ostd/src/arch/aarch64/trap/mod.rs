@@ -145,6 +145,28 @@ extern "C" fn fiq_current(_f: &mut TrapFrame) {
 /// Handle SError from current EL.
 #[unsafe(no_mangle)]
 extern "C" fn serr_current(f: &mut TrapFrame) {
+    // Raw UART marker — fires even before logging is initialized
+    unsafe {
+        core::arch::asm!(
+            "movz x28, #0x3F20, lsl #16",
+            "movk x28, #0x1000",
+            "mov w27, #0x53",      // 'S'
+            "strb w27, [x28]",
+            "mov w27, #0x45",      // 'E'
+            "strb w27, [x28]",
+            "mov w27, #0x52",      // 'R'
+            "strb w27, [x28]",
+            "mov w27, #0x52",      // 'R'
+            "strb w27, [x28]",
+            "mov w27, #0x21",      // '!'
+            "strb w27, [x28]",
+            "mov w27, #0x0a",      // '\n'
+            "strb w27, [x28]",
+            out("x27") _,
+            out("x28") _,
+            options(nostack),
+        );
+    }
     panic!("SError (system error) at current EL: {:?}", f);
 }
 
