@@ -79,11 +79,6 @@ impl GlobalFrameAllocator for FrameAllocator {
         ostd::arch::boot::pl011_puts_safe(b"[AFM] guard\n");
         let guard = irq::disable_local();
         #[cfg(target_arch = "aarch64")]
-        {
-            unsafe { core::arch::asm!("dsb sy; isb", options(nostack, nomem)); }
-            ostd::arch::boot::pl011_puts_safe(b"[AFM] dsb done\n");
-        }
-        #[cfg(target_arch = "aarch64")]
         ostd::arch::boot::pl011_puts_safe(b"[AFM] calling pools\n");
         pools::add_free_memory(&guard, addr, size);
         #[cfg(target_arch = "aarch64")]
