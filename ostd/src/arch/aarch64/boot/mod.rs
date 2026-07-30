@@ -345,17 +345,12 @@ pub unsafe extern "C" fn aarch64_boot(device_tree_paddr: usize, _reserved: usize
     // so we see it regardless of board type, before board detection.
     unsafe {
         core::arch::asm!(
-            // PL011 DR on RPi3: 0x3F201000
             "movz x28, #0x3F20, lsl #16",
             "movk x28, #0x1000",
             "mov  w27, #70",           // 'F'
             "str  w27, [x28]",
-            // mini-UART IO on RPi3: 0x3F215040
             "movz x28, #0x3F21, lsl #16",
             "movk x28, #0x5040",
-            "str  w27, [x28]",
-            // PL011 DR on QEMU virt: 0x09000000
-            "movz x28, #0x0900, lsl #16",
             "str  w27, [x28]",
             out("x27") _,
             out("x28") _,
