@@ -565,6 +565,8 @@ pub(crate) unsafe fn init() -> Segment<MetaPageMeta> {
     unsafe { crate::arch::boot::pl011_puts(b"[meta] before mur\n"); }
 
     mark_unusable_ranges();
+    #[cfg(target_arch = "aarch64")]
+    unsafe { crate::arch::boot::pl011_puts(b"[meta.init.5] mur returned\n"); }
 
     if frame_paddr_base == 0 {
         #[cfg(target_arch = "aarch64")]

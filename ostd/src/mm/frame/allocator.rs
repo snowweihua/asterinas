@@ -223,14 +223,22 @@ pub(crate) unsafe fn init() {
     unsafe { crate::arch::boot::pl011_puts(b"[alloc.init.3]\n"); }
 
     let frame_paddr_base = crate::arch::mm::frame_paddr_base();
+    #[cfg(target_arch = "aarch64")]
+    unsafe { crate::arch::boot::pl011_puts(b"[alloc.init.4] got frame_paddr_base\n"); }
 
     for region in regions.iter() {
+        #[cfg(target_arch = "aarch64")]
+        unsafe { crate::arch::boot::pl011_puts(b"[alloc.init.5] iter region\n"); }
         if region.typ() == MemoryRegionType::Usable {
             debug_assert!(region.base() % PAGE_SIZE == 0);
             debug_assert!(region.len() % PAGE_SIZE == 0);
 
             for r1 in range_difference(&(region.base()..region.end()), &range_1) {
+                #[cfg(target_arch = "aarch64")]
+                unsafe { crate::arch::boot::pl011_puts(b"[alloc.init.6] got r1\n"); }
                 for r2 in range_difference(&r1, &range_2) {
+                    #[cfg(target_arch = "aarch64")]
+                    unsafe { crate::arch::boot::pl011_puts(b"[alloc.init.7] got r2\n"); }
                     let r2_start = if r2.start < frame_paddr_base {
                         frame_paddr_base
                     } else {
