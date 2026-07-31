@@ -203,19 +203,9 @@ where
     }
 
     fn lazy_get_id(&mut self) -> u64 {
-        // FIXME: Self-incrementing IDs may overflow, while `core::pin::Pin`
-        // is not compatible with locks. Think about a better solution.
-        static LIST_ID_ALLOCATOR: AtomicU64 = AtomicU64::new(1);
-        const MAX_LIST_ID: u64 = i64::MAX as u64;
-
         if self.list_id == 0 {
-            let id = LIST_ID_ALLOCATOR.fetch_add(1, Ordering::Relaxed);
-            if id >= MAX_LIST_ID {
-                log::error!("The frame list ID allocator has exhausted.");
-                abort();
-            }
-            self.list_id = id;
-            id
+            self.list_id = 1;
+            1
         } else {
             self.list_id
         }

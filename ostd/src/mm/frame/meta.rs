@@ -205,32 +205,19 @@ pub enum GetFrameError {
 }
 
 /// Gets the reference to a metadata slot.
+#[inline(never)]
 pub(super) fn get_slot(paddr: Paddr) -> Result<&'static MetaSlot, GetFrameError> {
-    #[cfg(target_arch = "aarch64")]
-    unsafe { crate::arch::boot::pl011_puts(b"[get_slot] start\n"); }
-    #[cfg(target_arch = "aarch64")]
-    unsafe { crate::arch::boot::pl011_puts(b"[get_slot] calling frame_paddr_base\n"); }
     let frame_paddr_base = crate::arch::mm::frame_paddr_base();
-    #[cfg(target_arch = "aarch64")]
-    unsafe { crate::arch::boot::pl011_puts(b"[get_slot] got frame_paddr_base\n"); }
 
     if paddr % PAGE_SIZE != 0 {
-        #[cfg(target_arch = "aarch64")]
-        unsafe { crate::arch::boot::pl011_puts(b"[get_slot] not aligned\n"); }
         return Err(GetFrameError::NotAligned);
     }
     if paddr < frame_paddr_base {
-        #[cfg(target_arch = "aarch64")]
-        unsafe { crate::arch::boot::pl011_puts(b"[get_slot] below base\n"); }
         return Err(GetFrameError::OutOfBound);
     }
     if paddr >= super::max_paddr() {
-        #[cfg(target_arch = "aarch64")]
-        unsafe { crate::arch::boot::pl011_puts(b"[get_slot] above max\n"); }
         return Err(GetFrameError::OutOfBound);
     }
-    #[cfg(target_arch = "aarch64")]
-    unsafe { crate::arch::boot::pl011_puts(b"[get_slot] checks passed\n"); }
 
     let ptr = if !crate::IN_BOOTSTRAP_CONTEXT.load(Ordering::Relaxed) {
         let vaddr = mapping::frame_to_meta::<PagingConsts>(paddr);
@@ -238,20 +225,12 @@ pub(super) fn get_slot(paddr: Paddr) -> Result<&'static MetaSlot, GetFrameError>
     } else {
         let meta_paddr_base = FRAME_META_PADDR_BASE.load(Ordering::Relaxed);
         if meta_paddr_base == 0 {
-            #[cfg(target_arch = "aarch64")]
-            unsafe { crate::arch::boot::pl011_puts(b"[get_slot] meta_paddr_base zero\n"); }
             return Err(GetFrameError::OutOfBound);
         }
-        #[cfg(target_arch = "aarch64")]
-        unsafe { crate::arch::boot::pl011_puts(b"[get_slot] got meta_paddr_base\n"); }
         let frame_idx = (paddr - frame_paddr_base) / PAGE_SIZE;
         let slot_paddr = meta_paddr_base + frame_idx * size_of::<MetaSlot>();
         slot_paddr as *mut MetaSlot
     };
-    #[cfg(target_arch = "aarch64")]
-    unsafe { crate::arch::boot::pl011_puts(b"[get_slot] computed ptr\n"); }
-    #[cfg(target_arch = "aarch64")]
-    unsafe { crate::arch::boot::pl011_puts(b"[get_slot] about to deref\n"); }
 
     Ok(unsafe { &*ptr })
 }

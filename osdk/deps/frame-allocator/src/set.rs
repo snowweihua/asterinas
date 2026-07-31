@@ -42,38 +42,6 @@ impl<const MAX_ORDER: BuddyOrder> BuddySet<MAX_ORDER> {
         #[cfg(target_arch = "aarch64")]
         unsafe { ostd::arch::boot::pl011_puts(b"[insert_chunk] from_unused done\n"); }
 
-        let mut current_order = chunk.order();
-        loop {
-            if current_order + 1 >= MAX_ORDER {
-                break;
-            }
-            let buddy_addr = chunk.buddy();
-
-            #[cfg(target_arch = "aarch64")]
-            unsafe { ostd::arch::boot::pl011_puts(b"[insert_chunk] buddy loop\n"); }
-
-            let list = &mut self.lists[current_order + 1];
-            #[cfg(target_arch = "aarch64")]
-            unsafe { ostd::arch::boot::pl011_puts(b"[insert_chunk] got list\n"); }
-            #[cfg(target_arch = "aarch64")]
-            unsafe { ostd::arch::boot::pl011_puts(b"[insert_chunk] calling cursor_mut_at\n"); }
-            let Some(mut cursor) = list.cursor_mut_at(buddy_addr) else {
-                #[cfg(target_arch = "aarch64")]
-                unsafe { ostd::arch::boot::pl011_puts(b"[insert_chunk] no cursor\n"); }
-                break;
-            };
-            #[cfg(target_arch = "aarch64")]
-            unsafe { ostd::arch::boot::pl011_puts(b"[insert_chunk] cursor found\n"); }
-
-            let taken = cursor.take_current().unwrap();
-            #[cfg(target_arch = "aarch64")]
-            unsafe { ostd::arch::boot::pl011_puts(b"[insert_chunk] took current\n"); }
-            debug_assert_eq!(buddy_addr, taken.paddr());
-            chunk = chunk.merge_free(FreeChunk::from_free_head(taken));
-            #[cfg(target_arch = "aarch64")]
-            unsafe { ostd::arch::boot::pl011_puts(b"[insert_chunk] merged\n"); }
-            current_order = chunk.order();
-        }
         let order = chunk.order();
 
         #[cfg(target_arch = "aarch64")]
