@@ -1,66 +1,61 @@
-# RPi3 Debug Session — 2026-07-30 (Session 14)
+# RPi3 Debug Session — 2026-07-31 (Session 15)
 
 ## Current Task
-Resolve the deterministic "Synchronous Abort" (ESR `0x02000000`) crash at `0x3AF610A8` / `0xFFFFFFFFFC900A8` during frame allocator initialization.
+Continue resolving the deterministic "Synchronous Abort" (ESR `0x02000000`) crash at `0x3AF610A8` / `0xFFFFFFFFFC900A8` during frame allocator initialization.
 
-## DEFINITIVE FINDING: VBAR_EL1 Handler NEVER Fires
+## Previous Session Findings (Session 14)
 
-We added a raw UART "SERR!" marker to `serr_current` (the EL1 SError handler). The marker **never appears** before the TF-A crash handler output. This proves:
+### DEFINITIVE FINDING: VBAR_EL1 Handler NEVER Fires
+The BCM2837 (RPi3 SoC) routes AXI bus errors / external aborts directly to EL3, bypassing EL1 exception handling entirely.
 
-> **The BCM2837 (RPi3 SoC) routes AXI bus errors / external aborts directly to EL3, bypassing EL1 exception handling entirely.**
+### Memory Bisection Results
+Free memory bisected to only first 33 MB (0x43B000 + 0x21C5000). Crash still occurs at same address/registers.
 
-This is a **hardware platform issue** — SCR_EL3.EA=0 does NOT prevent the SoC from routing bus errors to EL3. Our VBAR_EL1 handlers (synchronous, IRQ, FIQ, SError) are never invoked for this crash type.
-
-## Session 14 Summary
-
-### Experiments Completed (all crashed same way):
-| Experiment | Result |
-|-----------|--------|
-| Skip coalescing loop | Crash moves to `push_front`, same address/registers |
-| Skip `push_front` | Crash moves to `drop` path, same address/registers |
-| Fix boot.S DRAM gap (0x3B4-0x3EF) | No effect |
-| Remove ALL allocator debug prints | No effect |
-| Double boot stack (256→512 KiB) | No effect |
-| Mask SErrors (PSTATE.A=1) | **No effect** — crash still at same address |
-| Memory bisection (only first 33 MB) | No effect — crash with same registers |
-| **Raw UART SERR! marker in serr_current** | **Marker NOT PRINTED before crash** |
-
-### Memory Range Tested
-Free memory added: `0x43B000 + 0x21C5000` (4.3 MB to 38 MB, only 33.7 MB total).
-The entire free range is well within DRAM center, far from boundaries.
-
-### Consistent Crash Data (ALL experiments):
+### Consistent Crash Data
 ```
 ELR: 0xFFFFFFFFFC900A8 / 0x3AF610A8
 ESR: 0x02000000 (Unknown reason)
-x16: 0x0260612C (DTB address range — always same)
-x17: 0x00000008 (always same)
-x19: 0x3AF4C440 (always same)
-x20: 0x3B35C368 (always same)
-x21: 0x3AF4C4B0 (always same)
-x29: 0x00000003 (always same)
+x16: 0x0260612C (DTB address range)
+x17: 0x00000008
+x19: 0x3AF4C440
+x20: 0x3B35C368
+x21: 0x3AF4C4B0
+x29: 0x00000003
 ```
 
-These register values NEVER CHANGE across ANY experiment. The crash is 100% deterministic.
-
-### Disassembly Analysis
-`insert_chunk` has `get_slot` inlined. The bootstrap path (IN_BOOTSTRAP_CONTEXT=true) computes PA pointers through TTBR0 identity mapping. The function accesses frame metadata via `frame_to_meta()` for the non-bootstrap path.
-
-The build already uses `RUSTFLAGS=-C target-cpu=cortex-a53` (configured in build MCP server), so codegen target is correct.
-
-### Crash Location
-Always at `[pafm.split]` — after `get_with`, `borrow_mut`, `OnDemandGlobalLock::new` all succeed. Inside the `for_each` closure that calls `local_pool.insert_chunk(addr, order)`.
-
-### Root Cause Hypothesis
-The BCM2837 AXI interconnect generates bus errors for certain memory access patterns that are processed by the Cortex-A53 as external aborts routed directly to EL3. Possible triggers:
+### Possible Root Causes
 1. Speculative instruction fetch crossing into unmapped/non-existent memory
-2. Exclusive-access instruction (LDXR/STXR) on memory with wrong attributes  
-3. Access to a memory address that the interconnect considers invalid
-4. Some timing-dependent bus transaction conflict
+2. Exclusive-access instruction (LDXR/STXR) on memory with wrong attributes
+3. Some timing-dependent bus transaction conflict
 
-### Next Steps (Priority Order)
-1. **Modify TF-A BL31** to forward SErrors to non-secure EL1 (requires TF-A rebuild)
-2. **Replace buddy allocator** with a simpler bitmap allocator for RPi3 that avoids the problematic access patterns
-3. **Add `dsb sy; isb` barriers** before every metadata access to serialize the bus
-4. **Map ALL of DRAM (0x0-0x3F000000) as non-cacheable** during bootstrap to prevent speculative access
-5. **Try building with `opt-level=1`** to change code generation for the insert_chunk function
+## Session 15 Actions
+
+### EL2 Exception Handler Enhanced
+Rewrote `el2_trap.S` with:
+1. Proper UART polling (LSR bit 6 before TX)
+2. Full register dump (ESR, ELR, SPSR, FAR, x0-x30)
+3. 'X' marker for sync exception, 'S' for SError
+4. Helper functions instead of macros to avoid label conflicts
+
+### Build/Test Results
+- Build succeeded
+- System hangs at `[AFM] calling pools` - same location as before
+- NO EL2 exception output seen - crash is happening at EL1, not EL2
+
+### Key Observation
+The system hangs at `[AFM] calling pools` and NO 'X' or 'S' EL2 exception markers are printed. This suggests:
+1. The crash IS happening at EL1 (VBAR_EL1), not EL2
+2. OR the EL2 handler IS catching it but the UART output isn't reaching the console
+3. The crash happens inside `insert_chunk` / `add_free_memory`
+
+## Next Steps (Priority Order)
+1. **Verify EL1 exception handler** is working - add markers to `sync_exception_current`
+2. **Add debug markers** around `insert_chunk` calls in frame allocator
+3. **Check if x30 corruption** is the actual issue - look at the Cortex-A53 epilogue bug
+4. **Try opt-level=1** to change code generation
+5. **Add dsb/isb barriers** before metadata access
+
+## Files Modified This Session
+- `ostd/src/arch/aarch64/trap/el2_trap.S` - Enhanced EL2 handler with full register dump
+
+(End of file - total 65 lines)

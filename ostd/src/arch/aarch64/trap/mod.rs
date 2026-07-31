@@ -66,16 +66,54 @@ fn raw_puts(s: &[u8]) {
 /// Handle synchronous exceptions from current EL (kernel exceptions).
 #[unsafe(no_mangle)]
 extern "C" fn sync_exception_current(f: &mut TrapFrame) {
+    raw_puts(b"\r\n[EL1-SYNC]\r\n");
+
     let esr = ESR_EL1.get() as usize;
     let ec = (esr >> 26) & 0x3f;
 
     // Always print raw hex to both UARTs — board detection may not have run yet.
-    raw_puts(b"\r\n[sec] ESR=");
+    raw_puts(b" ESR=");
     raw_put_hex(esr);
-    raw_puts(b" ELR=");
+    raw_puts(b"\r\n ELR=");
     raw_put_hex(f.elr_el1);
-    raw_puts(b" LR=");
+    raw_puts(b"\r\n LR=");
     raw_put_hex(f.lr);
+    raw_puts(b"\r\n SPSR=");
+    raw_put_hex(f.spsr_el1);
+
+    raw_puts(b"\r\n=== x0-x30 ===\r\n");
+    raw_puts(b" x0="); raw_put_hex(f.general.x0);
+    raw_puts(b" x1="); raw_put_hex(f.general.x1);
+    raw_puts(b" x2="); raw_put_hex(f.general.x2);
+    raw_puts(b" x3="); raw_put_hex(f.general.x3);
+    raw_puts(b" x4="); raw_put_hex(f.general.x4);
+    raw_puts(b" x5="); raw_put_hex(f.general.x5);
+    raw_puts(b" x6="); raw_put_hex(f.general.x6);
+    raw_puts(b" x7="); raw_put_hex(f.general.x7);
+    raw_puts(b" x8="); raw_put_hex(f.general.x8);
+    raw_puts(b" x9="); raw_put_hex(f.general.x9);
+    raw_puts(b" x10="); raw_put_hex(f.general.x10);
+    raw_puts(b" x11="); raw_put_hex(f.general.x11);
+    raw_puts(b" x12="); raw_put_hex(f.general.x12);
+    raw_puts(b" x13="); raw_put_hex(f.general.x13);
+    raw_puts(b" x14="); raw_put_hex(f.general.x14);
+    raw_puts(b" x15="); raw_put_hex(f.general.x15);
+    raw_puts(b" x16="); raw_put_hex(f.general.x16);
+    raw_puts(b" x17="); raw_put_hex(f.general.x17);
+    raw_puts(b" x18="); raw_put_hex(f.general.x18);
+    raw_puts(b" x19="); raw_put_hex(f.general.x19);
+    raw_puts(b" x20="); raw_put_hex(f.general.x20);
+    raw_puts(b" x21="); raw_put_hex(f.general.x21);
+    raw_puts(b" x22="); raw_put_hex(f.general.x22);
+    raw_puts(b" x23="); raw_put_hex(f.general.x23);
+    raw_puts(b" x24="); raw_put_hex(f.general.x24);
+    raw_puts(b" x25="); raw_put_hex(f.general.x25);
+    raw_puts(b" x26="); raw_put_hex(f.general.x26);
+    raw_puts(b" x27="); raw_put_hex(f.general.x27);
+    raw_puts(b" x28="); raw_put_hex(f.general.x28);
+    raw_puts(b" x29="); raw_put_hex(f.general.x29);
+    raw_puts(b" x30="); raw_put_hex(f.lr);
+    raw_puts(b"\r\n");
 
     match ec {
         0x24 | 0x25 => {
@@ -99,32 +137,15 @@ extern "C" fn sync_exception_current(f: &mut TrapFrame) {
                     }
                 }
             }
-            crate::early_println!(
-                "[sec] sync_exception_current: ESR={:#x} FAR={:#x} ELR={:#x} SPSR={:#x}",
-                esr,
-                far,
-                f.elr_el1,
-                f.spsr_el1
-            );
-            panic!(
-                "Kernel synchronous exception! ESR={:#x} FAR={:#x} ELR={:#x}",
-                esr, far, f.elr_el1
-            );
         }
         _ => {
             raw_puts(b"\r\n");
-            crate::early_println!(
-                "[sec] sync_exception_current: ESR={:#x} ELR={:#x} SPSR={:#x} LR={:#x}",
-                esr,
-                f.elr_el1,
-                f.spsr_el1,
-                f.lr
-            );
-            panic!(
-                "Kernel synchronous exception! ESR={:#x} ELR={:#x}",
-                esr, f.elr_el1
-            );
         }
+    }
+
+    raw_puts(b"\r\n### EL1 HALT ###\r\n");
+    loop {
+        core::hint::spin_loop();
     }
 }
 
@@ -145,7 +166,19 @@ extern "C" fn fiq_current(_f: &mut TrapFrame) {
 /// Handle SError from current EL.
 #[unsafe(no_mangle)]
 extern "C" fn serr_current(f: &mut TrapFrame) {
-    panic!("SError (system error) at current EL: {:?}", f);
+    raw_puts(b"\r\n[EL1-SERR]\r\n");
+    raw_puts(b" ESR=");
+    raw_put_hex(f.esr_el1);
+    raw_puts(b" ELR=");
+    raw_put_hex(f.elr_el1);
+    raw_puts(b" SPSR=");
+    raw_put_hex(f.spsr_el1);
+    raw_puts(b" x30=");
+    raw_put_hex(f.lr);
+    raw_puts(b"\r\n### EL1 SERR HALT ###\r\n");
+    loop {
+        core::hint::spin_loop();
+    }
 }
 
 /// Handle synchronous exception from lower EL (user mode).
