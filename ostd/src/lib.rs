@@ -125,8 +125,6 @@ unsafe fn init() {
     arch::serial::init();
     unsafe { crate::arch::boot::pl011_puts(b"[init.4] after serial::init\n"); }
 
-
-
     unsafe { crate::arch::boot::pl011_puts(b"[init.5] before logger::init\n"); }
     logger::init();
     unsafe { crate::arch::boot::pl011_puts(b"[init.6] after logger::init\n"); }
