@@ -365,14 +365,13 @@ impl PageTable<KernelPtConfig> {
     }
 
     pub(crate) fn new_kernel_page_table() -> Self {
-        unsafe { crate::arch::boot::pl011_puts(b"[npt.1] start\n"); }
         let kpt = Self::empty_kernel();
-        unsafe { crate::arch::boot::pl011_puts(b"[npt.2] after empty_kernel\n"); }
 
+        #[cfg(target_arch = "aarch64")]
+        unsafe { crate::arch::boot::pl011_puts(b"[npt] after empty_kernel\n"); }
         // Make shared the page tables mapped by the root table in the kernel space.
         {
             let preempt_guard = disable_preempt();
-            unsafe { crate::arch::boot::pl011_puts(b"[npt.3] after disable_preempt\n"); }
             // WORKAROUND (AArch64 RPi3): Skip the spinlock (AtomicU8::swap) in
             // PageTableGuard::lock() because exclusive-monitor instructions
             // (LDADDB / LDXRB+STXRB) can silently fail on Cortex-A53 when any
