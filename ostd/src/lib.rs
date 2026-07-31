@@ -125,12 +125,7 @@ unsafe fn init() {
     arch::serial::init();
     unsafe { crate::arch::boot::pl011_puts(b"[init.4] after serial::init\n"); }
 
-    #[cfg(target_arch = "aarch64")]
-    {
-        unsafe { crate::arch::boot::pl011_puts(b"[EXCEPTION_TEST] triggering exception...\n"); }
-        unsafe { *(0xFFFFFFF000000000u64 as *mut u64) = 0; }
-        unsafe { crate::arch::boot::pl011_puts(b"[EXCEPTION_TEST] survived - bad!\n"); }
-    }
+
 
     unsafe { crate::arch::boot::pl011_puts(b"[init.5] before logger::init\n"); }
     logger::init();
