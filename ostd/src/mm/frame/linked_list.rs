@@ -150,10 +150,18 @@ where
     ///
     /// This method fail if [`Self::contains`] returns `false`.
     pub fn cursor_mut_at(&mut self, frame: Paddr) -> Option<CursorMut<'_, M>> {
+        #[cfg(target_arch = "aarch64")]
+        unsafe { crate::arch::boot::pl011_puts(b"[cursor_mut_at] start\n"); }
         let Ok(slot) = get_slot(frame) else {
+            #[cfg(target_arch = "aarch64")]
+            unsafe { crate::arch::boot::pl011_puts(b"[cursor_mut_at] get_slot failed\n"); }
             return None;
         };
+        #[cfg(target_arch = "aarch64")]
+        unsafe { crate::arch::boot::pl011_puts(b"[cursor_mut_at] got slot\n"); }
         let contains = slot.in_list.load(Ordering::Relaxed) == self.lazy_get_id();
+        #[cfg(target_arch = "aarch64")]
+        unsafe { crate::arch::boot::pl011_puts(b"[cursor_mut_at] checked contains\n"); }
         if contains {
             Some(CursorMut {
                 list: self,

@@ -111,17 +111,32 @@ pub(super) fn dealloc(
 
 #[inline(never)]
 pub(super) fn add_free_memory(guard: &DisabledLocalIrqGuard, addr: Paddr, size: usize) {
+    #[cfg(target_arch = "aarch64")]
+    unsafe { ostd::arch::boot::pl011_puts(b"[afm] start\n"); }
+
     let local_pool_cell = LOCAL_POOL.get_with(guard);
     let mut local_pool = local_pool_cell.borrow_mut();
     let mut global_pool = OnDemandGlobalLock::new();
 
+    #[cfg(target_arch = "aarch64")]
+    unsafe { ostd::arch::boot::pl011_puts(b"[afm] before split\n"); }
+
     split_to_chunks(addr, size).for_each(|(addr, order)| {
+        #[cfg(target_arch = "aarch64")]
+        unsafe { ostd::arch::boot::pl011_puts(b"[afm] chunk\n"); }
         if order >= MAX_LOCAL_BUDDY_ORDER {
+            #[cfg(target_arch = "aarch64")]
+            unsafe { ostd::arch::boot::pl011_puts(b"[afm] global insert\n"); }
             global_pool.get().insert_chunk(addr, order);
         } else {
+            #[cfg(target_arch = "aarch64")]
+            unsafe { ostd::arch::boot::pl011_puts(b"[afm] local insert\n"); }
             local_pool.insert_chunk(addr, order);
         }
     });
+
+    #[cfg(target_arch = "aarch64")]
+    unsafe { ostd::arch::boot::pl011_puts(b"[afm] done\n"); }
 
     global_pool.update_global_size_if_locked();
 }

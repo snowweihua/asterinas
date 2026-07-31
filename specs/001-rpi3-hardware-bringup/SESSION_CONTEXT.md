@@ -8,9 +8,6 @@ Continue resolving the deterministic "Synchronous Abort" (ESR `0x02000000`) cras
 ### DEFINITIVE FINDING: VBAR_EL1 Handler NEVER Fires
 The BCM2837 (RPi3 SoC) routes AXI bus errors / external aborts directly to EL3, bypassing EL1 exception handling entirely.
 
-### Memory Bisection Results
-Free memory bisected to only first 33 MB (0x43B000 + 0x21C5000). Crash still occurs at same address/registers.
-
 ### Consistent Crash Data
 ```
 ELR: 0xFFFFFFFFFC900A8 / 0x3AF610A8
@@ -23,11 +20,6 @@ x21: 0x3AF4C4B0
 x29: 0x00000003
 ```
 
-### Possible Root Causes
-1. Speculative instruction fetch crossing into unmapped/non-existent memory
-2. Exclusive-access instruction (LDXR/STXR) on memory with wrong attributes
-3. Some timing-dependent bus transaction conflict
-
 ## Session 15 Actions
 
 ### EL2 Exception Handler Enhanced
@@ -37,25 +29,41 @@ Rewrote `el2_trap.S` with:
 3. 'X' marker for sync exception, 'S' for SError
 4. Helper functions instead of macros to avoid label conflicts
 
-### Build/Test Results
+### EL1 Exception Handler Enhanced
+Updated `trap/mod.rs` `sync_exception_current` with:
+1. Print "[EL1-SYNC]" marker immediately on entry
+2. Dump ESR, ELR, SPSR, LR and all x0-x30 registers
+3. Halt instead of panic to avoid recursive exceptions
+
+Updated `serr_current` with similar full register dump.
+
+### Test Results
 - Build succeeded
 - System hangs at `[AFM] calling pools` - same location as before
-- NO EL2 exception output seen - crash is happening at EL1, not EL2
+- NO 'X' marker from EL2 handler
+- NO '[EL1-SYNC]' marker from EL1 handler
+- NO "Synchronous Abort" from TF-A
 
-### Key Observation
-The system hangs at `[AFM] calling pools` and NO 'X' or 'S' EL2 exception markers are printed. This suggests:
-1. The crash IS happening at EL1 (VBAR_EL1), not EL2
-2. OR the EL2 handler IS catching it but the UART output isn't reaching the console
-3. The crash happens inside `insert_chunk` / `add_free_memory`
+## Key Observation
+The system hangs at `[AFM] calling pools` and:
+- No 'X' (EL2 sync) or 'S' (EL2 serr) markers appear
+- No '[EL1-SYNC]' from EL1 handler
+- No TF-A "Synchronous Abort"
 
-## Next Steps (Priority Order)
-1. **Verify EL1 exception handler** is working - add markers to `sync_exception_current`
-2. **Add debug markers** around `insert_chunk` calls in frame allocator
-3. **Check if x30 corruption** is the actual issue - look at the Cortex-A53 epilogue bug
-4. **Try opt-level=1** to change code generation
-5. **Add dsb/isb barriers** before metadata access
+This suggests either:
+1. Exception is happening at EL3 (TF-A level) but TF-A isn't printing
+2. Exception IS happening at EL2 but UART output is lost/buggy
+3. System is just very slow and hasn't crashed yet
 
 ## Files Modified This Session
 - `ostd/src/arch/aarch64/trap/el2_trap.S` - Enhanced EL2 handler with full register dump
+- `ostd/src/arch/aarch64/trap/mod.rs` - Enhanced EL1 handler with full register dump
 
-(End of file - total 65 lines)
+## Next Steps (Priority Order)
+1. **Check TF-A output** - verify if "Synchronous Abort" appears or not
+2. **Add debug markers** inside `insert_chunk` to pinpoint exact crash location
+3. **Verify VBAR_EL2 is set correctly** - check if `vector_table_el2` is actually being used
+4. **Try early_println instead of raw_puts** - maybe UART output isn't working from exception context
+5. **Add memory barriers** - `dsb sy; isb` before metadata access in frame allocator
+
+(End of file - total 79 lines)
