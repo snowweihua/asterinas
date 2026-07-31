@@ -174,20 +174,17 @@ pub(crate) unsafe fn init_on_bsp() {
     // SAFETY: The safety is upheld by the caller and
     // the correctness of the `get_num_processors` method.
     unsafe {
-        unsafe { crate::arch::boot::pl011_puts(b"[cpu.3] before copy_bsp_for_ap\n") };
+        crate::arch::boot::pl011_puts(b"[cpu.3] before copy_bsp_for_ap\n");
         local::copy_bsp_for_ap(num_cpus as usize);
-        unsafe { crate::arch::boot::pl011_puts(b"[cpu.4] after copy_bsp_for_ap\n") };
+        crate::arch::boot::pl011_puts(b"[cpu.4] after copy_bsp_for_ap\n");
 
-        unsafe { crate::arch::boot::pl011_puts(b"[cpu.5] before set_this_cpu_id\n") };
+        crate::arch::boot::pl011_puts(b"[cpu.5] before set_this_cpu_id\n");
         set_this_cpu_id(0);
-        unsafe { crate::arch::boot::pl011_puts(b"[cpu.6] after set_this_cpu_id\n") };
+        crate::arch::boot::pl011_puts(b"[cpu.6] after set_this_cpu_id\n");
 
-        // Note that `init_num_cpus` should be called after `copy_bsp_for_ap`.
-        // This helps to build the safety reasoning in `CpuLocal::get_on_cpu`.
-        // See its implementation for details.
-        unsafe { crate::arch::boot::pl011_puts(b"[cpu.7] before init_num_cpus\n") };
+        crate::arch::boot::pl011_puts(b"[cpu.7] before init_num_cpus\n");
         init_num_cpus(num_cpus);
-        unsafe { crate::arch::boot::pl011_puts(b"[cpu.8] after init_num_cpus\n") };
+        crate::arch::boot::pl011_puts(b"[cpu.8] after init_num_cpus\n");
     }
 }
 

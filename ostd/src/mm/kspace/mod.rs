@@ -219,24 +219,31 @@ pub fn init_kernel_page_table(meta_pages: Segment<MetaPageMeta>) {
         }
     }
 
-    // Map the metadata pages at FRAME_METADATA_RANGE.
+    #[cfg(target_arch = "aarch64")]
+    unsafe { crate::arch::boot::pl011_puts(b"[kspace.m0] before metadata VA compute\n"); }
+    let start_va = mapping::frame_to_meta::<PagingConsts>(crate::arch::mm::frame_paddr_base());
+    #[cfg(target_arch = "aarch64")]
+    unsafe {
+        crate::arch::boot::pl011_puts(b"[kspace.m1] start_va=");
+        crate::arch::boot::pl011_puts_hex(start_va);
+        crate::arch::boot::pl011_puts(b"\n");
+    }
+    let from = start_va..start_va + meta_pages.size();
+    #[cfg(target_arch = "aarch64")]
+    unsafe { crate::arch::boot::pl011_puts(b"[kspace.m2] range computed, prop setup\n"); }
+    let prop = PageProperty {
+        flags: PageFlags::RW,
+        cache: CachePolicy::Writeback,
+        priv_flags: PrivilegedPageFlags::GLOBAL,
+    };
+    #[cfg(target_arch = "aarch64")]
+    unsafe { crate::arch::boot::pl011_puts(b"[kspace.m3] before cursor_mut\n"); }
     {
-        let start_va = mapping::frame_to_meta::<PagingConsts>(crate::arch::mm::frame_paddr_base());
-        let from = start_va..start_va + meta_pages.size();
-        let prop = PageProperty {
-            flags: PageFlags::RW,
-            cache: CachePolicy::Writeback,
-            priv_flags: PrivilegedPageFlags::GLOBAL,
-        };
         let mut cursor = kpt.cursor_mut(&preempt_guard, &from).unwrap();
-        // We use untracked mapping so that we can benefit from huge pages.
-        // We won't unmap them anyway, so there's no leaking problem yet.
-        // TODO: support tracked huge page mapping.
         let pa_range = meta_pages.clone().into_raw();
         for (pa, level) in
             largest_pages::<KernelPtConfig>(from.start, pa_range.start, pa_range.len())
         {
-            // SAFETY: We are doing the metadata mappings for the kernel.
             unsafe { cursor.map(MappedItem::Untracked(pa, level, prop)) }
                 .expect("Frame metadata address space is mapped twice");
         }
@@ -305,12 +312,12 @@ pub unsafe fn activate_kernel_page_table() {
             crate::arch::boot::pl011_puts_hex(l0_0);
             crate::arch::boot::pl011_puts(b"\n");
             // L0[256]: boot_l3pt_linear remap (should be MM_TYPE_TABLE to L1 table)
-            let l0_256 = unsafe { (kpt_root as *const usize).add(256).read_volatile() };
+            let l0_256 = (kpt_root as *const usize).add(256).read_volatile();
             crate::arch::boot::pl011_puts(b"[akt.0d] L0[256]=");
             crate::arch::boot::pl011_puts_hex(l0_256);
             crate::arch::boot::pl011_puts(b"\n");
             // L0[511]: the highest slot, covers 0xFFFF800000000000+
-            let l0_511 = unsafe { (kpt_root as *const usize).add(511).read_volatile() };
+            let l0_511 = (kpt_root as *const usize).add(511).read_volatile();
             crate::arch::boot::pl011_puts(b"[akt.0e] L0[511]=");
             crate::arch::boot::pl011_puts_hex(l0_511);
             crate::arch::boot::pl011_puts(b"\n");
@@ -318,17 +325,17 @@ pub unsafe fn activate_kernel_page_table() {
             if (l0_511 & 0x3) == 3 {
                 let l1_table_pa = l0_511 & 0x0000_FFFF_FFFF_F000;
                 let l1_table_va = l1_table_pa + 0xFFFF_8000_0000_0000;
-                let l1_0 = unsafe { (l1_table_va as *const usize).read_volatile() };
+                let l1_0 = (l1_table_va as *const usize).read_volatile();
                 crate::arch::boot::pl011_puts(b"[akt.0f] L1[0](linear)=");
                 crate::arch::boot::pl011_puts_hex(l1_0);
                 crate::arch::boot::pl011_puts(b"\n");
                 // L1 slot 511 covers the crash VA 0xFFFFFFFFC900A8
-                let l1_511 = unsafe { (l1_table_va as *const usize).add(511).read_volatile() };
+                let l1_511 = (l1_table_va as *const usize).add(511).read_volatile();
                 crate::arch::boot::pl011_puts(b"[akt.0g] L1[511](crash)=");
                 crate::arch::boot::pl011_puts_hex(l1_511);
                 crate::arch::boot::pl011_puts(b"\n");
                 // Also check L1 slot 448 (metadata range)
-                let l1_448 = unsafe { (l1_table_va as *const usize).add(448).read_volatile() };
+                let l1_448 = (l1_table_va as *const usize).add(448).read_volatile();
                 crate::arch::boot::pl011_puts(b"[akt.0h] L1[448](meta)=");
                 crate::arch::boot::pl011_puts_hex(l1_448);
                 crate::arch::boot::pl011_puts(b"\n");

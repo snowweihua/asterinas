@@ -60,9 +60,15 @@ pub(crate) fn reserve_root_pt_page() {
     // unused L0 slots retain garbage that can be interpreted as valid
     // page-table descriptors (e.g. slot 511 maps VA 0xFFFFFFFFFC900A8
     // to non-existent DRAM, causing a synchronous external abort).
+    //
+    // IMPORTANT: During early boot (before KPT switch), we must use identity
+    // mapping (paddr as VA) instead of paddr_to_vaddr(). This is because
+    // paddr_to_vaddr() uses the linear mapping base, which is only valid
+    // after the linear mapping is set up. On RPi3, early_alloc returns
+    // addresses in the identity-mapped low DRAM region (< 2GB), where
+    // VA = PA during early boot.
     unsafe {
-        let va = crate::mm::paddr_to_vaddr(paddr);
-        core::ptr::write_bytes(va as *mut u8, 0, PAGE_SIZE);
+        core::ptr::write_bytes(paddr as *mut u8, 0, PAGE_SIZE);
     }
     let meta = PageTablePageMeta::<KernelPtConfig>::new(crate::arch::mm::PagingConsts::NR_LEVELS);
     let frame = unsafe { Frame::from_init_ptr(Frame::init_unused(paddr, meta)) };
@@ -358,6 +364,20 @@ impl PageTable<KernelPtConfig> {
         {
             let root = unsafe { (*core::ptr::addr_of_mut!(AARCH64_ROOT_PT_FRAME)).take() }
                 .expect("AArch64 root PT page not reserved");
+            #[cfg(target_arch = "aarch64")]
+            unsafe {
+                crate::arch::boot::pl011_puts(b"[ek] root_paddr=");
+                crate::arch::boot::pl011_puts_hex(root.paddr());
+                crate::arch::boot::pl011_puts(b"\n");
+                let ptr = root.paddr() as *const u64;
+                let val0 = ptr.read_volatile();
+                let val448 = ptr.add(448).read_volatile();
+                crate::arch::boot::pl011_puts(b"[ek] root[0]=");
+                crate::arch::boot::pl011_puts_hex(val0 as usize);
+                crate::arch::boot::pl011_puts(b" root[448]=");
+                crate::arch::boot::pl011_puts_hex(val448 as usize);
+                crate::arch::boot::pl011_puts(b"\n");
+            }
             return PageTable { root };
         }
         #[cfg(not(target_arch = "aarch64"))]
@@ -398,12 +418,131 @@ impl PageTable<KernelPtConfig> {
                         let ptr = (boot_root_pa + i * 8) as *const PageTableEntry;
                         ptr.read_volatile()
                     };
-                    // Skip zero entries (they map non-existent memory)
                     if boot_pte.as_usize() == 0 {
                         continue;
                     }
                     unsafe { root_node.write_pte(i, boot_pte) };
                 }
+                let kpt_root_pa = kpt.root.paddr();
+                let kpt_slot256_pte = unsafe {
+                    let ptr = (kpt_root_pa + 256 * 8) as *const usize;
+                    ptr.read_volatile()
+                };
+                unsafe { crate::arch::boot::pl011_puts(b"[npt] KPT[256]=") };
+                unsafe { crate::arch::boot::pl011_puts_hex(kpt_slot256_pte) };
+                unsafe { crate::arch::boot::pl011_puts(b"\n") };
+                let l3table_pa = kpt_slot256_pte & 0x0000_FFFF_FFFF_F000;
+                let l3entry0 = unsafe {
+                    let ptr = (l3table_pa + 0) as *const usize;
+                    ptr.read_volatile()
+                };
+                unsafe { crate::arch::boot::pl011_puts(b"[npt] l3entry[0]=") };
+                unsafe { crate::arch::boot::pl011_puts_hex(l3entry0) };
+                unsafe { crate::arch::boot::pl011_puts(b"\n") };
+                let kpt_slot448_pte = unsafe {
+                    let ptr = (kpt_root_pa + 448 * 8) as *const usize;
+                    ptr.read_volatile()
+                };
+                unsafe { crate::arch::boot::pl011_puts(b"[npt] KPT[448]=") };
+                unsafe { crate::arch::boot::pl011_puts_hex(kpt_slot448_pte) };
+                unsafe { crate::arch::boot::pl011_puts(b"\n") };
+                let actual_l2pt_pa = l3entry0 & 0x0000_FFFF_FFFF_F000;
+                let root_pa = 0x337b000;
+                let entry_idx = root_pa / 0x200000;
+                let expected_pa = entry_idx * 0x200000;
+                let expected_l2entry = expected_pa | 0x403;
+                if kpt_slot448_pte == 0 {
+                    let boot_l3pt_high_pa = 0x83000;
+                    let corrected = boot_l3pt_high_pa | 0x3 | 0x400;
+                    unsafe { crate::arch::boot::pl011_puts(b"[npt] FIX: KPT[448] to ") };
+                    unsafe { crate::arch::boot::pl011_puts_hex(corrected) };
+                    unsafe { crate::arch::boot::pl011_puts(b"\n") };
+                    unsafe {
+                        let ptr = (kpt_root_pa + 448 * 8) as *mut usize;
+                        ptr.write_volatile(corrected);
+                    }
+                    let kpt_511_pte = unsafe {
+                        let ptr = (kpt_root_pa + 511 * 8) as *const usize;
+                        ptr.read_volatile()
+                    };
+                    unsafe { crate::arch::boot::pl011_puts(b"[npt] KPT[511]=") };
+                    unsafe { crate::arch::boot::pl011_puts_hex(kpt_511_pte) };
+                    unsafe { crate::arch::boot::pl011_puts(b"\n") };
+                    if kpt_511_pte == 0 {
+                        unsafe { crate::arch::boot::pl011_puts(b"[npt] FIX: KPT[511] also\n") };
+                        unsafe {
+                            let ptr = (kpt_root_pa + 511 * 8) as *mut usize;
+                            ptr.write_volatile(corrected);
+                        }
+                    }
+                    let boot_l3pt_high_entry0 = unsafe {
+                        let ptr = (boot_l3pt_high_pa + 0) as *const usize;
+                        ptr.read_volatile()
+                    };
+                    unsafe { crate::arch::boot::pl011_puts(b"[npt] boot_l3pt_high[0]=") };
+                    unsafe { crate::arch::boot::pl011_puts_hex(boot_l3pt_high_entry0) };
+                    unsafe { crate::arch::boot::pl011_puts(b"\n") };
+                    let new_l2_pa = 0x85000;
+                    let new_l2_entry = new_l2_pa | 0x3 | 0x400;
+                    unsafe { crate::arch::boot::pl011_puts(b"[npt] FIX: boot_l3pt_high[0] to ") };
+                    unsafe { crate::arch::boot::pl011_puts_hex(new_l2_entry) };
+                    unsafe { crate::arch::boot::pl011_puts(b"\n") };
+                    unsafe {
+                        let ptr = (boot_l3pt_high_pa + 0) as *mut usize;
+                        ptr.write_volatile(new_l2_entry);
+                    }
+                    let new_l2_entry_check = unsafe {
+                        let ptr = (boot_l3pt_high_pa + 0) as *const usize;
+                        ptr.read_volatile()
+                    };
+                    unsafe { crate::arch::boot::pl011_puts(b"[npt] boot_l3pt_high[0] now=") };
+                    unsafe { crate::arch::boot::pl011_puts_hex(new_l2_entry_check) };
+                    unsafe { crate::arch::boot::pl011_puts(b"\n") };
+                    let frame_meta_pa = 0x2b00000;
+                    let frame_meta_idx = frame_meta_pa / 0x200000;
+                    let frame_meta_entry = frame_meta_pa | 0x803; // PA | AF | Valid, bit1=0 for BLOCK
+                    unsafe { crate::arch::boot::pl011_puts(b"[npt] FIX: new_l2[") };
+                    unsafe { crate::arch::boot::pl011_puts_hex(frame_meta_idx) };
+                    unsafe { crate::arch::boot::pl011_puts(b"]=") };
+                    unsafe { crate::arch::boot::pl011_puts_hex(frame_meta_entry) };
+                    unsafe { crate::arch::boot::pl011_puts(b"\n") };
+                    unsafe {
+                        let ptr = (new_l2_pa + frame_meta_idx * 8) as *mut usize;
+                        ptr.write_volatile(frame_meta_entry);
+                    }
+                    let verify = unsafe {
+                        let ptr = (new_l2_pa + frame_meta_idx * 8) as *const usize;
+                        ptr.read_volatile()
+                    };
+                    unsafe { crate::arch::boot::pl011_puts(b"[npt] new_l2[") };
+                    unsafe { crate::arch::boot::pl011_puts_hex(frame_meta_idx) };
+                    unsafe { crate::arch::boot::pl011_puts(b"]=") };
+                    unsafe { crate::arch::boot::pl011_puts_hex(verify) };
+                    unsafe { crate::arch::boot::pl011_puts(b"\n") };
+                }
+                let l2entry = unsafe {
+                    let ptr = (actual_l2pt_pa + entry_idx * 8) as *const usize;
+                    ptr.read_volatile()
+                };
+                unsafe { crate::arch::boot::pl011_puts(b"[npt] actual_l2pt_pa=") };
+                unsafe { crate::arch::boot::pl011_puts_hex(actual_l2pt_pa) };
+                unsafe { crate::arch::boot::pl011_puts(b" entry_idx=") };
+                unsafe { crate::arch::boot::pl011_puts_hex(entry_idx) };
+                unsafe { crate::arch::boot::pl011_puts(b" l2entry=") };
+                unsafe { crate::arch::boot::pl011_puts_hex(l2entry) };
+                unsafe { crate::arch::boot::pl011_puts(b" expected=") };
+                unsafe { crate::arch::boot::pl011_puts_hex(expected_l2entry) };
+                unsafe { crate::arch::boot::pl011_puts(b"\n") };
+                if l2entry != expected_l2entry {
+                    unsafe { crate::arch::boot::pl011_puts(b"[npt] FIX: l2pt_gb0 entry\n") };
+                    unsafe {
+                        let ptr = (actual_l2pt_pa + entry_idx * 8) as *mut usize;
+                        ptr.write_volatile(expected_l2entry);
+                    }
+                }
+                unsafe { crate::arch::boot::pl011_puts(b"[npt] patching done, DSB\n") };
+                unsafe { core::arch::asm!("dsb sy", options(nostack, nomem, preserves_flags)); }
+                unsafe { crate::arch::boot::pl011_puts(b"[npt] DSB done\n") };
             }
             #[cfg(not(target_arch = "aarch64"))]
             for i in KernelPtConfig::TOP_LEVEL_INDEX_RANGE {
