@@ -65,23 +65,63 @@ fn raw_puts(s: &[u8]) {
 
 #[unsafe(no_mangle)]
 extern "C" fn sync_exception_current(f: &mut TrapFrame) {
-    let ch = b'X';
-    unsafe {
-        core::arch::asm!(
-            "movz x4, #0x3F21, lsl #16",
-            "movk x4, #0x5054",
-            "1: ldrb w5, [x4]",
-            "tst w5, #0x20",
-            "beq 1b",
-            "movz x4, #0x3F21, lsl #16",
-            "movk x4, #0x5040",
-            "strb w3, [x4]",
-            in("w3") ch as u32,
-            out("x4") _,
-            out("w5") _,
-            options(nostack),
-        );
+    macro_rules! put_char {
+        ($c:expr) => {
+            unsafe {
+                core::arch::asm!(
+                    "movz x4, #0x3F21, lsl #16",
+                    "movk x4, #0x5054",
+                    "1: ldrb w5, [x4]",
+                    "tst w5, #0x20",
+                    "beq 1b",
+                    "movz x4, #0x3F21, lsl #16",
+                    "movk x4, #0x5040",
+                    "strb w3, [x4]",
+                    in("w3") $c as u32,
+                    out("x4") _,
+                    out("w5") _,
+                    options(nostack),
+                );
+            }
+        };
     }
+    macro_rules! put_crlf {
+        () => {
+            put_char!(b'\r');
+            put_char!(b'\n');
+        };
+    }
+    macro_rules! put_hex_nibble {
+        ($v:expr) => {{
+            let nibble = (($v as usize) & 0xf) as u8;
+            let c = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+            put_char!(c);
+        }};
+    }
+    macro_rules! put_hex {
+        ($v:expr) => {{
+            let mut val = $v as usize;
+            for i in (0..16).rev() {
+                put_hex_nibble!((val >> (i * 4)) & 0xf);
+            }
+        }};
+    }
+    macro_rules! put_str {
+        ($s:expr) => {{
+            for &ch in $s {
+                put_char!(ch);
+            }
+        }};
+    }
+
+    put_crlf!();
+    put_str!(b"[EL1-SYNC]");
+    put_crlf!();
+    put_str!(b" ESR=");
+    put_hex!(f.esr_el1);
+    put_crlf!();
+    put_str!(b"### EL1 HALT ###");
+    put_crlf!();
     loop {
         core::hint::spin_loop();
     }
