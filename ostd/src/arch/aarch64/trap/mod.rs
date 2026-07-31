@@ -121,6 +121,8 @@ extern "C" fn sync_exception_current(f: &mut TrapFrame) {
     put_hex!(f.esr_el1);
     put_str!(b" ELR=");
     put_hex!(f.elr_el1);
+    put_str!(b" FAR=");
+    put_hex!(FAR_EL1.get() as usize);
     put_crlf!();
     put_str!(b"### EL1 HALT ###");
     put_crlf!();
