@@ -63,87 +63,25 @@ fn raw_puts(s: &[u8]) {
     }
 }
 
-/// Handle synchronous exceptions from current EL (kernel exceptions).
 #[unsafe(no_mangle)]
 extern "C" fn sync_exception_current(f: &mut TrapFrame) {
-    raw_puts(b"\r\n[EL1-SYNC]\r\n");
-
-    let esr = ESR_EL1.get() as usize;
-    let ec = (esr >> 26) & 0x3f;
-
-    // Always print raw hex to both UARTs — board detection may not have run yet.
-    raw_puts(b" ESR=");
-    raw_put_hex(esr);
-    raw_puts(b"\r\n ELR=");
-    raw_put_hex(f.elr_el1);
-    raw_puts(b"\r\n LR=");
-    raw_put_hex(f.lr);
-    raw_puts(b"\r\n SPSR=");
-    raw_put_hex(f.spsr_el1);
-
-    raw_puts(b"\r\n=== x0-x30 ===\r\n");
-    raw_puts(b" x0="); raw_put_hex(f.general.x0);
-    raw_puts(b" x1="); raw_put_hex(f.general.x1);
-    raw_puts(b" x2="); raw_put_hex(f.general.x2);
-    raw_puts(b" x3="); raw_put_hex(f.general.x3);
-    raw_puts(b" x4="); raw_put_hex(f.general.x4);
-    raw_puts(b" x5="); raw_put_hex(f.general.x5);
-    raw_puts(b" x6="); raw_put_hex(f.general.x6);
-    raw_puts(b" x7="); raw_put_hex(f.general.x7);
-    raw_puts(b" x8="); raw_put_hex(f.general.x8);
-    raw_puts(b" x9="); raw_put_hex(f.general.x9);
-    raw_puts(b" x10="); raw_put_hex(f.general.x10);
-    raw_puts(b" x11="); raw_put_hex(f.general.x11);
-    raw_puts(b" x12="); raw_put_hex(f.general.x12);
-    raw_puts(b" x13="); raw_put_hex(f.general.x13);
-    raw_puts(b" x14="); raw_put_hex(f.general.x14);
-    raw_puts(b" x15="); raw_put_hex(f.general.x15);
-    raw_puts(b" x16="); raw_put_hex(f.general.x16);
-    raw_puts(b" x17="); raw_put_hex(f.general.x17);
-    raw_puts(b" x18="); raw_put_hex(f.general.x18);
-    raw_puts(b" x19="); raw_put_hex(f.general.x19);
-    raw_puts(b" x20="); raw_put_hex(f.general.x20);
-    raw_puts(b" x21="); raw_put_hex(f.general.x21);
-    raw_puts(b" x22="); raw_put_hex(f.general.x22);
-    raw_puts(b" x23="); raw_put_hex(f.general.x23);
-    raw_puts(b" x24="); raw_put_hex(f.general.x24);
-    raw_puts(b" x25="); raw_put_hex(f.general.x25);
-    raw_puts(b" x26="); raw_put_hex(f.general.x26);
-    raw_puts(b" x27="); raw_put_hex(f.general.x27);
-    raw_puts(b" x28="); raw_put_hex(f.general.x28);
-    raw_puts(b" x29="); raw_put_hex(f.general.x29);
-    raw_puts(b" x30="); raw_put_hex(f.lr);
-    raw_puts(b"\r\n");
-
-    match ec {
-        0x24 | 0x25 => {
-            let far = FAR_EL1.get() as usize;
-            raw_puts(b" FAR=");
-            raw_put_hex(far);
-            raw_puts(b"\r\n");
-            if far < MAX_USERSPACE_VADDR {
-                let cpu_exception = CpuExceptionInfo {
-                    code: if ec == 0x24 {
-                        CpuException::DataAbortLowerEL
-                    } else {
-                        CpuException::DataAbortCurrentEL
-                    },
-                    page_fault_addr: far,
-                    error_code: esr,
-                };
-                if let Some(handler) = USER_PAGE_FAULT_HANDLER.get() {
-                    if handler(&cpu_exception).is_ok() {
-                        return;
-                    }
-                }
-            }
-        }
-        _ => {
-            raw_puts(b"\r\n");
-        }
+    let ch = b'X';
+    unsafe {
+        core::arch::asm!(
+            "movz x4, #0x3F21, lsl #16",
+            "movk x4, #0x5054",
+            "1: ldrb w5, [x4]",
+            "tst w5, #0x20",
+            "beq 1b",
+            "movz x4, #0x3F21, lsl #16",
+            "movk x4, #0x5040",
+            "strb w3, [x4]",
+            in("w3") ch as u32,
+            out("x4") _,
+            out("w5") _,
+            options(nostack),
+        );
     }
-
-    raw_puts(b"\r\n### EL1 HALT ###\r\n");
     loop {
         core::hint::spin_loop();
     }

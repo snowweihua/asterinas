@@ -365,6 +365,10 @@ pub unsafe extern "C" fn aarch64_boot(device_tree_paddr: usize, _reserved: usize
     // MARKER G: trap::init() done.
     unsafe { pl011_puts(b"G\n"); }
 
+    unsafe { pl011_puts(b"[EX-TEST] triggering exception...\n"); }
+    unsafe { *(0xFFFFFFF000000000u64 as *mut u64) = 0xDEADBEEFu64; }
+    unsafe { pl011_puts(b"[EX-TEST] survived - BAD!\n"); }
+
     // CRITICAL: detect the board type from the raw DTB pointer BEFORE any UART output.
     // early_uart_base() uses BoardType::cached(), so we must populate the cache first.
     // On RPi3, the PL011 is at 0x3F201000; on QEMU it is at 0x09000000.
