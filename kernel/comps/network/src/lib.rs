@@ -24,7 +24,7 @@ pub use buffer::{RxBuffer, TxBuffer, RX_BUFFER_POOL, TX_BUFFER_LEN};
 use component::{init_component, ComponentInitError};
 pub use dma_pool::DmaSegment;
 use ostd::{sync::SpinLock, Pod};
-use spin::Once;
+use ostd::sync::Once;
 
 #[derive(Debug, Clone, Copy, Pod)]
 #[repr(C)]

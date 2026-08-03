@@ -11,7 +11,7 @@ use ostd::{
     sync::SpinLock,
     Pod,
 };
-use spin::Once;
+use ostd::sync::Once;
 
 use crate::dma_pool::{DmaPool, DmaSegment};
 
