@@ -45,6 +45,16 @@ use node::PageTablePageMeta;
 #[cfg(target_arch = "aarch64")]
 static mut AARCH64_ROOT_PT_FRAME: Option<Frame<PageTablePageMeta<KernelPtConfig>>> = None;
 
+#[cfg(target_arch = "aarch64")]
+const AARCH64_RESERVED_PT_PAGES: usize = 32;
+
+#[cfg(target_arch = "aarch64")]
+static mut AARCH64_PT_PAGE_POOL: [usize; AARCH64_RESERVED_PT_PAGES - 1] =
+    [0; AARCH64_RESERVED_PT_PAGES - 1];
+
+#[cfg(target_arch = "aarch64")]
+static mut AARCH64_PT_PAGE_POOL_LEN: usize = 0;
+
 /// Reserves the root page table page for AArch64.
 ///
 /// Must be called after `meta::init()` and **before** `allocator::init()`
@@ -55,7 +65,9 @@ pub(crate) fn reserve_root_pt_page() {
     use crate::mm::frame::allocator::early_alloc;
     use crate::mm::PAGE_SIZE;
 
-    let paddr = early_alloc(Layout::from_size_align(PAGE_SIZE, PAGE_SIZE).unwrap())
+    let paddr = early_alloc(
+        Layout::from_size_align(AARCH64_RESERVED_PT_PAGES * PAGE_SIZE, PAGE_SIZE).unwrap(),
+    )
         .expect("AArch64 root PT page: early_alloc failed (ran out of low-DRAM pages?)");
     // Zero the page: early_alloc does NOT zero memory.  Without this,
     // unused L0 slots retain garbage that can be interpreted as valid
@@ -69,14 +81,37 @@ pub(crate) fn reserve_root_pt_page() {
     // addresses in the identity-mapped low DRAM region (< 2GB), where
     // VA = PA during early boot.
     unsafe {
-        core::ptr::write_bytes(paddr as *mut u8, 0, PAGE_SIZE);
+        core::ptr::write_bytes(
+            paddr as *mut u8,
+            0,
+            AARCH64_RESERVED_PT_PAGES * PAGE_SIZE,
+        );
     }
     let meta = PageTablePageMeta::<KernelPtConfig>::new(crate::arch::mm::PagingConsts::NR_LEVELS);
     let frame = unsafe { Frame::from_init_ptr(Frame::init_unused(paddr, meta)) };
 
     unsafe {
         AARCH64_ROOT_PT_FRAME = Some(frame);
+        for i in 1..AARCH64_RESERVED_PT_PAGES {
+            AARCH64_PT_PAGE_POOL[i - 1] = paddr + i * PAGE_SIZE;
+        }
     }
+    unsafe {
+        AARCH64_PT_PAGE_POOL_LEN = AARCH64_RESERVED_PT_PAGES - 1;
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+fn take_reserved_pt_page<C: PageTableConfig>(level: PagingLevel) -> Option<Frame<PageTablePageMeta<C>>> {
+    let paddr = unsafe {
+        if AARCH64_PT_PAGE_POOL_LEN == 0 {
+            return None;
+        }
+        AARCH64_PT_PAGE_POOL_LEN -= 1;
+        AARCH64_PT_PAGE_POOL[AARCH64_PT_PAGE_POOL_LEN]
+    };
+    let meta = PageTablePageMeta::<C>::new(level);
+    Some(unsafe { Frame::from_init_ptr(Frame::init_unused(paddr, meta)) })
 }
 
 #[cfg(ktest)]
@@ -424,151 +459,6 @@ impl PageTable<KernelPtConfig> {
                     }
                     unsafe { root_node.write_pte(i, boot_pte) };
                 }
-                let kpt_root_pa = kpt.root.paddr();
-                let kpt_slot256_pte = unsafe {
-                    let ptr = (kpt_root_pa + 256 * 8) as *const usize;
-                    ptr.read_volatile()
-                };
-                unsafe { crate::arch::boot::pl011_puts(b"[npt] KPT[256]=") };
-                unsafe { crate::arch::boot::pl011_puts_hex(kpt_slot256_pte) };
-                unsafe { crate::arch::boot::pl011_puts(b"\n") };
-                let l3table_pa = kpt_slot256_pte & 0x0000_FFFF_FFFF_F000;
-                let l3entry0 = unsafe {
-                    let ptr = (l3table_pa + 0) as *const usize;
-                    ptr.read_volatile()
-                };
-                unsafe { crate::arch::boot::pl011_puts(b"[npt] l3entry[0]=") };
-                unsafe { crate::arch::boot::pl011_puts_hex(l3entry0) };
-                unsafe { crate::arch::boot::pl011_puts(b"\n") };
-                let kpt_slot448_pte = unsafe {
-                    let ptr = (kpt_root_pa + 448 * 8) as *const usize;
-                    ptr.read_volatile()
-                };
-                unsafe { crate::arch::boot::pl011_puts(b"[npt] KPT[448]=") };
-                unsafe { crate::arch::boot::pl011_puts_hex(kpt_slot448_pte) };
-                unsafe { crate::arch::boot::pl011_puts(b"\n") };
-                let actual_l2pt_pa = l3entry0 & 0x0000_FFFF_FFFF_F000;
-                let metadata_frame_pa = crate::mm::frame::meta::frame_meta_paddr_base();
-                unsafe { crate::arch::boot::pl011_puts(b"[npt] metadata_frame_pa=") };
-                unsafe { crate::arch::boot::pl011_puts_hex(metadata_frame_pa) };
-                unsafe { crate::arch::boot::pl011_puts(b"\n") };
-                let l2_for_metadata = 0x15;
-                let entry_idx = l2_for_metadata;
-                let expected_l2entry = (metadata_frame_pa & !0xFFF) | 0x2 | 0x3;
-                if kpt_slot448_pte == 0 || true {
-                    let boot_l3pt_linear_pa = 0x82000;
-                    let corrected_447 = boot_l3pt_linear_pa | 0x3 | 0x400;
-                    unsafe { crate::arch::boot::pl011_puts(b"[npt] FIX: KPT[447] to ") };
-                    unsafe { crate::arch::boot::pl011_puts_hex(corrected_447) };
-                    unsafe { crate::arch::boot::pl011_puts(b"\n") };
-                    unsafe {
-                        let ptr = (kpt_root_pa + 447 * 8) as *mut usize;
-                        ptr.write_volatile(corrected_447);
-                    }
-                    let corrected_448 = boot_l3pt_linear_pa | 0x3 | 0x400;
-                    unsafe { crate::arch::boot::pl011_puts(b"[npt] FIX: KPT[448] to ") };
-                    unsafe { crate::arch::boot::pl011_puts_hex(corrected_448) };
-                    unsafe { crate::arch::boot::pl011_puts(b"\n") };
-                    unsafe {
-                        let ptr = (kpt_root_pa + 448 * 8) as *mut usize;
-                        ptr.write_volatile(corrected_448);
-                    }
-                    let kpt_511_pte = unsafe {
-                        let ptr = (kpt_root_pa + 511 * 8) as *const usize;
-                        ptr.read_volatile()
-                    };
-                    unsafe { crate::arch::boot::pl011_puts(b"[npt] KPT[511]=") };
-                    unsafe { crate::arch::boot::pl011_puts_hex(kpt_511_pte) };
-                    unsafe { crate::arch::boot::pl011_puts(b"\n") };
-                    if kpt_511_pte == 0 {
-                        let corrected_linear = boot_l3pt_linear_pa | 0x3 | 0x400;
-                        unsafe { crate::arch::boot::pl011_puts(b"[npt] FIX: KPT[511] to boot_l3pt_linear\n") };
-                        unsafe {
-                            let ptr = (kpt_root_pa + 511 * 8) as *mut usize;
-                            ptr.write_volatile(corrected_linear);
-                        }
-                    }
-                    let frame_meta_pa = crate::mm::frame::meta::frame_meta_paddr_base();
-                    let l3_entry_value = (frame_meta_pa & !0xFFF) | 0x2 | 0x400 | 0x3;
-                    unsafe { crate::arch::boot::pl011_puts(b"[npt] Setting boot_l3pt_linear[0x17b] to PAGE descriptor: ") };
-                    unsafe { crate::arch::boot::pl011_puts_hex(l3_entry_value) };
-                    unsafe { crate::arch::boot::pl011_puts(b"\n") };
-                    let l3_ptr = (boot_l3pt_linear_pa + 0x17b * 8) as *mut usize;
-                    unsafe { l3_ptr.write_volatile(l3_entry_value) };
-                    let verify = unsafe { l3_ptr.read_volatile() };
-                    unsafe { crate::arch::boot::pl011_puts(b"[npt] verify l3[0x17b]=") };
-                    unsafe { crate::arch::boot::pl011_puts_hex(verify) };
-                    unsafe { crate::arch::boot::pl011_puts(b"\n") };
-                    unsafe { crate::arch::boot::pl011_puts(b"[npt] Setting boot_l3pt[0] to TABLE desc to boot_l2pt_gb0\n") };
-                    let boot_l3pt_pa = 0x85000usize;
-                    let l3_table_ptr = (boot_l3pt_pa + 0 * 8) as *mut usize;
-                    unsafe { l3_table_ptr.write_volatile(0x86003) };
-                    let verify3 = unsafe { l3_table_ptr.read_volatile() };
-                    unsafe { crate::arch::boot::pl011_puts(b"[npt] verify3 boot_l3pt[0]=") };
-                    unsafe { crate::arch::boot::pl011_puts_hex(verify3) };
-                    unsafe { crate::arch::boot::pl011_puts(b"\n") };
-                    unsafe { crate::arch::boot::pl011_puts(b"[npt] Setting boot_l3pt_linear[0x1c0] to PAGE desc to metadata\n") };
-                    let boot_l3pt_linear_pa2 = 0x82000usize;
-                    let l3_linear_pte_ptr = (boot_l3pt_linear_pa2 + 0x1c0 * 8) as *mut usize;
-                    unsafe { l3_linear_pte_ptr.write_volatile(0x2b7b403) };
-                    let verify4 = unsafe { l3_linear_pte_ptr.read_volatile() };
-                    unsafe { crate::arch::boot::pl011_puts(b"[npt] verify4 boot_l3pt_linear[0x1c0]=") };
-                    unsafe { crate::arch::boot::pl011_puts_hex(verify4) };
-                    unsafe { crate::arch::boot::pl011_puts(b"\n") };
-                }
-                let l2entry = unsafe {
-                    let ptr = (actual_l2pt_pa + entry_idx * 8) as *const usize;
-                    ptr.read_volatile()
-                };
-                unsafe { crate::arch::boot::pl011_puts(b"[npt] actual_l2pt_pa=") };
-                unsafe { crate::arch::boot::pl011_puts_hex(actual_l2pt_pa) };
-                unsafe { crate::arch::boot::pl011_puts(b" entry_idx=") };
-                unsafe { crate::arch::boot::pl011_puts_hex(entry_idx) };
-                unsafe { crate::arch::boot::pl011_puts(b" l2entry=") };
-                unsafe { crate::arch::boot::pl011_puts_hex(l2entry) };
-                unsafe { crate::arch::boot::pl011_puts(b" expected=") };
-                unsafe { crate::arch::boot::pl011_puts_hex(expected_l2entry) };
-                unsafe { crate::arch::boot::pl011_puts(b"\n") };
-                if l2entry != expected_l2entry {
-                    unsafe { crate::arch::boot::pl011_puts(b"[npt] preserving boot L2 block mapping\n") };
-                }
-                unsafe { crate::arch::boot::pl011_puts(b"[npt] patching done, DSB\n") };
-                unsafe { core::arch::asm!("dsb sy", options(nostack, nomem, preserves_flags)); }
-                unsafe { crate::arch::boot::pl011_puts(b"[npt] DSB done\n") };
-                let after_dsb_check = unsafe {
-                    let ptr = (0x82000usize + 0x1c0 * 8) as *const usize;
-                    ptr.read_volatile()
-                };
-                unsafe { crate::arch::boot::pl011_puts(b"[npt] after_dsb boot_l3pt_linear[0x1c0]=") };
-                unsafe { crate::arch::boot::pl011_puts_hex(after_dsb_check) };
-                unsafe { crate::arch::boot::pl011_puts(b"\n") };
-                let check_447 = unsafe {
-                    let ptr = (0x82000usize + 0x17f * 8) as *const usize;
-                    ptr.read_volatile()
-                };
-                let check_448 = unsafe {
-                    let ptr = (0x82000usize + 0x180 * 8) as *const usize;
-                    ptr.read_volatile()
-                };
-                unsafe { crate::arch::boot::pl011_puts(b"[npt] boot_l3pt_linear[0x17f]=") };
-                unsafe { crate::arch::boot::pl011_puts_hex(check_447) };
-                unsafe { crate::arch::boot::pl011_puts(b" [0x180]=") };
-                unsafe { crate::arch::boot::pl011_puts_hex(check_448) };
-                unsafe { crate::arch::boot::pl011_puts(b"\n") };
-                unsafe { crate::arch::boot::pl011_puts(b"[npt] PATCH boot_l3pt_linear[0x17f] to 0x86003\n") };
-                let boot_l3pt_linear_447_ptr = (0x82000usize + 0x17f * 8) as *mut usize;
-                unsafe { boot_l3pt_linear_447_ptr.write_volatile(0x86003) };
-                let verify447 = unsafe { boot_l3pt_linear_447_ptr.read_volatile() };
-                unsafe { crate::arch::boot::pl011_puts(b"[npt] verify boot_l3pt_linear[0x17f]=") };
-                unsafe { crate::arch::boot::pl011_puts_hex(verify447) };
-                unsafe { crate::arch::boot::pl011_puts(b"\n") };
-                unsafe { crate::arch::boot::pl011_puts(b"[npt] PATCH boot_l3pt_linear[0x180] to 0x86003\n") };
-                let boot_l3pt_linear_448_ptr = (0x82000usize + 0x180 * 8) as *mut usize;
-                unsafe { boot_l3pt_linear_448_ptr.write_volatile(0x86003) };
-                let verify448 = unsafe { boot_l3pt_linear_448_ptr.read_volatile() };
-                unsafe { crate::arch::boot::pl011_puts(b"[npt] verify boot_l3pt_linear[0x180]=") };
-                unsafe { crate::arch::boot::pl011_puts_hex(verify448) };
-                unsafe { crate::arch::boot::pl011_puts(b"\n") };
             }
             #[cfg(not(target_arch = "aarch64"))]
             for i in KernelPtConfig::TOP_LEVEL_INDEX_RANGE {

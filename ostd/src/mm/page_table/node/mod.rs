@@ -69,6 +69,12 @@ impl<C: PageTableConfig> PageTableNode<C> {
     /// Allocates a new empty page table node.
     pub(super) fn alloc(level: PagingLevel) -> Self {
         #[cfg(target_arch = "aarch64")]
+        if crate::IN_BOOTSTRAP_CONTEXT.load(Ordering::Relaxed) {
+            return super::take_reserved_pt_page(level)
+                .expect("AArch64 bootstrap page-table reserve exhausted");
+        }
+
+        #[cfg(target_arch = "aarch64")]
         unsafe { crate::arch::boot::pl011_puts(b"[node.alloc] start\n"); }
         let meta: PageTablePageMeta<C> = PageTablePageMeta::new(level);
         #[cfg(target_arch = "aarch64")]

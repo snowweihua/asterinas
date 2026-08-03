@@ -52,7 +52,7 @@ use super::{
     },
     page_prop::{CachePolicy, PageFlags, PageProperty, PrivilegedPageFlags},
     page_table::{PageTable, PageTableConfig},
-    Frame, HasSize, Paddr, PagingConstsTrait, Vaddr,
+    Frame, HasPaddr, HasSize, Paddr, PagingConstsTrait, Vaddr,
 };
 use crate::{
     arch::mm::{PageTableEntry, PagingConsts},
@@ -240,13 +240,15 @@ pub fn init_kernel_page_table(meta_pages: Segment<MetaPageMeta>) {
     unsafe { crate::arch::boot::pl011_puts(b"[kspace.m3] before cursor_mut\n"); }
     {
         let mut cursor = kpt.cursor_mut(&preempt_guard, &from).unwrap();
-        let pa_range = meta_pages.clone().into_raw();
+        let pa_range = meta_pages.paddr()..meta_pages.paddr() + meta_pages.size();
         for (pa, level) in
             largest_pages::<KernelPtConfig>(from.start, pa_range.start, pa_range.len())
         {
             unsafe { cursor.map(MappedItem::Untracked(pa, level, prop)) }
                 .expect("Frame metadata address space is mapped twice");
         }
+        #[cfg(target_arch = "aarch64")]
+        unsafe { crate::arch::boot::pl011_puts(b"[kspace.m4] metadata mapped\n") };
     }
 
     // In LoongArch64, we don't need to do linear mappings for the kernel code because of DMW0.
