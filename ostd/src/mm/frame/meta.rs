@@ -81,6 +81,10 @@ const META_SLOT_SIZE: usize = 64;
 
 static FRAME_META_PADDR_BASE: AtomicUsize = AtomicUsize::new(0);
 
+pub(in crate::mm) fn frame_meta_paddr_base() -> usize {
+    FRAME_META_PADDR_BASE.load(Ordering::Relaxed)
+}
+
 #[repr(C)]
 pub(in crate::mm) struct MetaSlot {
     /// The metadata of a frame.
@@ -338,23 +342,12 @@ impl MetaSlot {
     pub(super) fn frame_paddr(&self) -> Paddr {
         let frame_paddr_base = crate::arch::mm::frame_paddr_base();
         let meta_va = self as *const MetaSlot as usize;
-        // If we are NOT in bootstrap context, MetaSlot pointers are always VAs
-        // in FRAME_METADATA_RANGE, so meta_to_frame applies regardless of
-        // frame_paddr_base (DRAM base).
-        //
-        // During bootstrap, MetaSlot pointers returned by get_slot() are raw
-        // physical addresses (even when frame_paddr_base == 0).  Using
-        // meta_to_frame on those PAs underflows because
-        // FRAME_METADATA_RANGE.start is a high kernel VA (0xFFFF_E*),
-        // producing a garbage frame PA — which then causes a synchronous
-        // abort when the MMU tries to access the metadata lock in the MMIO
-        // region.
-        if !crate::IN_BOOTSTRAP_CONTEXT.load(Ordering::Relaxed) {
+        // Metadata pointers stored during bootstrap remain physical after the
+        // managed page table is activated; newly resolved pointers are virtual.
+        if meta_va >= crate::mm::kspace::FRAME_METADATA_RANGE.start {
             return mapping::meta_to_frame::<PagingConsts>(meta_va);
         }
 
-        // During bootstrap with non-zero frame_paddr_base, the MetaSlot is at its
-        // physical address directly (identity-mapped). Reverse the PA calculation.
         let meta_paddr_base = FRAME_META_PADDR_BASE.load(Ordering::Relaxed);
         let offset = meta_va
             .checked_sub(meta_paddr_base)

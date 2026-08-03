@@ -163,6 +163,19 @@ impl<M: AnyFrameMeta + ?Sized> UniqueFrame<M> {
         }
     }
 
+    /// Restores a forgotten unique frame from its metadata slot.
+    ///
+    /// # Safety
+    ///
+    /// `ptr` must point to the initialized metadata of a frame previously
+    /// forgotten with [`Self::into_raw`].
+    pub(crate) unsafe fn from_meta_ptr(ptr: *const MetaSlot) -> Self {
+        Self {
+            ptr,
+            _marker: PhantomData,
+        }
+    }
+
     pub(super) fn slot(&self) -> &MetaSlot {
         // SAFETY: `ptr` points to a valid `MetaSlot` that will never be
         // mutably borrowed, so taking an immutable reference to it is safe.

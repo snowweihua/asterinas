@@ -279,10 +279,9 @@ where
 
         let mut frame = {
             let meta_ptr = current.as_ptr() as *mut MetaSlot;
-            // SAFETY: `current` points to a live link stored in a valid metadata slot.
-            let paddr = unsafe { (&*meta_ptr).frame_paddr() };
-            // SAFETY: The frame was forgotten when inserted into the linked list.
-            unsafe { UniqueFrame::<Link<M>>::from_raw(paddr) }
+            // SAFETY: The frame was forgotten when inserted into the linked list,
+            // and `current` points to its live metadata slot.
+            unsafe { UniqueFrame::<Link<M>>::from_meta_ptr(meta_ptr) }
         };
 
         let next_ptr = frame.meta().next;
