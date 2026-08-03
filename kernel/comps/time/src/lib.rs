@@ -13,9 +13,8 @@ use core::time::Duration;
 use clocksource::ClockSource;
 pub use clocksource::Instant;
 use component::{init_component, ComponentInitError};
-use ostd::sync::Mutex;
+use ostd::sync::{Mutex, Once};
 use rtc::Driver;
-use spin::Once;
 
 mod clocksource;
 mod rtc;

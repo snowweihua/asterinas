@@ -10,7 +10,7 @@ use ostd::{
     arch::{read_tsc, tsc_freq},
     timer::{self, TIMER_FREQ},
 };
-use spin::Once;
+use ostd::sync::Once;
 
 use crate::{
     clocksource::{ClockSource, Instant},
