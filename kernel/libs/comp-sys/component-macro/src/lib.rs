@@ -53,11 +53,24 @@ pub fn init_component(args: TokenStream, input: TokenStream) -> proc_macro::Toke
     quote! {
         #function
 
+        #[cfg(not(target_arch = "aarch64"))]
         component::submit!(component::ComponentRegistry::new(
             component::InitStage::#stage,
             &#function_name,
             file!())
         );
+
+        #[cfg(target_arch = "aarch64")]
+        const _: () = {
+            #[allow(unsafe_code)]
+            #[used]
+            #[unsafe(link_section = ".component_registry")]
+            static REGISTRY: component::ComponentRegistry = component::ComponentRegistry::new(
+                component::InitStage::#stage,
+                &#function_name,
+                file!(),
+            );
+        };
     }
     .into()
 }

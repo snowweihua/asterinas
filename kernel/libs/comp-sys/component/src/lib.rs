@@ -194,7 +194,11 @@ fn match_and_call(
 ) -> Result<(), ComponentSystemInitError> {
     mini_uart_puts(b"[mac.M] enter\n");
     let mut infos = Vec::new();
-    for registry in inventory::iter::<ComponentRegistry> {
+    #[cfg(target_arch = "aarch64")]
+    let registries = aarch64_component_registries().iter();
+    #[cfg(not(target_arch = "aarch64"))]
+    let registries = inventory::iter::<ComponentRegistry>.into_iter();
+    for registry in registries {
         mini_uart_puts(b"[mac.I] item\n");
         if registry.stage != stage {
             continue;
@@ -263,4 +267,17 @@ fn match_and_call(
     }
     info!("All components initialization in {stage:?} stage completed");
     Ok(())
+}
+
+#[cfg(target_arch = "aarch64")]
+fn aarch64_component_registries() -> &'static [ComponentRegistry] {
+    unsafe extern "C" {
+        static __component_registry_start: u8;
+        static __component_registry_end: u8;
+    }
+
+    let start = &raw const __component_registry_start as usize;
+    let end = &raw const __component_registry_end as usize;
+    let len = (end - start) / size_of::<ComponentRegistry>();
+    unsafe { core::slice::from_raw_parts(start as *const ComponentRegistry, len) }
 }
