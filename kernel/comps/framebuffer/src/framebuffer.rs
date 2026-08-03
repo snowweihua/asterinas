@@ -8,7 +8,7 @@ use ostd::{
     mm::{HasSize, VmIo},
     Result,
 };
-use spin::Once;
+use ostd::sync::Once;
 
 use crate::{Pixel, PixelFormat, RenderedPixel};
 

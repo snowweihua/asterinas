@@ -8,7 +8,7 @@ use ostd::{
     mm::VmReader,
     sync::{LocalIrqDisabled, SpinLock},
 };
-use spin::Once;
+use ostd::sync::Once;
 
 use crate::{
     ansi_escape::{EscapeFsm, EscapeOp},
