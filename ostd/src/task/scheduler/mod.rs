@@ -68,12 +68,11 @@
 mod fifo_scheduler;
 pub mod info;
 
-use spin::Once;
-
 use super::{preempt::cpu_local, processor, Task};
 use crate::{
     cpu::{set::CpuSet, CpuId, PinCurrentCpu},
     prelude::*,
+    sync::Once,
     task::disable_preempt,
     timer,
 };

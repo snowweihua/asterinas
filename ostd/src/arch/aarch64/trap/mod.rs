@@ -6,12 +6,13 @@
 mod trap;
 
 use aarch64_cpu::registers::{Readable, ESR_EL1, FAR_EL1};
-use spin::Once;
 pub(super) use trap::RawUserContext;
 pub use trap::TrapFrame;
 
 use super::cpu::context::{CpuException, CpuExceptionInfo};
-use crate::{cpu::PrivilegeLevel, irq::call_irq_callback_functions, mm::MAX_USERSPACE_VADDR};
+use crate::{
+    cpu::PrivilegeLevel, irq::call_irq_callback_functions, mm::MAX_USERSPACE_VADDR, sync::Once,
+};
 
 /// Initializes interrupt handling on AArch64.
 pub(crate) unsafe fn init() {

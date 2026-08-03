@@ -20,14 +20,13 @@ use core::{
 
 use kernel_stack::KernelStack;
 use processor::current_task;
-use spin::Once;
 use utils::ForceSync;
 
 pub use self::{
     preempt::{disable_preempt, halt_cpu, DisabledPreemptGuard},
     scheduler::info::{AtomicCpuId, TaskScheduleInfo},
 };
-use crate::{arch::task::TaskContext, irq::InterruptLevel, prelude::*};
+use crate::{arch::task::TaskContext, irq::InterruptLevel, prelude::*, sync::Once};
 
 static PRE_SCHEDULE_HANDLER: Once<fn()> = Once::new();
 
