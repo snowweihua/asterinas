@@ -182,8 +182,8 @@ Hmm, maybe the VA is not exactly 0xffff_e000_0000_0000 but slightly different. L
 - This is a new later blocker, not the original Level 1 Address Size Fault.
 
 ## Next Action
-1. Continue from kernel component initialization after `[CA.c] pop_front miss, calling pools::alloc`.
-2. Verify normal post-bootstrap atomics now work with `IN_BOOTSTRAP_CONTEXT=false` and the managed KPT active.
+1. Resolve ELR `0xffff0000001b236c` and FAR `0xffffe00000011228`, reached after `[mac.2c] frame alloc ok`.
+2. Inspect the instruction and owning symbol in the current release ELF before adding the next boundary markers.
 3. Keep the early-reserved page-table pool until the Cortex-A53 generic `alloc_frame_with()` return corruption is resolved.
 
 ## Session 19 Progress - Kspace Initialization Works
@@ -220,6 +220,28 @@ Hmm, maybe the VA is not exactly 0xffff_e000_0000_0000 but slightly different. L
   - `[mac.2] calling real component::init_all`
   - `[CA.c] pop_front miss, calling pools::alloc`
 - No `[EL1-SYNC]` occurred during kspace construction or activation.
+
+## Session 20 Progress - Post-Bootstrap Frame Allocation Works
+
+### Intrusive Metadata Pointer Lifetime
+- The CPU-local buddy lists are populated before managed KPT activation, so their intrusive links retain physical `MetaSlot` pointers.
+- After activation, `MetaSlot::frame_paddr()` assumed every metadata pointer was in `FRAME_METADATA_RANGE` because `IN_BOOTSTRAP_CONTEXT` was false.
+- Applying virtual metadata arithmetic to a retained physical pointer produced addresses such as `0x00080000bdec0000` instead of the order-16 chunk at `0x10000000`.
+
+### Fix
+- `LinkedList::take_current()` now restores the forgotten `UniqueFrame` directly from its live metadata pointer rather than converting pointer to PA and resolving it again.
+- `MetaSlot::frame_paddr()` now selects conversion by the pointer address space: high pointers use `FRAME_METADATA_RANGE`; low retained pointers use `FRAME_META_PADDR_BASE`.
+- Temporary allocator, buddy-list, and intrusive-list markers were removed.
+
+### Hardware Verification
+- The local buddy allocation completes.
+- Allocator balancing removes and reinserts the large order-16 chunk successfully.
+- `pools::alloc()` returns and prints `[CA.d] pools::alloc done`.
+- The explicit frame-allocation test reaches `[mac.2c] frame alloc ok`.
+- The next boundary is a later synchronous abort:
+  - `ESR=0x96000035`
+  - `ELR=0xffff0000001b236c`
+  - `FAR=0xffffe00000011228`
 
 ## Debug Markers in Code
 - `[npt] FIX: KPT[447/448]` — Fixing KPT entries to point to boot_l3pt_linear
