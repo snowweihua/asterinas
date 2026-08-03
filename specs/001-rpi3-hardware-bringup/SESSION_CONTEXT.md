@@ -243,6 +243,30 @@ Hmm, maybe the VA is not exactly 0xffff_e000_0000_0000 but slightly different. L
   - `ELR=0xffff0000001b236c`
   - `FAR=0xffffe00000011228`
 
+## Session 21 Progress - Components Initialize
+
+### Exclusive Atomics Remain Unavailable
+- ELR `0xffff0000001b236c` decoded to `ldxr` in `Frame::drop` reference-count decrement.
+- Metadata is mapped Normal Write-Back, Inner Shareable with MAIR Attr1 `0xff`; page attributes were not the cause.
+- Attempting to set Cortex-A53 `CPUECTLR_EL1.SMPEN` from EL1 stopped inside `enable_cpu_features`, so this TF-A configuration does not permit that register access.
+- RPi3 remains explicitly single-core, so frame refcount increment, decrement, and unique transition now use load/store operations only on this board. Other AArch64 boards retain atomic RMW operations.
+- The frame allocator's per-CPU free-size counter follows the same RPi3 single-core rule.
+
+### Hardware Verification
+- `Frame::drop` and `TOTAL_FREE_SIZE.add()` pass their former `ldxr` faults.
+- Heap slab creation passes the former `compare_exchange(1, REF_COUNT_UNIQUE)` fault.
+- Repeated frame-cache hits, buddy splits, heap allocations, and component sorting complete.
+- Kernel reaches:
+  - `[mac.4] after call`
+  - `[KM.main] after component::init_all`
+  - `DBG: init() start`
+  - `DBG: before thread::init()`
+- New boundary: `spin::Once::try_call_once_slow` for `PRE_SCHEDULE_HANDLER`:
+  - `ESR=0x96000035`
+  - `ELR=0xffff00000035dd28`
+  - `FAR=0xffff0000004470c0`
+  - faulting instruction is `ldaxrb` in the Once state transition.
+
 ## Debug Markers in Code
 - `[npt] FIX: KPT[447/448]` — Fixing KPT entries to point to boot_l3pt_linear
 - `[npt] Setting boot_l3pt_linear[0x17b]` — Direct frame mapping
