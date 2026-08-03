@@ -96,8 +96,26 @@ pub fn new_base_crate(
             &base_crate_path.join("src").join("main.rs"),
             &base_crate_tmp_path.join("src").join("main.rs"),
         );
+        let linker_scripts_match = [
+            "x86_64.ld",
+            "riscv64.ld",
+            "loongarch64.ld",
+            "aarch64.ld",
+            "aarch64-rpi3.ld",
+        ]
+        .into_iter()
+        .all(|script| {
+            are_files_identical(
+                &base_crate_path.join(script),
+                &base_crate_tmp_path.join(script),
+            )
+            .is_ok_and(|identical| identical)
+        });
         std::fs::remove_dir_all(&base_crate_tmp_path).unwrap();
-        if cargo_result.is_ok_and(|res| res) && main_rs_result.is_ok_and(|res| res) {
+        if cargo_result.is_ok_and(|res| res)
+            && main_rs_result.is_ok_and(|res| res)
+            && linker_scripts_match
+        {
             info!("Reusing existing base crate");
             // Ensure rust-toolchain.toml is present even when reusing the crate.
             ensure_toolchain_file(&base_crate_path);
