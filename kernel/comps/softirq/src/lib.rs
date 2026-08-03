@@ -15,7 +15,7 @@ use ostd::{
     cpu_local_cell,
     irq::{disable_local, register_bottom_half_handler_l1, DisabledLocalIrqGuard},
 };
-use spin::Once;
+use ostd::sync::Once;
 
 mod lock;
 pub mod softirq_id;
@@ -98,12 +98,22 @@ impl SoftIrqLine {
         assert!(!self.is_enabled());
 
         self.callback.call_once(|| Box::new(callback));
-        ENABLED_MASK.fetch_or(1 << self.id, Ordering::Release);
+        if ostd::arch::is_rpi3() {
+            let enabled = ENABLED_MASK.load(Ordering::Relaxed);
+            ENABLED_MASK.store(enabled | (1 << self.id), Ordering::Relaxed);
+        } else {
+            ENABLED_MASK.fetch_or(1 << self.id, Ordering::Release);
+        }
     }
 
     /// Returns whether this softirq line is enabled.
     pub fn is_enabled(&self) -> bool {
-        ENABLED_MASK.load(Ordering::Acquire) & (1 << self.id) != 0
+        let ordering = if ostd::arch::is_rpi3() {
+            Ordering::Relaxed
+        } else {
+            Ordering::Acquire
+        };
+        ENABLED_MASK.load(ordering) & (1 << self.id) != 0
     }
 }
 
