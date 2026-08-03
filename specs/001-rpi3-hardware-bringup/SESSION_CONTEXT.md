@@ -182,9 +182,44 @@ Hmm, maybe the VA is not exactly 0xffff_e000_0000_0000 but slightly different. L
 - This is a new later blocker, not the original Level 1 Address Size Fault.
 
 ## Next Action
-1. Add markers immediately around `guard_level = subtree_root.level()`, `cur_node_va`, and the call to `dfs_acquire_lock()` in `lock_range()`.
-2. If DFS is entered, print the level before calling `cur_node.entry(i)`; if not, inspect `level()` metadata and address arithmetic.
-3. Keep the bootstrap-only lock bypass; do not restore exclusive atomics until after `IN_BOOTSTRAP_CONTEXT` becomes false.
+1. Continue from kernel component initialization after `[CA.c] pop_front miss, calling pools::alloc`.
+2. Verify normal post-bootstrap atomics now work with `IN_BOOTSTRAP_CONTEXT=false` and the managed KPT active.
+3. Keep the early-reserved page-table pool until the Cortex-A53 generic `alloc_frame_with()` return corruption is resolved.
+
+## Session 19 Progress - Kspace Initialization Works
+
+### Poisoned Boot-Table Metadata Identified
+- After bypassing the bootstrap lock, `subtree_root.level()` returned `0xaa` and `page_size(level + 1)` returned zero.
+- `0xaa` was the uninitialized metadata poison pattern. The cursor was borrowing boot page-table frames whose metadata remained `KernelMeta`, not `PageTablePageMeta`.
+- Exact ELF symbols proved earlier hardcoded names were shifted:
+  - `boot_l4pt=0x81000`
+  - `boot_l4pt_kern=0x82000`
+  - `boot_l3pt_low=0x83000`
+  - `boot_l3pt_high=0x84000`
+  - `boot_l3pt_linear=0x85000`
+  - `boot_l2pt_gb0=0x86000`
+
+### Managed Bootstrap Page Tables
+- Removed the experimental KPT/boot-table patch block that treated `0x82000` as `boot_l3pt_linear` and constructed a misleveled tree.
+- Extended the early-reserved root allocation to a 32-page bootstrap page-table pool.
+- Each page taken from the pool is initialized with `PageTablePageMeta` at its actual level.
+- Pool indexing is plain mutable state during single-core bootstrap because exclusive atomics fault on this RPi3 mapping.
+
+### Additional Bootstrap Atomic Removed
+- `meta_pages.clone()` attempted an exclusive atomic reference-count increment for every metadata page and faulted in `inc_frame_ref_count`.
+- The clone was unnecessary because the original segment is intentionally forgotten after mapping.
+- The physical range is now derived directly from `meta_pages.paddr()` and `meta_pages.size()`.
+
+### Hardware Verification
+- All 2048 metadata pages mapped successfully.
+- `kspace::init_kernel_page_table()` returned and printed `[init.C] after kspace::init`.
+- Kernel page-table activation completed with `TTBR1=0x337b000`.
+- `IN_BOOTSTRAP_CONTEXT` changed to false.
+- Execution reached kernel main and component initialization:
+  - `[KM.main] start`
+  - `[mac.2] calling real component::init_all`
+  - `[CA.c] pop_front miss, calling pools::alloc`
+- No `[EL1-SYNC]` occurred during kspace construction or activation.
 
 ## Debug Markers in Code
 - `[npt] FIX: KPT[447/448]` — Fixing KPT entries to point to boot_l3pt_linear
