@@ -3,7 +3,7 @@
 use alloc::sync::Arc;
 
 use bus::MMIO_BUS;
-use spin::Once;
+use ostd::sync::Once;
 
 use self::driver::VirtioMmioDriver;
 

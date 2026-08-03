@@ -8,7 +8,7 @@ use ostd::{
     mm::{DmaDirection, DmaStream},
     sync::SpinLock,
 };
-use spin::Once;
+use ostd::sync::Once;
 
 const RX_BUFFER_LEN: usize = 4096;
 pub static RX_BUFFER_POOL: Once<Arc<DmaPool>> = Once::new();

@@ -4,7 +4,7 @@
 use alloc::{collections::BTreeMap, string::String, sync::Arc, vec::Vec};
 
 use ostd::sync::SpinLock;
-use spin::Once;
+use ostd::sync::Once;
 
 use self::device::SocketDevice;
 pub mod buffer;

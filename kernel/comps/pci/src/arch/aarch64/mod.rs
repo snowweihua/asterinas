@@ -8,7 +8,7 @@
 
 use log::warn;
 use ostd::{arch::boot::DEVICE_TREE, io::IoMem, mm::VmIoOnce, Error};
-use spin::Once;
+use ostd::sync::Once;
 
 use crate::PciDeviceLocation;
 
