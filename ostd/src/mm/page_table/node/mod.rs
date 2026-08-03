@@ -169,6 +169,11 @@ impl<'a, C: PageTableConfig> PageTableNodeRef<'a, C> {
     where
         'a: 'rcu,
     {
+        #[cfg(target_arch = "aarch64")]
+        if crate::IN_BOOTSTRAP_CONTEXT.load(Ordering::Relaxed) {
+            return PageTableGuard::<'rcu, C> { inner: self };
+        }
+
         // WORKAROUND: QEMU 6.2 AArch64 compare_exchange fails spuriously (broken STXR).
         // Use swap(1) which internally retries STXR on failure, avoiding infinite spin.
         while self.meta().lock.swap(1, Ordering::Acquire) != 0 {
