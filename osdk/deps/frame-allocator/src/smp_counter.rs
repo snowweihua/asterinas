@@ -57,16 +57,26 @@ impl FastSmpCounter {
 
     /// Adds `a` to the counter on the given CPU.
     pub fn add(&self, on_cpu: CpuId, a: usize) {
-        self.per_cpu_counter
-            .get_on_cpu(on_cpu)
-            .fetch_add(a as isize, Ordering::Relaxed);
+        let counter = self.per_cpu_counter.get_on_cpu(on_cpu);
+        #[cfg(target_arch = "aarch64")]
+        if ostd::arch::is_rpi3() {
+            let value = counter.load(Ordering::Relaxed);
+            counter.store(value.wrapping_add(a as isize), Ordering::Relaxed);
+            return;
+        }
+        counter.fetch_add(a as isize, Ordering::Relaxed);
     }
 
     /// Subtracts `a` from the counter on the given CPU.
     pub fn sub(&self, on_cpu: CpuId, a: usize) {
-        self.per_cpu_counter
-            .get_on_cpu(on_cpu)
-            .fetch_sub(a as isize, Ordering::Relaxed);
+        let counter = self.per_cpu_counter.get_on_cpu(on_cpu);
+        #[cfg(target_arch = "aarch64")]
+        if ostd::arch::is_rpi3() {
+            let value = counter.load(Ordering::Relaxed);
+            counter.store(value.wrapping_sub(a as isize), Ordering::Relaxed);
+            return;
+        }
+        counter.fetch_sub(a as isize, Ordering::Relaxed);
     }
 
     /// Gets the total counter value.
