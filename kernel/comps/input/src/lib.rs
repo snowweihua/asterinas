@@ -14,8 +14,7 @@ use core::{any::Any, fmt::Debug};
 
 use component::{init_component, ComponentInitError};
 use key::{Key, KeyStatus};
-use ostd::sync::SpinLock;
-use spin::Once;
+use ostd::sync::{Once, SpinLock};
 
 #[derive(Debug, Clone, Copy)]
 pub enum InputEvent {

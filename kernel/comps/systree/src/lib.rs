@@ -33,7 +33,7 @@ use alloc::{borrow::Cow, sync::Arc};
 
 use aster_util::printer::VmPrinterError;
 use component::{init_component, ComponentInitError};
-use spin::Once;
+use ostd::sync::Once;
 
 pub use self::{
     attr::{SysAttr, SysAttrSet, SysAttrSetBuilder},

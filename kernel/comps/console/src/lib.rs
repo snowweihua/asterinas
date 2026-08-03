@@ -15,9 +15,8 @@ use component::{init_component, ComponentInitError};
 pub use font::{BitmapChar, BitmapCharRow, BitmapFont};
 use ostd::{
     mm::{Infallible, VmReader},
-    sync::{LocalIrqDisabled, SpinLock, SpinLockGuard},
+    sync::{LocalIrqDisabled, Once, SpinLock, SpinLockGuard},
 };
-use spin::Once;
 
 pub type ConsoleCallback = dyn Fn(VmReader<Infallible>) + Send + Sync;
 

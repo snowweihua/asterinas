@@ -41,8 +41,7 @@ mod prelude;
 pub mod request_queue;
 
 use component::{init_component, ComponentInitError};
-use ostd::sync::SpinLock;
-use spin::Once;
+use ostd::sync::{Once, SpinLock};
 
 use self::{
     bio::{BioEnqueueError, SubmittedBio},
