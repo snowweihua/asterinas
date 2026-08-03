@@ -96,6 +96,12 @@ SECTIONS
         __einit_array = .;
     }
 
+    .component_registry     : AT(ADDR(.component_registry) - KERNEL_VMA_OFFSET) {
+        __component_registry_start = .;
+        KEEP(*(.component_registry))
+        __component_registry_end = .;
+    }
+
     .sensitive_io_ports     : AT(ADDR(.sensitive_io_ports) - KERNEL_VMA_OFFSET) {
         __sensitive_io_ports_start = .;
         KEEP(*(.sensitive_io_ports))

@@ -83,6 +83,12 @@ SECTIONS
         KEEP(*(SORT(.init_array .init_array.*)))
         __einit_array = .;
     }
+
+    .component_registry     : AT(ADDR(.component_registry) - KERNEL_VMA_OFFSET) {
+        __component_registry_start = .;
+        KEEP(*(.component_registry))
+        __component_registry_end = .;
+    }
     
     # A list of the sensitive IoPort ranges in OSTD which will be used during
     # the initialization of IoPortAllocator.
