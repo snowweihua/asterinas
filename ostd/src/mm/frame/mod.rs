@@ -257,7 +257,7 @@ impl<M: AnyFrameMeta + ?Sized> Clone for Frame<M> {
 
 impl<M: AnyFrameMeta + ?Sized> Drop for Frame<M> {
     fn drop(&mut self) {
-        let last_ref_cnt = self.slot().ref_count.fetch_sub(1, Ordering::Release);
+        let last_ref_cnt = self.slot().decrement_ref_count();
         debug_assert!(last_ref_cnt != 0 && last_ref_cnt != REF_COUNT_UNUSED);
 
         if last_ref_cnt == 1 {

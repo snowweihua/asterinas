@@ -240,6 +240,32 @@ pub(super) fn get_slot(paddr: Paddr) -> Result<&'static MetaSlot, GetFrameError>
 }
 
 impl MetaSlot {
+    pub(super) fn try_mark_unique(&self) -> bool {
+        #[cfg(target_arch = "aarch64")]
+        if crate::arch::board::BoardType::cached() == 2 {
+            if self.ref_count.load(Ordering::Relaxed) != 1 {
+                return false;
+            }
+            self.ref_count.store(REF_COUNT_UNIQUE, Ordering::Relaxed);
+            return true;
+        }
+
+        self.ref_count
+            .compare_exchange(1, REF_COUNT_UNIQUE, Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok()
+    }
+
+    pub(super) fn decrement_ref_count(&self) -> u64 {
+        #[cfg(target_arch = "aarch64")]
+        if crate::arch::board::BoardType::cached() == 2 {
+            let last = self.ref_count.load(Ordering::Relaxed);
+            self.ref_count.store(last - 1, Ordering::Release);
+            return last;
+        }
+
+        self.ref_count.fetch_sub(1, Ordering::Release)
+    }
+
     /// Initializes the metadata slot of a frame assuming it is unused.
     ///
     /// If successful, the function returns a pointer to the metadata slot.
@@ -327,6 +353,15 @@ impl MetaSlot {
     ///
     /// The caller must have already held a reference to the frame.
     pub(super) unsafe fn inc_ref_count(&self) {
+        #[cfg(target_arch = "aarch64")]
+        let last_ref_cnt = if crate::arch::board::BoardType::cached() == 2 {
+            let last = self.ref_count.load(Ordering::Relaxed);
+            self.ref_count.store(last + 1, Ordering::Relaxed);
+            last
+        } else {
+            self.ref_count.fetch_add(1, Ordering::Relaxed)
+        };
+        #[cfg(not(target_arch = "aarch64"))]
         let last_ref_cnt = self.ref_count.fetch_add(1, Ordering::Relaxed);
         debug_assert!(last_ref_cnt != 0 && last_ref_cnt != REF_COUNT_UNUSED);
 

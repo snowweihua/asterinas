@@ -224,17 +224,11 @@ impl<M: AnyFrameMeta + ?Sized> TryFrom<Frame<M>> for UniqueFrame<M> {
     ///
     /// If the reference count is not 1, the frame is returned back.
     fn try_from(frame: Frame<M>) -> Result<Self, Self::Error> {
-        match frame.slot().ref_count.compare_exchange(
-            1,
-            REF_COUNT_UNIQUE,
-            Ordering::Relaxed,
-            Ordering::Relaxed,
-        ) {
-            Ok(_) => {
-                // SAFETY: The reference count is now `REF_COUNT_UNIQUE`.
-                Ok(unsafe { core::mem::transmute::<Frame<M>, UniqueFrame<M>>(frame) })
-            }
-            Err(_) => Err(frame),
+        if frame.slot().try_mark_unique() {
+            // SAFETY: The reference count is now `REF_COUNT_UNIQUE`.
+            Ok(unsafe { core::mem::transmute::<Frame<M>, UniqueFrame<M>>(frame) })
+        } else {
+            Err(frame)
         }
     }
 }

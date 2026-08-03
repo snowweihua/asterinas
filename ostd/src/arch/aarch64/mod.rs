@@ -21,6 +21,10 @@ pub(crate) mod board;
 
 use aarch64_cpu::registers::*;
 
+pub fn is_rpi3() -> bool {
+    board::BoardType::cached() == 2
+}
+
 /// Write a single byte to the PL011 UART via linear map (for low-level probing).
 /// Safe to call with IRQs disabled. Does NOT use any locks.
 /// The address is the known, pre-validated PL011 UART MMIO address.
