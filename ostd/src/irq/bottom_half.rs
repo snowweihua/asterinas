@@ -2,10 +2,8 @@
 
 //! The bottom half of interrupt handling.
 
-use spin::Once;
-
 use super::{disable_local, DisabledLocalIrqGuard, InterruptLevel};
-use crate::task::disable_preempt;
+use crate::{sync::Once, task::disable_preempt};
 
 /// Registers a bottom half callback to be executed at interrupt level 1.
 ///
