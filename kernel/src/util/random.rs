@@ -3,7 +3,7 @@
 #![expect(unused_variables)]
 
 use rand::{rngs::StdRng, Error as RandError, RngCore};
-use spin::Once;
+use ostd::sync::Once;
 
 use crate::prelude::*;
 
