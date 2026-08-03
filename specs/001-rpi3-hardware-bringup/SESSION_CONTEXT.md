@@ -288,6 +288,39 @@ Hmm, maybe the VA is not exactly 0xffff_e000_0000_0000 but slightly different. L
   - `DBG: before driver::init()`
 - No additional serial output appears during a 30-second follow-up read, so the next boundary is inside `driver::init()`.
 
+## Session 23 Progress - Static Components Reach Systree
+
+### Root Cause: Empty Component Inventory
+- AArch64 skipped `.init_array`, so inventory constructors never registered component records.
+- The ELF contained 12 constructor pointers, but `component::init_all()` iterated zero records and returned success without initializing components.
+- Restoring constructors toggled the failure to `inventory::ErasedNode::submit`, where `ldxr/stlxr` faulted on the registry head.
+
+### Static AArch64 Registration
+- AArch64 `#[init_component]` records are now emitted into a retained `.component_registry` linker section.
+- `component::init_all()` reads the static linker range on AArch64; other architectures retain inventory constructors.
+- The OSDK run-base cache now compares generated linker scripts so template changes invalidate stale base crates.
+- Verified ELF registry size is `0x1e0`: 12 records at 40 bytes each; `.init_array` is empty.
+
+### Hardware Verification
+- Hardware discovers all 12 records: twelve `[mac.I] item` markers and `[mac.S] sort done, len=............`.
+- Bootstrap initialization completes:
+  - `[cmp.block] init`
+  - `[cmp.cons] init`
+  - `[cmp.input] init`
+  - `[cmp.pci] init`
+  - `[cmp.softirq] init`
+- Bootstrap component singletons and OSTD bottom-half handlers use the RPi3-safe `ostd::sync::Once` path.
+- `SoftIrqLine::enable()` uses a single-core load/store update for `ENABLED_MASK` on RPi3; other targets retain atomic RMW.
+- The kernel reaches `[cmp.systree] init`.
+
+### Current Boundary
+- Systree construction faults inside `Arc::new_cyclic` while cloning the root node's `Weak` self-reference:
+  - `ESR=0x96000035`
+  - `ELR=0xffff00000030754c`
+  - `FAR=0xffff8000033a7f08`
+  - faulting instruction is `ldxr` in the Arc weak-count increment.
+- This is the next confirmed exclusive-RMW boundary; no Arc workaround has been applied yet.
+
 ## Debug Markers in Code
 - `[npt] FIX: KPT[447/448]` — Fixing KPT entries to point to boot_l3pt_linear
 - `[npt] Setting boot_l3pt_linear[0x17b]` — Direct frame mapping
