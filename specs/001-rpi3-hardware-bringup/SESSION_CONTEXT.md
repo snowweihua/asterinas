@@ -267,6 +267,27 @@ Hmm, maybe the VA is not exactly 0xffff_e000_0000_0000 but slightly different. L
   - `FAR=0xffff0000004470c0`
   - faulting instruction is `ldaxrb` in the Once state transition.
 
+## Session 22 Progress - Thread and Random Initialization Work
+
+### RPi3-Safe Once Initialization
+- Added `ostd::sync::Once`, which dispatches to `SimpleOnce` on detected RPi3 and preserves `spin::Once` on QEMU and other architectures.
+- Migrated the confirmed failing initialization objects:
+  - task pre/post-schedule handlers;
+  - task scheduler;
+  - AArch64 user page-fault handler;
+  - kernel random-number generator.
+- This does not globally replace `spin::Once`; migrations remain scoped to runtime-confirmed RPi3 failures.
+
+### Hardware Verification
+- Former `PRE_SCHEDULE_HANDLER` ELR `0xffff00000035dd28` no longer faults.
+- Former `USER_PAGE_FAULT_HANDLER` ELR `0xffff000000383a24` no longer faults.
+- Former RNG ELR `0xffff0000002339c0` no longer faults.
+- Kernel reaches:
+  - `DBG: thread::init() done`
+  - `DBG: util::random::init() done`
+  - `DBG: before driver::init()`
+- No additional serial output appears during a 30-second follow-up read, so the next boundary is inside `driver::init()`.
+
 ## Debug Markers in Code
 - `[npt] FIX: KPT[447/448]` — Fixing KPT entries to point to boot_l3pt_linear
 - `[npt] Setting boot_l3pt_linear[0x17b]` — Direct frame mapping
