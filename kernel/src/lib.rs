@@ -88,23 +88,6 @@ mod vm;
 fn main() {
     ostd::arch::boot::pl011_puts_safe(b"[KM.main] start\n");
     ostd::arch::boot::pl011_puts_safe(b"[KM.main] before component::init_all\n");
-    ostd::arch::boot::pl011_puts_safe(b"[mac.1] calling component::init_all\n");
-    ostd::arch::boot::pl011_puts_safe(b"[mac.1b] testing empty vec\n");
-    component::init_all(InitStage::Bootstrap, vec![]).unwrap();
-    ostd::arch::boot::pl011_puts_safe(b"[mac.1c] after empty vec test\n");
-    ostd::arch::boot::pl011_puts_safe(b"[mac.2] calling real component::init_all\n");
-    ostd::arch::boot::pl011_puts_safe(b"[mac.2b] test frame alloc\n");
-    {
-        let mut opts = ostd::mm::FrameAllocOptions::new();
-        let opts = opts.zeroed(false);
-        if let Ok(frame) = opts.alloc_frame() {
-            ostd::arch::boot::pl011_puts_safe(b"[mac.2c] frame alloc ok\n");
-            drop(frame);
-        } else {
-            ostd::arch::boot::pl011_puts_safe(b"[mac.2c] frame alloc FAILED\n");
-        }
-    }
-    ostd::arch::boot::pl011_puts_safe(b"[mac.2d] after frame test\n");
     ostd::arch::boot::pl011_puts_safe(b"[mac.3] before call\n");
     component::init_all(InitStage::Bootstrap, component::parse_metadata!()).unwrap();
     ostd::arch::boot::pl011_puts_safe(b"[mac.4] after call\n");
