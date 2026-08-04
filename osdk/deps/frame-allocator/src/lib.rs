@@ -75,13 +75,7 @@ impl GlobalFrameAllocator for FrameAllocator {
     }
 
     fn add_free_memory(&self, addr: Paddr, size: usize) {
-        #[cfg(target_arch = "aarch64")]
-        ostd::arch::boot::pl011_puts_safe(b"[AFM] guard\n");
         let guard = irq::disable_local();
-        #[cfg(target_arch = "aarch64")]
-        ostd::arch::boot::pl011_puts_safe(b"[AFM] calling pools\n");
         pools::add_free_memory(&guard, addr, size);
-        #[cfg(target_arch = "aarch64")]
-        ostd::arch::boot::pl011_puts_safe(b"[AFM] done\n");
     }
 }

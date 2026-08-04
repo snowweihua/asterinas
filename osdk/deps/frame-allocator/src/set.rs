@@ -30,27 +30,13 @@ impl<const MAX_ORDER: BuddyOrder> BuddySet<MAX_ORDER> {
     pub(crate) fn insert_chunk(&mut self, addr: Paddr, order: BuddyOrder) {
         debug_assert!(order < MAX_ORDER);
 
-        #[cfg(target_arch = "aarch64")]
-        unsafe { ostd::arch::boot::pl011_puts(b"[insert_chunk] start\n"); }
-
         let inserted_size = size_of_order(order);
 
-        #[cfg(target_arch = "aarch64")]
-        unsafe { ostd::arch::boot::pl011_puts(b"[insert_chunk] calling from_unused\n"); }
         let mut chunk = FreeChunk::from_unused(addr, order);
-
-        #[cfg(target_arch = "aarch64")]
-        unsafe { ostd::arch::boot::pl011_puts(b"[insert_chunk] from_unused done\n"); }
 
         let order = chunk.order();
 
-        #[cfg(target_arch = "aarch64")]
-        unsafe { ostd::arch::boot::pl011_puts(b"[insert_chunk] push_front\n"); }
-
         self.lists[order].push_front(chunk.into_unique_head());
-
-        #[cfg(target_arch = "aarch64")]
-        unsafe { ostd::arch::boot::pl011_puts(b"[insert_chunk] done\n"); }
 
         self.total_size += inserted_size;
     }
