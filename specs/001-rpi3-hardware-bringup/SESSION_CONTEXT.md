@@ -372,3 +372,94 @@ Hmm, maybe the VA is not exactly 0xffff_e000_0000_0000 but slightly different. L
   - level-3 table `0x84000`, index `0` -> `0x86000`.
 - The previous empty-root boundary is resolved.
 - New boundary is immediately after the level-3 handoff to `0x86000`; no level-2 cursor marker or `[EL1-SYNC]` output follows.
+
+## Session 26 Progress - Managed Metadata Cursor Restored
+
+### Root Cause Confirmed
+- The level-2 cursor marker was absent because the metadata range crosses multiple level-2 entries and `try_traverse_and_lock_subtree_root()` breaks before printing that marker.
+- The Session 25 workaround copied the TTBR1 slot-0 descriptor into KPT root index `0x1c0`, causing the cursor to borrow static boot table `0x86000`.
+- Hardware instrumentation showed the borrowed boot frame was interpreted as invalid page-table metadata:
+  - `[cursor] post-loop addr=0x0000000000086000`
+  - `[cursor] post-lock level=0x00000000000000aa stray=0x00000000000000aa`
+- The stray check then retried indefinitely with no exception.
+
+### Fix
+- Removed the metadata-root slot-0 injection from `ostd/src/mm/page_table/mod.rs`.
+- The metadata cursor now leaves root index `0x1c0` empty and allocates a managed page-table subtree from the reserved pool, whose metadata has the correct page-table level.
+
+### Hardware Verification
+- Release build, conversion, deployment, and power cycle completed.
+- Cursor now reaches a managed level-2 table:
+  - `post-loop addr=0x3399000`, `has_guard=1`
+  - `post-lock level=2`, `stray=0`
+- Metadata mapping completed: `[kspace.m4] metadata mapped`.
+- Kernel page-table activation completed: `[init.5a] after activate_kernel_page_table`.
+- Component initialization progressed to `[CA.c] pop_front miss, calling pools::alloc`.
+- New boundary is in later frame allocator initialization, not page-table cursor traversal.
+
+## Session 27 Progress - Allocator Boundary Investigated
+
+### Investigation Result
+- Added and removed temporary AArch64 UART markers across the frame allocator, buddy splitting, metadata initialization, intrusive lists, and list removal paths.
+- Hardware evidence showed the following allocator operations can complete on the RPi3:
+  - `pools::alloc` and local buddy allocation;
+  - balancing and `alloc_chunk` transfers;
+  - `FreeChunk::from_unused` / `MetaSlot::get_from_unused`;
+  - intrusive-list insertion and `pop_front`.
+- The high-volume metadata/list probes saturated UART and produced false apparent boundaries. The clean image still commonly stops after `[split] done`, but no allocator root cause was confirmed.
+- Oracle consultations were attempted after repeated inconclusive rounds, but the service returned `Insufficient balance` before producing analysis.
+
+### Final State
+- No speculative frame-allocator behavior change was made.
+- All temporary allocator/list/metadata instrumentation was removed.
+- The previously verified page-table fix remains the only source-code change:
+  - `ostd/src/mm/page_table/mod.rs` leaves metadata-root index `0x1c0` empty for managed cursor allocation.
+- The next investigation should target observability/control-flow around the sparse clean `[split] done` boundary, preferably with a low-volume non-UART signal or a confirmed exception/return marker.
+
+## Session 28 Progress - Split Boundary Cleared
+
+### Hardware Verification
+- Added a three-marker, low-volume probe around `BuddySet::alloc_chunk()` and repeated the full build/deploy/power-cycle/UART workflow.
+- The RPi3 emitted, in order:
+  - `[set.probe] split returned`
+  - `[set.probe] right pushed`
+  - `[set.probe] alloc_chunk complete`
+  - `[set.probe] alloc_chunk complete`
+  - `[CA.d] pools::alloc done`
+- The second cache refill also emitted two `alloc_chunk complete` markers.
+
+### Conclusion
+- `FreeChunk::split_free()`, right-child intrusive-list insertion, `BuddySet::alloc_chunk()`, and `pools::alloc()` all complete on hardware.
+- The prior apparent `[split] done` boundary was an observability artifact, not a confirmed frame-allocator defect.
+- All temporary probes were removed. No speculative allocator behavior change was made.
+- The next boundary is after the second `pools::alloc` call in later component initialization; use sparse markers or exception evidence, not high-volume allocator tracing.
+
+## Session 29 Progress - Component Metadata Allocation Removed
+
+### Confirmed Component-System Boundaries
+- `parse_metadata!()` constructed component names and paths as owned `String` values even though every generated value is a static literal.
+- Hardware probes repeatedly stopped in those boot-time string allocations and registry-path normalization allocations.
+- `ComponentInfo` now stores `&'static str`, `parse_input()` keys its map by `&'static str`, and registry matching normalizes paths with slices.
+- Hardware subsequently completed metadata parsing, registry matching, sorting, and component calls through block, console, input, PCI, softirq, and systree.
+
+### Logger Fault
+- The logger component then produced an EL1 synchronous abort.
+- The captured ELR resolved to `spin::once::Once::try_call_once_slow` in the OSTD logger injection path, matching the already-confirmed Cortex-A53 exclusive-operation limitation.
+- `ostd/src/logger.rs` now uses boot `SimpleOnce` for its logger backend instead of `spin::Once`.
+
+## Session 30 Progress - Logger Verification Partial
+
+### Image Identity and Hardware Runs
+- Removed high-volume kspace/cursor map probes and built a reduced image.
+- U-Boot confirmed it fetched the deployed images by exact byte counts (`3969712`, `3969784`, and `3970048` for successive probe builds), eliminating the earlier stale-image ambiguity.
+- Two unchanged reduced-image cold boots stopped after the level-3 absent cursor entry without an exception.
+- A single post-traversal marker proved cursor traversal returned; final guard markers then restored progress through `[kspace.m4] metadata mapped` and into component metadata parsing.
+- Repeated unchanged boots later stopped at previously cleared allocator refill points before reaching systree/logger, again without `[EL1-SYNC]`.
+- The final clean image was `3969648` bytes; U-Boot fetched that exact size on two unchanged cold boots.
+- Both clean boots completed metadata mapping, page-table activation, all 12 registry matches, component sorting, and component calls through `[cmp.systree] init`, then went quiet during a previously cleared allocator split path before logger.
+
+### Conclusion
+- The original logger failure mechanism is runtime-confirmed: `spin::Once` executes an exclusive state transition that aborts on this RPi3 setup.
+- The `SimpleOnce` substitution is the minimal mechanism-matched fix, but a clean hardware run has not yet reached the logger component to provide a full before/after toggle proof.
+- No cursor or allocator behavior change was made because those apparent boundaries remain instrumentation-sensitive and unconfirmed.
+- All Session 30 cursor, kspace-map, page-table-drop, kernel-main, and systree discriminator probes were removed.
