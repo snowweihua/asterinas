@@ -16,6 +16,7 @@
 #![feature(macro_metavar_expr)]
 #![feature(min_specialization)]
 #![feature(negative_impls)]
+#![feature(layout_for_ptr)]
 #![feature(ptr_metadata)]
 #![feature(ptr_sub_ptr)]
 #![feature(sync_unsafe_cell)]

@@ -7,6 +7,15 @@ pub struct Once<T> {
     concurrent: spin::Once<T>,
 }
 
+impl<T: core::fmt::Debug> core::fmt::Debug for Once<T> {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("Once")
+            .field("value", &self.get())
+            .finish()
+    }
+}
+
 impl<T> Once<T> {
     pub const fn new() -> Self {
         Self {

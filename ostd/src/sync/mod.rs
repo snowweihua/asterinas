@@ -2,6 +2,7 @@
 
 //! Useful synchronization primitives.
 
+mod arc_single;
 mod guard;
 mod mutex;
 mod once;
@@ -14,6 +15,7 @@ mod wait;
 
 pub(crate) use self::rcu::finish_grace_period;
 pub use self::{
+    arc_single::{arc_new_cyclic, weak_clone},
     guard::{GuardTransfer, LocalIrqDisabled, PreemptDisabled, SpinGuardian, WriteIrqDisabled},
     mutex::{ArcMutexGuard, Mutex, MutexGuard},
     once::Once,
