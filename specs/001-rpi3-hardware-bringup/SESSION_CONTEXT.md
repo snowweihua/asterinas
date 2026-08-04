@@ -333,3 +333,23 @@ Hmm, maybe the VA is not exactly 0xffff_e000_0000_0000 but slightly different. L
 - `[akt.0b]` — TTBR1 value dump
 - `[akt.0c/d/e]` — L0[0], L0[256], L0[511] dumps
 - `[akt.0f/g/h]` — L1[0], L1[511], L1[448] dumps
+
+## Session 24 Progress - Arc Weak Increment Bypassed
+
+### RPi3-Safe Arc Cyclic Construction
+- Added `ostd::sync::arc_new_cyclic()` and `ostd::sync::weak_clone()` for the explicitly single-core RPi3 path.
+- The RPi3 path initializes Arc counts with plain loads/stores instead of exclusive atomic operations; other targets retain the standard `alloc::sync::Arc` and `Weak` behavior.
+- Migrated systree root construction and weak-self cloning to the helpers.
+- Added `Debug` support for the RPi3-safe `ostd::sync::Once` required by systree field derives.
+
+### Build and Hardware Verification
+- Release AArch64 build passes.
+- Image converted and deployed to `/mnt/d/pi_sd/asterina.img`.
+- After power cycle, the former systree fault did not occur:
+  - no `ESR=0x96000035` at the old Arc weak-count location;
+  - boot reaches `[kspace.m3] before cursor_mut`.
+- New boundary is inside page-table cursor traversal:
+  - root entry at cursor level 4 index `0x1c0` is absent;
+  - next-level entry at level 3 index `0` is also absent;
+  - serial output stops after the second absent entry, with no `[EL1-SYNC]` marker.
+- The next investigation must explain why the newly allocated root page table is empty at `root_paddr=0x337b000` while cursor traversal continues into `0x339a000`.
