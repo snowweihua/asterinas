@@ -10,7 +10,6 @@
 extern crate alloc;
 
 use alloc::{
-    borrow::ToOwned,
     collections::BTreeMap,
     fmt::Debug,
     string::{String, ToString},
@@ -79,17 +78,17 @@ impl Debug for ComponentRegistry {
 }
 
 pub struct ComponentInfo {
-    name: String,
-    path: String,
+    name: &'static str,
+    path: &'static str,
     priority: u32,
     function: Option<&'static (dyn Fn() -> Result<(), ComponentInitError> + Sync)>,
 }
 
 impl ComponentInfo {
-    pub fn new(name: &str, path: &str, priority: u32) -> Self {
+    pub fn new(name: &'static str, path: &'static str, priority: u32) -> Self {
         Self {
-            name: name.to_string(),
-            path: path.to_string(),
+            name,
+            path,
             priority,
             function: None,
         }
@@ -153,11 +152,11 @@ pub fn init_all(
     Ok(())
 }
 
-fn parse_input(components: Vec<ComponentInfo>) -> BTreeMap<String, ComponentInfo> {
+fn parse_input(components: Vec<ComponentInfo>) -> BTreeMap<&'static str, ComponentInfo> {
     mini_uart_puts(b"[par] start\n");
     let mut out = BTreeMap::new();
     for component in components {
-        out.insert(component.path.clone(), component);
+        out.insert(component.path, component);
     }
     mini_uart_puts(b"[par] done\n");
     out
@@ -190,7 +189,7 @@ fn mini_uart_puts(s: &[u8]) {
 
 fn match_and_call(
     stage: InitStage,
-    mut components: BTreeMap<String, ComponentInfo>,
+    mut components: BTreeMap<&'static str, ComponentInfo>,
 ) -> Result<(), ComponentSystemInitError> {
     mini_uart_puts(b"[mac.M] enter\n");
     let mut infos = Vec::new();
@@ -205,28 +204,26 @@ fn match_and_call(
         }
 
         // relative/path/to/comps/pci/src/lib.rs
-        let mut str: String = registry.path.to_owned();
-        str = str.replace('\\', "/");
+        let registry_path = registry.path;
+        if registry_path.contains('\\') {
+            panic!("Backslash component paths are not supported on this target: {registry_path}");
+        }
         // relative/path/to/comps/pci
         // There are two cases, one in the test folder and one in the src folder.
         // There may be multiple directories within the folder.
         // There we assume it will not have such directories: 'comp1/src/comp2/src/lib.rs' so that we can split by tests or src string
-        if str.contains("src/") {
-            str = str
-                .trim_end_matches(str.get(str.find("src/").unwrap()..str.len()).unwrap())
-                .to_string();
-        } else if str.contains("tests/") {
-            str = str
-                .trim_end_matches(str.get(str.find("tests/").unwrap()..str.len()).unwrap())
-                .to_string();
+        let str = if let Some(src_pos) = registry_path.find("src/") {
+            &registry_path[..src_pos]
+        } else if let Some(tests_pos) = registry_path.find("tests/") {
+            &registry_path[..tests_pos]
         } else {
-            panic!("The path of {} cannot recognized by component system", str);
-        }
-        let str = str.trim_end_matches('/').to_owned();
+            panic!("The path of {} cannot recognized by component system", registry_path);
+        };
+        let str = str.trim_end_matches('/');
 
         let mut info = components
-            .remove(&str)
-            .ok_or(ComponentSystemInitError::NotIncludeAllComponent(str))?;
+            .remove(str)
+            .ok_or_else(|| ComponentSystemInitError::NotIncludeAllComponent(str.to_string()))?;
         info.function.replace(registry.function);
         infos.push(info);
     }
