@@ -11,9 +11,8 @@ use alloc::{
 use inherit_methods_macro::inherit_methods;
 use ostd::{
     mm::{VmReader, VmWriter},
-    sync::RwLock,
+    sync::{Once, RwLock},
 };
-use spin::Once;
 
 use super::{
     attr::SysAttrSet,
@@ -144,7 +143,9 @@ impl<C: SysObj + ?Sized, T: SysBranchNode> AttrLessBranchNodeFields<C, T> {
             return Err(Error::AlreadyExists);
         }
 
-        new_child.init_parent(self.weak_self().clone());
+        let parent_t = ostd::sync::weak_clone(self.weak_self());
+        let parent: Weak<dyn SysBranchNode> = parent_t;
+        new_child.init_parent(parent);
         children.insert(name.clone(), new_child);
 
         Ok(())

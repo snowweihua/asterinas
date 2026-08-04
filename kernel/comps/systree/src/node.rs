@@ -276,7 +276,13 @@ impl SysNodeId {
     pub fn new() -> Self {
         static NEXT_ID: AtomicU64 = AtomicU64::new(0);
 
-        let next_id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+        let next_id = if ostd::arch::is_rpi3() {
+            let id = NEXT_ID.load(Ordering::Relaxed);
+            NEXT_ID.store(id + 1, Ordering::Relaxed);
+            id
+        } else {
+            NEXT_ID.fetch_add(1, Ordering::Relaxed)
+        };
         // Guard against integer overflow
         assert!(next_id <= u64::MAX / 2);
 

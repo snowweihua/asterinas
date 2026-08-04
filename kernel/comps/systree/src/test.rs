@@ -31,8 +31,8 @@ impl DeviceNode {
 
         let attrs = builder.build().expect("Failed to build attribute set");
 
-        Arc::new_cyclic(|weak_self| {
-            let fields = BranchNodeFields::new(name, attrs, weak_self.clone());
+        ostd::sync::arc_new_cyclic(|weak_self| {
+            let fields = BranchNodeFields::new(name, attrs, ostd::sync::weak_clone(weak_self));
             DeviceNode { fields }
         })
     }
@@ -100,8 +100,9 @@ struct SymlinkNode {
 
 impl SymlinkNode {
     fn new(name: SysStr, target: &str) -> Arc<Self> {
-        Arc::new_cyclic(|weak_self| {
-            let fields = SymlinkNodeFields::new(name, target.to_string(), weak_self.clone());
+        ostd::sync::arc_new_cyclic(|weak_self| {
+            let fields =
+                SymlinkNodeFields::new(name, target.to_string(), ostd::sync::weak_clone(weak_self));
             SymlinkNode { fields }
         })
     }
