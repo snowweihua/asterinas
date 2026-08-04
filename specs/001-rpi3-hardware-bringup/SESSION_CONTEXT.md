@@ -353,3 +353,22 @@ Hmm, maybe the VA is not exactly 0xffff_e000_0000_0000 but slightly different. L
   - next-level entry at level 3 index `0` is also absent;
   - serial output stops after the second absent entry, with no `[EL1-SYNC]` marker.
 - The next investigation must explain why the newly allocated root page table is empty at `root_paddr=0x337b000` while cursor traversal continues into `0x339a000`.
+
+## Session 25 Progress - Metadata Root Index Corrected
+
+### Page-Table Cursor Fix
+- The RPi3 AArch64 kernel page-table copy was writing the boot slot-0 descriptor to `new_root[0]`.
+- The metadata range starts at top-level index `0x1c0`, so the cursor never saw that descriptor and allocated an empty child table.
+- Changed the workaround to write the descriptor at the metadata root index derived through `pte_index()`.
+
+### Debug Output Cleanup
+- Removed the high-volume `[AFM]`, `[afm]`, and `[insert_chunk]` allocator markers.
+- Kept the higher-level allocator and page-table boundary markers.
+
+### Build and Hardware Verification
+- Release build passes; image converted and deployed.
+- After power cycle, cursor traversal now follows the expected existing tables:
+  - root `0x337b000`, index `0x1c0` -> `0x84000`;
+  - level-3 table `0x84000`, index `0` -> `0x86000`.
+- The previous empty-root boundary is resolved.
+- New boundary is immediately after the level-3 handoff to `0x86000`; no level-2 cursor marker or `[EL1-SYNC]` output follows.
