@@ -34,6 +34,8 @@ def log(msg):
 log("=== Build MCP server starting ===")
 
 
+BUILD_OUTPUT_FILE = "/home/snow/asterinas/tools/logs/build_output.log"
+
 def do_build_kernel():
     """Run the Dockerised cargo build in background thread."""
     global build_result
@@ -47,11 +49,19 @@ def do_build_kernel():
     try:
         r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=3600)
         elapsed = time.time() - start
+        full_output = f"=== Build Output (elapsed: {elapsed:.0f}s, exit: {r.returncode}) ===\n"
+        full_output += f"=== stderr ===\n{r.stderr}\n=== stdout ===\n{r.stdout}\n"
+        os.makedirs(os.path.dirname(BUILD_OUTPUT_FILE), exist_ok=True)
+        with open(BUILD_OUTPUT_FILE, "w", encoding="utf-8") as f:
+            f.write(full_output)
         if r.returncode != 0:
+            stderr_tail = r.stderr[-3000:] if len(r.stderr) > 3000 else r.stderr
+            stdout_tail = r.stdout[-3000:] if len(r.stdout) > 3000 else r.stdout
             result = (f"BUILD FAILED (exit={r.returncode}, {elapsed:.0f}s)\n"
-                    f"stderr:\n{r.stderr[-1000:]}\nstdout:\n{r.stdout[-1000:]}")
+                    f"Full output saved to: {BUILD_OUTPUT_FILE}\n"
+                    f"stderr (last 3000 chars):\n{stderr_tail}\n\nstdout (last 3000 chars):\n{stdout_tail}")
         else:
-            result = f"BUILD OK ({elapsed:.0f}s)\n{r.stdout[-2000:]}"
+            result = f"BUILD OK ({elapsed:.0f}s)\n{r.stdout[-3000:]}"
     except subprocess.TimeoutExpired:
         result = "BUILD FAILED: timeout after 3600s"
     except Exception as e:
