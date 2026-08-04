@@ -17,9 +17,7 @@
 use core::str::FromStr;
 
 use log::{LevelFilter, Metadata, Record};
-use spin::Once;
-
-use crate::boot::EARLY_INFO;
+use crate::boot::{SimpleOnce as Once, EARLY_INFO};
 
 /// Injects a logger.
 ///
