@@ -492,8 +492,12 @@ impl PageTable<KernelPtConfig> {
                 unsafe { crate::arch::boot::pl011_puts_hex(l3entry.as_usize()) };
                 unsafe { crate::arch::boot::pl011_puts(b"\n") };
 
-                unsafe { root_node.write_pte(0, boot_slot0_pte) };
-                unsafe { crate::arch::boot::pl011_puts(b"[slot0] new_root[0]=") };
+                let metadata_root_index = pte_index::<KernelPtConfig>(
+                    0xffff_e000_0000_0000,
+                    PagingConsts::NR_LEVELS,
+                );
+                unsafe { root_node.write_pte(metadata_root_index, boot_slot0_pte) };
+                unsafe { crate::arch::boot::pl011_puts(b"[slot0] new_root[meta]=") };
                 unsafe { crate::arch::boot::pl011_puts_hex(boot_slot0_pte.as_usize()) };
                 unsafe { crate::arch::boot::pl011_puts(b"\n") };
             }
