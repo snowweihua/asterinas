@@ -88,9 +88,9 @@ The project uses plain load/store or boot-safe single-core helpers only at runti
 
 ## Latest Hardware Evidence
 
-- Boot now reaches `[cmp.block] init` deterministically on the committed image.
-- All six bootstrap components are discovered, sorted, and dispatched.
-- The hang moved to the logger `info!` allocation that runs after the first component init.
+- Boot now reaches `[cmp.systree] init` with active frame allocation deterministically on the committed image.
+- All six bootstrap components are discovered, sorted, and dispatched (block, console, input, PCI, softirq, systree).
+- The hang is inside systree init's heap/frame allocation path (cache hits + pools splits complete, then silence).
 
 ## Root Cause: 16-Byte Register Returns Corrupt x30
 
@@ -108,12 +108,15 @@ The project uses plain load/store or boot-safe single-core helpers only at runti
   - `alloc_chunk`, `pools::alloc`, `CacheArray::alloc`, `cache::alloc`, `pop_front`
     return `Paddr` with `NO_PADDR` sentinel instead of `Option<Paddr>`.
   - `GlobalFrameAllocator::alloc` returns `Paddr` with `NO_PADDR` sentinel.
-  - `alloc_frame_with`/`Slab::new` route through `Frame::init_unused`/
-    `UniqueFrame::init_unused` (single-register) internally.
-- Commits: `59081c80`, `f47a99af`, `b014a696`.
+  - `MetaSlot::get_from_unused` returns `*const Self` with a null sentinel.
+  - `Frame::init_unused`/`UniqueFrame::init_unused` route through the
+    single-register `get_from_unused`.
+- Commits: `59081c80`, `f47a99af`, `b014a696`, `69641977`.
 - Remaining 16-byte register returns in the heap/frame path:
-  `MetaSlot::get_from_unused`, `Frame::from_unused`, `UniqueFrame::from_unused`,
-  and the public `Result`-returning wrappers. These are the next targets.
+  `alloc_frame_with` (`Result<Frame<M>>`), `Frame::from_unused`/
+  `UniqueFrame::from_unused` (public `Result` wrappers), and the heap-allocator
+  crate's `SlabCache::alloc`/`ObjectCache::alloc` `Result<HeapSlot, AllocError>`
+  paths. These are the next targets.
 
 ## Operational Notes
 
