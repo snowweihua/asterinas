@@ -31,7 +31,8 @@ fn frame_allocator_alloc_layout_match() {
 fn assert_allocation_well_formed(layout: Layout) {
     let instance = FrameAllocator;
 
-    let allocated = instance.alloc(layout).unwrap();
+    let allocated = instance.alloc(layout);
+    assert_ne!(allocated, ostd::mm::frame::allocator::NO_PADDR);
     assert_eq!(
         allocated % layout.align(),
         0,

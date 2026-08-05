@@ -84,7 +84,7 @@ pub fn test_main(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// struct MyFrameAllocator;
 ///
 /// impl GlobalFrameAllocator for MyFrameAllocator {
-///     fn alloc(&self, _layout: Layout) -> Option<Paddr> { None }
+///     fn alloc(&self, _layout: Layout) -> Paddr { ostd::mm::frame::allocator::NO_PADDR }
 ///     fn dealloc(&self, _paddr: Paddr, _size: usize) {}
 /// }
 /// ```

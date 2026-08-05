@@ -16,6 +16,14 @@ use crate::{
     util::ops::range_difference,
 };
 
+/// The sentinel physical address returned by [`GlobalFrameAllocator::alloc`]
+/// when no memory is available.
+///
+/// A real physical address can never equal this value, so it keeps the return
+/// in a single register (a 16-byte `Option<Paddr>` return triggers a Cortex-A53
+/// epilogue bug on RPi3).
+pub const NO_PADDR: Paddr = usize::MAX;
+
 /// Options for allocating physical memory frames.
 pub struct FrameAllocOptions {
     zeroed: bool,
@@ -59,9 +67,10 @@ impl FrameAllocOptions {
         // Instead allocate the raw paddr, then use the single-register
         // `Frame::init_unused`/`from_init_ptr` helpers.
         let layout = Layout::from_size_align(PAGE_SIZE, PAGE_SIZE).unwrap();
-        let pa = get_global_frame_allocator()
-            .alloc(layout)
-            .ok_or(Error::NoMemory)?;
+        let pa = get_global_frame_allocator().alloc(layout);
+        if pa == NO_PADDR {
+            return Err(Error::NoMemory);
+        }
 
         if self.zeroed {
             let addr = paddr_to_vaddr(pa) as *mut u8;
@@ -95,12 +104,11 @@ impl FrameAllocOptions {
             return Err(Error::InvalidArgs);
         }
         let layout = Layout::from_size_align(nframes * PAGE_SIZE, PAGE_SIZE).unwrap();
-        let segment = get_global_frame_allocator()
-            .alloc(layout)
-            .map(|start| {
-                Segment::from_unused(start..start + nframes * PAGE_SIZE, metadata_fn).unwrap()
-            })
-            .ok_or(Error::NoMemory)?;
+        let start = get_global_frame_allocator().alloc(layout);
+        if start == NO_PADDR {
+            return Err(Error::NoMemory);
+        }
+        let segment = Segment::from_unused(start..start + nframes * PAGE_SIZE, metadata_fn).unwrap();
 
         if self.zeroed {
             let addr = paddr_to_vaddr(segment.paddr()) as *mut u8;
@@ -155,10 +163,15 @@ pub trait GlobalFrameAllocator: Sync {
     ///
     /// The caller guarantees that `layout.size()` is aligned to [`PAGE_SIZE`].
     ///
+    /// Returns [`NO_PADDR`] if the allocation fails. A real physical address
+    /// can never equal this sentinel, so the result fits in a single register
+    /// (a 16-byte `Option<Paddr>` return triggers a Cortex-A53 epilogue bug on
+    /// RPi3).
+    ///
     /// When any of the allocated memory is not in use, OSTD returns them by
     /// calling [`GlobalFrameAllocator::dealloc`]. If multiple frames are
     /// allocated, they may be returned in any order with any number of calls.
-    fn alloc(&self, layout: Layout) -> Option<Paddr>;
+    fn alloc(&self, layout: Layout) -> Paddr;
 
     /// Deallocates a contiguous range of frames.
     ///

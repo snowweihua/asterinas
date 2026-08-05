@@ -70,14 +70,9 @@ pub fn load_total_free_size() -> usize {
 pub struct FrameAllocator;
 
 impl GlobalFrameAllocator for FrameAllocator {
-    fn alloc(&self, layout: Layout) -> Option<Paddr> {
+    fn alloc(&self, layout: Layout) -> Paddr {
         let guard = irq::disable_local();
-        let paddr = cache::alloc(&guard, layout);
-        if paddr == NO_PADDR {
-            None
-        } else {
-            Some(paddr)
-        }
+        cache::alloc(&guard, layout)
     }
 
     fn dealloc(&self, addr: Paddr, size: usize) {
