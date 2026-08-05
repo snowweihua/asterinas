@@ -204,7 +204,7 @@ impl FreeChunk {
     /// # Panics
     ///
     /// Panics if the buddy chunk is not uniquely free.
-    pub(crate) fn split_free(self) -> (FreeChunk, FreeChunk) {
+    pub(crate) fn split_free(&mut self) -> FreeChunk {
         let order = self.order();
         let addr = self.addr();
         let new_order = order - 1;
@@ -213,13 +213,11 @@ impl FreeChunk {
         #[cfg(target_arch = "aarch64")]
         ostd::arch::boot::pl011_puts_safe(b"[split] start\n");
 
-        let mut unique_head = self.into_unique_head();
-        debug_assert_eq!(unique_head.paddr(), left_child_addr);
-        unique_head.meta_mut().order = new_order;
+        debug_assert_eq!(self.addr(), left_child_addr);
+        self.head.meta_mut().order = new_order;
         #[cfg(target_arch = "aarch64")]
         ostd::arch::boot::pl011_puts_safe(b"[split] before right child\n");
 
-        let left_child = FreeChunk { head: unique_head };
         let right_child = FreeChunk {
             head: unsafe {
                 UniqueFrame::from_init_ptr(UniqueFrame::init_unused(
@@ -230,7 +228,7 @@ impl FreeChunk {
         };
         #[cfg(target_arch = "aarch64")]
         ostd::arch::boot::pl011_puts_safe(b"[split] done\n");
-        (left_child, right_child)
+        right_child
     }
 
     /// Merges the buddy chunk with the sibling buddy.

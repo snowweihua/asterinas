@@ -66,7 +66,8 @@ impl<const MAX_ORDER: BuddyOrder> BuddySet<MAX_ORDER> {
 
         // Split the chunk.
         for i in (order + 1..=non_empty).rev() {
-            let (left_sub, right_sub) = chunk.take().unwrap().split_free();
+            let mut left_sub = chunk.take().unwrap();
+            let right_sub = left_sub.split_free();
             // Push the right sub-chunk back to the free lists.
             let right_sub = right_sub.into_unique_head();
             debug_assert_eq!(right_sub.meta().order(), (i - 1) as BuddyOrder);
