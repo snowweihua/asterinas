@@ -1,15 +1,61 @@
 import json
+import os
+import hashlib
+import subprocess
 import requests
-from typing import Optional
+from pathlib import Path
 
 from . import config
 from .schema import Memory, get_all_memories, init_db
 
 
+PROJECT_PATH = str(Path(__file__).parent.parent.resolve())
+PROJECT_NAME = "asterinas"
+
+
+def get_project_container_tag() -> str:
+    try:
+        remote = subprocess.check_output(
+            ["git", "remote", "get-url", "origin"], text=True, stderr=subprocess.DEVNULL
+        ).strip()
+        branch = subprocess.check_output(
+            ["git", "branch", "--show-current"], text=True, stderr=subprocess.DEVNULL
+        ).strip()
+        project_identity = f"{remote}:{branch}:{PROJECT_PATH}"
+        hash_val = hashlib.sha256(project_identity.encode()).hexdigest()[:16]
+        return f"opencode_project_{hash_val}"
+    except Exception:
+        return f"{PROJECT_NAME}_project_"
+
+
+PROJECT_TAG = get_project_container_tag()
+
+
+def memory_exists_by_title(title: str) -> bool:
+    try:
+        resp = requests.get(
+            config.OPENCODE_MEM_API,
+            params={"tag": PROJECT_TAG, "pageSize": 100},
+            timeout=10
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            items = data.get("data", {}).get("items", [])
+            for item in items:
+                content = item.get("content", "")
+                if title in content:
+                    return True
+    except Exception:
+        pass
+    return False
+
+
 def publish_memory(mem: Memory) -> bool:
     payload = {
         "content": f"**{mem.title}** ({mem.type})\n\n{ mem.summary }\n\n{ mem.details }\n\nArea: {mem.area or 'general'} | Confidence: {mem.confidence} | Verified: {mem.verified}",
-        "containerTag": mem.type,
+        "containerTag": PROJECT_TAG,
+        "projectPath": PROJECT_PATH,
+        "projectName": PROJECT_NAME,
         "tags": mem.tags + [mem.type, mem.area or "general"] + mem.sources
     }
 
@@ -53,6 +99,9 @@ def publish_all(min_confidence: int = None):
 
     for mem in memories:
         if mem.verified or mem.confidence >= min_confidence:
+            if memory_exists_by_title(mem.title):
+                skipped += 1
+                continue
             if publish_memory(mem):
                 published += 1
             else:
