@@ -88,9 +88,9 @@ The project uses plain load/store or boot-safe single-core helpers only at runti
 
 ## Latest Hardware Evidence
 
-- Boot now reaches `[cmp.systree] init` with active frame allocation deterministically on the committed image.
+- Boot reaches `[cmp.systree] init` with active frame allocation deterministically on the committed image (`1698c702`).
 - All six bootstrap components are discovered, sorted, and dispatched (block, console, input, PCI, softirq, systree).
-- The hang is inside systree init's heap/frame allocation path (cache hits + pools splits complete, then silence).
+- The hang is inside systree init's heap/frame allocation path: cache hits complete, two buddy `[split] done` markers complete, then silence (no `[EL1-SYNC]`).
 
 ## Root Cause: 16-Byte Register Returns Corrupt x30
 
@@ -111,12 +111,28 @@ The project uses plain load/store or boot-safe single-core helpers only at runti
   - `MetaSlot::get_from_unused` returns `*const Self` with a null sentinel.
   - `Frame::init_unused`/`UniqueFrame::init_unused` route through the
     single-register `get_from_unused`.
-- Commits: `59081c80`, `f47a99af`, `b014a696`, `69641977`.
-- Remaining 16-byte register returns in the heap/frame path:
-  `alloc_frame_with` (`Result<Frame<M>>`), `Frame::from_unused`/
-  `UniqueFrame::from_unused` (public `Result` wrappers), and the heap-allocator
-  crate's `SlabCache::alloc`/`ObjectCache::alloc` `Result<HeapSlot, AllocError>`
-  paths. These are the next targets.
+- Commits: `59081c80`, `f47a99af`, `b014a696`, `69641977`, `1698c702`.
+
+## Checkpoint (latest session)
+
+- Working tree is clean at `1698c702`. No uncommitted code changes.
+- Tried and REVERTED (each regressed the boundary earlier, back to first heap allocation in `[mac.3]`):
+  - `#[inline(always)]` on `get_global_frame_allocator`/`get_global_heap_allocator`
+    (they return 16-byte `&'static dyn Trait` fat pointers).
+  - `Slab::init_new`/`init` single-register constructors + `SlabCache::alloc`
+    using `Slab::<SLOT_SIZE>::init()` (bypassing the 16-byte `alloc_frame_with`
+    `Result<Frame<M>>` return).
+  - Combined getter-inline + slab bypass.
+- These regressions confirm the bug is alignment/layout sensitive: removing one
+  16-byte return shifts code layout and exposes a different latent 16-byte return.
+- Remaining 16-byte register returns to target:
+  - `Frame::from_unused` (`Result<Frame<M>, GetFrameError>`) — called from
+    `Segment::from_unused` (segment.rs:104) in the meta-init / marking path.
+  - `UniqueFrame::from_unused` (public `Result` wrapper).
+  - `alloc_frame_with` (`Result<Frame<M>>`) — documented crash-at-ret; still
+    called by page-table node alloc and boot_pt.
+  - Heap-allocator crate's `SlabCache::alloc`/`ObjectCache::alloc`
+    `Result<HeapSlot, AllocError>` paths.
 
 ## Operational Notes
 
