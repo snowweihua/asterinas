@@ -88,27 +88,32 @@ The project uses plain load/store or boot-safe single-core helpers only at runti
 
 ## Latest Hardware Evidence
 
-- Clean release image size: `3969648` bytes.
-- U-Boot fetched that exact image size on two unchanged cold boots.
-- Both boots reached:
-  - `[kspace.m4] metadata mapped`;
-  - `[init.5a] after activate_kernel_page_table`;
-  - twelve component registry items;
-  - `[mac.S] sort done`;
-  - `[cmp.systree] init`.
-- Both then went quiet during a previously cleared allocator split/refill path before logger.
-- No `[EL1-SYNC]` appeared in either clean run.
+- Boot now reaches `[cmp.block] init` deterministically on the committed image.
+- All six bootstrap components are discovered, sorted, and dispatched.
+- The hang moved to the logger `info!` allocation that runs after the first component init.
 
-## Latest Investigation
+## Root Cause: 16-Byte Register Returns Corrupt x30
 
-- Focused probes narrowed one apparent boundary through the following runtime sequence:
-  - `cursor_mut()` returned;
-  - all metadata mappings completed;
-  - `pools::alloc()` split and balance paths completed;
-  - global insertion of `addr=0x10000000`, `order=0x10` completed on a later identical image.
-- The same allocator boundary did not reproduce consistently when probes changed, so no allocator behavior change is justified.
-- The investigation again moved the observable boundary later in component processing without producing a new exception.
-- Temporary probes were removed after the run.
+- The RPi3's Cortex-A53 corrupts the link register (x30) when a function returns a
+  16-byte aggregate in registers (`Result<Frame<M>>`, `Result<UniqueFrame<M>>`,
+  `Option<Paddr>`, `(FreeChunk, FreeChunk)`), depending on instruction alignment.
+- The codebase already documented this at `unique.rs:44-50` and
+  `page_table/mod.rs:37-44` ("16-byte generic `Result<UniqueFrame<M>>` return
+  that triggers a Cortex-A53 epilogue bug (x30 corruption)").
+- The frame-allocator hot path returned 16-byte aggregates everywhere, so the
+  hang location moved with instrumentation and code layout.
+- Fixes eliminate those returns by using a single-register `*const ()`/`Paddr`
+  sentinel pattern:
+  - `split_free` returns a single `FreeChunk` instead of `(FreeChunk, FreeChunk)`.
+  - `alloc_chunk`, `pools::alloc`, `CacheArray::alloc`, `cache::alloc`, `pop_front`
+    return `Paddr` with `NO_PADDR` sentinel instead of `Option<Paddr>`.
+  - `GlobalFrameAllocator::alloc` returns `Paddr` with `NO_PADDR` sentinel.
+  - `alloc_frame_with`/`Slab::new` route through `Frame::init_unused`/
+    `UniqueFrame::init_unused` (single-register) internally.
+- Commits: `59081c80`, `f47a99af`, `b014a696`.
+- Remaining 16-byte register returns in the heap/frame path:
+  `MetaSlot::get_from_unused`, `Frame::from_unused`, `UniqueFrame::from_unused`,
+  and the public `Result`-returning wrappers. These are the next targets.
 
 ## Operational Notes
 
@@ -126,6 +131,11 @@ The project uses plain load/store or boot-safe single-core helpers only at runti
 
 ## Next Investigation
 
-- Reproduce the clean image’s post-systree allocator boundary with sparse instrumentation or a non-UART signal.
-- Reach `[cmp.logger] init` and verify that logger initialization completes without the former `spin::Once` abort.
-- Keep changes scoped to runtime-confirmed RPi3 failures; do not globally replace remaining `spin::Once` uses without hardware evidence.
+- Eliminate the remaining 16-byte register returns in the heap/frame path:
+  `MetaSlot::get_from_unused`, `Frame::from_unused`, `UniqueFrame::from_unused`,
+  and the public `Result`-returning wrappers, using the single-register
+  `*const ()`/`Paddr` sentinel pattern.
+- Reach `[cmp.logger] init` and verify that logger initialization completes
+  without the former `spin::Once` abort.
+- Keep changes scoped to runtime-confirmed RPi3 failures; do not globally replace
+  remaining `spin::Once` uses without hardware evidence.
