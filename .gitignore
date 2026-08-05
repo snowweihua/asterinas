@@ -42,3 +42,8 @@ test_swap.s
 tools/logs/
 *.pyc
 __pycache__/
+
+# Knowledge distillation pipeline
+knowledge/raw/
+knowledge/staging/
+knowledge/__pycache__/
