@@ -51,7 +51,7 @@ const MAX_BUDDY_ORDER: BuddyOrder = 32;
 /// chunks.
 const MAX_LOCAL_BUDDY_ORDER: BuddyOrder = 18;
 
-pub(super) fn alloc(guard: &DisabledLocalIrqGuard, layout: Layout) -> Option<Paddr> {
+pub(super) fn alloc(guard: &DisabledLocalIrqGuard, layout: Layout) -> Paddr {
     let local_pool_cell = LOCAL_POOL.get_with(guard);
     let mut local_pool = local_pool_cell.borrow_mut();
     let mut global_pool = OnDemandGlobalLock::new();
@@ -60,14 +60,14 @@ pub(super) fn alloc(guard: &DisabledLocalIrqGuard, layout: Layout) -> Option<Pad
     let align_order = greater_order_of(layout.align());
     let order = size_order.max(align_order);
 
-    let mut chunk_addr = None;
+    let mut chunk_addr = crate::NO_PADDR;
 
     if order < MAX_LOCAL_BUDDY_ORDER {
         chunk_addr = local_pool.alloc_chunk(order);
     }
 
     // Fall back to the global free lists if the local free lists are empty.
-    if chunk_addr.is_none() {
+    if chunk_addr == crate::NO_PADDR {
         chunk_addr = global_pool.get().alloc_chunk(order);
     }
     // TODO: On memory pressure the global pool may be not enough. We may need
@@ -78,7 +78,7 @@ pub(super) fn alloc(guard: &DisabledLocalIrqGuard, layout: Layout) -> Option<Pad
     // the chunk and return the rest part back to the free lists.
     let allocated_size = size_of_order(order);
     if allocated_size > layout.size() {
-        if let Some(chunk_addr) = chunk_addr {
+        if chunk_addr != crate::NO_PADDR {
             do_dealloc(
                 &mut local_pool,
                 &mut global_pool,

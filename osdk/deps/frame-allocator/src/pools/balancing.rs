@@ -86,7 +86,8 @@ fn balance_to<const MAX_ORDER1: BuddyOrder, const MAX_ORDER2: BuddyOrder>(
 ) {
     let allocated_from_a = a.alloc_chunk(order);
 
-    if let Some(addr) = allocated_from_a {
+    if allocated_from_a != crate::NO_PADDR {
+        let addr = allocated_from_a;
         if order >= MAX_ORDER2 {
             let inserted_order = MAX_ORDER2 - 1;
             split_to_order(addr, order, inserted_order).for_each(|addr| {

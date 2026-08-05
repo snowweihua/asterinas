@@ -36,6 +36,13 @@ use ostd::{
     mm::{frame::GlobalFrameAllocator, Paddr},
 };
 
+/// Sentinel for "no frame available" returned by the internal allocator.
+///
+/// A real physical address can never equal this value, so callers can use a
+/// single-register `Paddr` return instead of a 16-byte `Option<Paddr>`, which
+/// triggers a Cortex-A53 epilogue bug (x30 corruption) on RPi3.
+pub(crate) const NO_PADDR: Paddr = usize::MAX;
+
 mod cache;
 mod chunk;
 mod pools;
@@ -65,7 +72,12 @@ pub struct FrameAllocator;
 impl GlobalFrameAllocator for FrameAllocator {
     fn alloc(&self, layout: Layout) -> Option<Paddr> {
         let guard = irq::disable_local();
-        cache::alloc(&guard, layout)
+        let paddr = cache::alloc(&guard, layout);
+        if paddr == NO_PADDR {
+            None
+        } else {
+            Some(paddr)
+        }
     }
 
     fn dealloc(&self, addr: Paddr, size: usize) {

@@ -45,7 +45,9 @@ impl<const MAX_ORDER: BuddyOrder> BuddySet<MAX_ORDER> {
     ///
     /// The function will choose and remove a buddy chunk of the given order
     /// from the set. The address of the chunk will be returned.
-    pub(crate) fn alloc_chunk(&mut self, order: BuddyOrder) -> Option<Paddr> {
+    ///
+    /// Returns [`crate::NO_PADDR`] if no suitable chunk is available.
+    pub(crate) fn alloc_chunk(&mut self, order: BuddyOrder) -> Paddr {
         // Find the first non-empty size class larger than the requested order.
         let mut non_empty = None;
         for (i, list) in self.lists.iter_mut().enumerate().skip(order) {
@@ -54,7 +56,9 @@ impl<const MAX_ORDER: BuddyOrder> BuddySet<MAX_ORDER> {
                 break;
             }
         }
-        let non_empty = non_empty?;
+        let Some(non_empty) = non_empty else {
+            return crate::NO_PADDR;
+        };
 
         let mut chunk = {
             let head = self.lists[non_empty].pop_front().unwrap();
@@ -85,7 +89,7 @@ impl<const MAX_ORDER: BuddyOrder> BuddySet<MAX_ORDER> {
         let paddr = head_frame.paddr();
         head_frame.release_without_dealloc();
 
-        Some(paddr)
+        paddr
     }
 }
 
@@ -107,15 +111,16 @@ mod test {
         assert!(set.total_size() == region_size);
 
         // Allocating chunks of orders of 0, 0, 1, 2, 3 should be okay.
-        let chunk1 = set.alloc_chunk(0).unwrap();
+        let chunk1 = set.alloc_chunk(0);
+        assert!(chunk1 != crate::NO_PADDR);
         assert!(set.total_size() == region_size - size_of_order(0));
-        let chunk2 = set.alloc_chunk(0).unwrap();
+        let chunk2 = set.alloc_chunk(0);
         assert!(set.total_size() == region_size - size_of_order(1));
-        let chunk3 = set.alloc_chunk(1).unwrap();
+        let chunk3 = set.alloc_chunk(1);
         assert!(set.total_size() == region_size - size_of_order(2));
-        let chunk4 = set.alloc_chunk(2).unwrap();
+        let chunk4 = set.alloc_chunk(2);
         assert!(set.total_size() == region_size - size_of_order(3));
-        let chunk5 = set.alloc_chunk(3).unwrap();
+        let chunk5 = set.alloc_chunk(3);
         assert!(set.total_size() == 0);
 
         // Putting them back should enable us to allocate the original region.
@@ -130,7 +135,7 @@ mod test {
         set.insert_chunk(chunk4, 2);
         assert!(set.total_size() == size_of_order(4));
 
-        let chunk = set.alloc_chunk(region_order).unwrap();
+        let chunk = set.alloc_chunk(region_order);
         assert!(chunk == region_start);
         assert!(set.total_size() == 0);
     }

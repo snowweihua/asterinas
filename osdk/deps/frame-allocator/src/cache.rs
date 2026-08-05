@@ -47,13 +47,16 @@ impl<const NR_CONT_FRAMES: usize, const COUNT: usize> CacheArray<NR_CONT_FRAMES,
     ///
     /// It may allocate directly from this cache. If the cache is empty, it
     /// will fill the cache.
-    fn alloc(&mut self, guard: &DisabledLocalIrqGuard) -> Option<Paddr> {
+    ///
+    /// Returns [`crate::NO_PADDR`] if the cache is empty and the pools are exhausted.
+    fn alloc(&mut self, guard: &DisabledLocalIrqGuard) -> Paddr {
         #[cfg(target_arch = "aarch64")]
         ostd::arch::boot::pl011_puts_safe(b"[CA.a] start\n");
-        if let Some(frame) = self.pop_front() {
+        let frame = self.pop_front();
+        if frame != crate::NO_PADDR {
             #[cfg(target_arch = "aarch64")]
             ostd::arch::boot::pl011_puts_safe(b"[CA.b] pop_front hit\n");
-            return Some(frame);
+            return frame;
         }
         #[cfg(target_arch = "aarch64")]
         ostd::arch::boot::pl011_puts_safe(b"[CA.c] pop_front miss, calling pools::alloc\n");
@@ -62,7 +65,10 @@ impl<const NR_CONT_FRAMES: usize, const COUNT: usize> CacheArray<NR_CONT_FRAMES,
         let allocated = super::pools::alloc(
             guard,
             Layout::from_size_align(nr_to_alloc * Self::segment_size(), PAGE_SIZE).unwrap(),
-        )?;
+        );
+        if allocated == crate::NO_PADDR {
+            return crate::NO_PADDR;
+        }
 
         for i in 1..nr_to_alloc {
             self.push_front(allocated + i * Self::segment_size());
@@ -70,7 +76,7 @@ impl<const NR_CONT_FRAMES: usize, const COUNT: usize> CacheArray<NR_CONT_FRAMES,
         #[cfg(target_arch = "aarch64")]
         ostd::arch::boot::pl011_puts_safe(b"[CA.d] pools::alloc done\n");
 
-        Some(allocated)
+        allocated
     }
 
     /// Deallocates a segment of frames.
@@ -85,7 +91,9 @@ impl<const NR_CONT_FRAMES: usize, const COUNT: usize> CacheArray<NR_CONT_FRAMES,
                 if i == 0 {
                     (addr, Self::segment_size())
                 } else {
-                    (self.pop_front().unwrap(), Self::segment_size())
+                    let frame = self.pop_front();
+                    assert_ne!(frame, crate::NO_PADDR);
+                    (frame, Self::segment_size())
                 }
             });
 
@@ -103,14 +111,14 @@ impl<const NR_CONT_FRAMES: usize, const COUNT: usize> CacheArray<NR_CONT_FRAMES,
         Some(())
     }
 
-    fn pop_front(&mut self) -> Option<Paddr> {
+    fn pop_front(&mut self) -> Paddr {
         if self.size == 0 {
-            return None;
+            return crate::NO_PADDR;
         }
 
         let frame = self.inner[self.size - 1].take().unwrap();
         self.size -= 1;
-        Some(frame)
+        frame
     }
 }
 
@@ -125,7 +133,7 @@ impl CacheOfSizes {
     }
 }
 
-pub(super) fn alloc(guard: &DisabledLocalIrqGuard, layout: Layout) -> Option<Paddr> {
+pub(super) fn alloc(guard: &DisabledLocalIrqGuard, layout: Layout) -> Paddr {
     #[cfg(target_arch = "aarch64")]
     ostd::arch::boot::pl011_puts_safe(b"[cache.a] start\n");
     let nr_frames = layout.size() / PAGE_SIZE;

@@ -53,29 +53,25 @@ impl FrameAllocOptions {
     /// Allocates a single frame with additional metadata.
     #[inline(never)]
     pub fn alloc_frame_with<M: AnyFrameMeta>(&self, metadata: M) -> Result<Frame<M>> {
-        let raw_result = self.alloc_frame_raw(|opts| {
-            let mut meta = Some(metadata);
-            opts.alloc_segment_with(1, |_| meta.take().unwrap())
-                .map(|mut s| s.next().unwrap().into_raw())
-        });
-        unsafe {
-            if raw_result.is_ok() {
-                let pa = raw_result.unwrap_unchecked();
-                let slot_ref = crate::mm::frame::meta::get_slot(pa)
-                    .expect("no meta slot");
-                let slot_ptr: *const u8 = (slot_ref as *const _ as *const u8);
-                core::mem::transmute_copy::<Result<*const u8>, Result<Frame<M>>>(
-                    &Ok(slot_ptr)
-                )
-            } else {
-                core::mem::transmute_copy(&raw_result)
-            }
-        }
-    }
+        // Avoid the 16-byte `Result<Frame<M>>` register return and the internal
+        // `Segment::from_unused`/`Frame::from_unused` 16-byte `Result` returns,
+        // which trigger a Cortex-A53 epilogue bug (x30 corruption) on RPi3.
+        // Instead allocate the raw paddr, then use the single-register
+        // `Frame::init_unused`/`from_init_ptr` helpers.
+        let layout = Layout::from_size_align(PAGE_SIZE, PAGE_SIZE).unwrap();
+        let pa = get_global_frame_allocator()
+            .alloc(layout)
+            .ok_or(Error::NoMemory)?;
 
-    #[inline(never)]
-    fn alloc_frame_raw<F: FnOnce(&Self) -> Result<Paddr>>(&self, f: F) -> Result<Paddr> {
-        f(self)
+        if self.zeroed {
+            let addr = paddr_to_vaddr(pa) as *mut u8;
+            // SAFETY: The newly allocated frame is guaranteed to be valid.
+            unsafe { core::ptr::write_bytes(addr, 0, PAGE_SIZE) }
+        }
+
+        let slot_ptr = Frame::<M>::init_unused(pa, metadata);
+        // SAFETY: `init_unused` returned a valid metadata slot pointer.
+        Ok(unsafe { Frame::<M>::from_init_ptr(slot_ptr) })
     }
 
     /// Allocates a contiguous range of untyped frames without metadata.
