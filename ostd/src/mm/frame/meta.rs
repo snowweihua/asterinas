@@ -273,22 +273,20 @@ impl MetaSlot {
     ///
     /// The resulting reference count held by the returned pointer is
     /// [`REF_COUNT_UNIQUE`] if `as_unique_ptr` is `true`, otherwise `1`.
+    ///
+    /// Returns `core::ptr::null()` on error. This keeps the return in a single
+    /// register (a 16-byte `Result<*const Self, GetFrameError>` return triggers
+    /// a Cortex-A53 epilogue bug on RPi3).
     pub(super) fn get_from_unused<M: AnyFrameMeta>(
         paddr: Paddr,
         metadata: M,
         as_unique_ptr: bool,
-    ) -> Result<*const Self, GetFrameError> {
-        let slot = get_slot(paddr)?;
+    ) -> *const Self {
+        let slot = get_slot(paddr).expect("get_from_unused: frame out of bounds");
 
         let test_val = slot.ref_count.load(Ordering::Relaxed);
         if test_val != REF_COUNT_UNUSED {
-            if test_val == REF_COUNT_UNIQUE {
-                return Err(GetFrameError::Unique);
-            } else if test_val == 0 {
-                return Err(GetFrameError::Busy);
-            } else {
-                return Err(GetFrameError::InUse);
-            }
+            return core::ptr::null();
         }
         slot.ref_count.store(0, Ordering::Relaxed);
 
@@ -306,7 +304,7 @@ impl MetaSlot {
             slot.ref_count.store(1, Ordering::Release);
         }
 
-        Ok(slot as *const MetaSlot)
+        slot as *const MetaSlot
     }
 
     /// Gets another owning pointer to the metadata slot from the given page.

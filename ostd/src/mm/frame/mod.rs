@@ -106,15 +106,20 @@ impl<M: AnyFrameMeta> Frame<M> {
     /// an error. If wanting to acquire a frame that is already in use, use
     /// [`Frame::from_in_use`] instead.
     pub fn from_unused(paddr: Paddr, metadata: M) -> Result<Self, GetFrameError> {
+        let ptr = MetaSlot::get_from_unused(paddr, metadata, false);
+        if ptr.is_null() {
+            return Err(GetFrameError::InUse);
+        }
         Ok(Self {
-            ptr: MetaSlot::get_from_unused(paddr, metadata, false)?,
+            ptr,
             _marker: PhantomData,
         })
     }
 
     pub fn init_unused(paddr: Paddr, metadata: M) -> *const () {
-        MetaSlot::get_from_unused(paddr, metadata, false)
-            .expect("Frame::init_unused: frame is not unused") as *const ()
+        let ptr = MetaSlot::get_from_unused(paddr, metadata, false);
+        assert!(!ptr.is_null(), "Frame::init_unused: frame is not unused");
+        ptr as *const ()
     }
 
     /// # Safety
