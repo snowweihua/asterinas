@@ -492,11 +492,15 @@ impl PageTable<KernelPtConfig> {
                 unsafe { crate::arch::boot::pl011_puts_hex(l3entry.as_usize()) };
                 unsafe { crate::arch::boot::pl011_puts(b"\n") };
 
-                unsafe {
-                    crate::arch::boot::pl011_puts(
-                        b"[slot0] metadata root left empty for managed cursor allocation\n",
-                    )
-                };
+                // The AArch64 kernel high half lives at TTBR1 slot 0
+                // (0xffff_0000_0000_0000). Copy the boot descriptor so that
+                // kernel code/data VAs remain valid after the page-table switch.
+                if boot_slot0_pte.as_usize() != 0 {
+                    unsafe { root_node.write_pte(0, boot_slot0_pte) };
+                    unsafe { crate::arch::boot::pl011_puts(b"[slot0] copied boot slot 0 to new KPT\n") };
+                } else {
+                    unsafe { crate::arch::boot::pl011_puts(b"[slot0] ERROR: boot slot 0 is empty\n") };
+                }
             }
         }
 

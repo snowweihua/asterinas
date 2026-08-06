@@ -209,7 +209,7 @@ pub enum GetFrameError {
 }
 
 /// Gets the reference to a metadata slot.
-#[inline(never)]
+#[inline(always)]
 pub(super) fn get_slot(paddr: Paddr) -> Result<&'static MetaSlot, GetFrameError> {
     let frame_paddr_base = crate::arch::mm::frame_paddr_base();
 
