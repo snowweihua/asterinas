@@ -106,6 +106,7 @@ impl Thread {
     /// Runs this thread at once.
     #[track_caller]
     pub fn run(&self) {
+        ostd::arch::boot::pl011_puts_safe(b"[thread] run start\n");
         self.task.upgrade().unwrap().run();
     }
 

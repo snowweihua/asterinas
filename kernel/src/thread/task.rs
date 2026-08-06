@@ -29,6 +29,7 @@ pub fn create_new_user_task(
     is_init_process: bool,
 ) -> Task {
     let user_task_entry = move |user_ctx: UserContext| {
+        ostd::console::early_print(format_args!("[ute] start\n"));
         let current_task = Task::current().unwrap();
         let current_thread = current_task.as_thread().unwrap();
         let current_posix_thread = current_thread.as_posix_thread().unwrap();
@@ -37,6 +38,7 @@ pub fn create_new_user_task(
         let (stop_waiter, _) = Waiter::new_pair();
 
         let mut user_mode = UserMode::new(user_ctx);
+        ostd::console::early_print(format_args!("[ute] user_mode created\n"));
         user_mode.context_mut().activate_tls_pointer();
         debug!(
             "[Task entry] rip = 0x{:x}",
@@ -72,9 +74,12 @@ pub fn create_new_user_task(
         };
 
         if is_init_process {
+            ostd::console::early_print(format_args!("[ute] before init_in_first_process\n"));
             crate::init_in_first_process(&ctx);
+            ostd::console::early_print(format_args!("[ute] after init_in_first_process\n"));
         }
 
+        ostd::console::early_print(format_args!("[ute] enter user loop\n"));
         while !current_thread.is_exited() {
             ctx.thread_local.fpu().activate();
             let return_reason = user_mode.execute(has_kernel_event_fn);

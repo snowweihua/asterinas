@@ -247,6 +247,7 @@ impl Process {
 
     /// Runs the process.
     pub(super) fn run(&self) {
+        ostd::arch::boot::pl011_puts_safe(b"[process] run start\n");
         let tasks = self.tasks.lock();
         // when run the process, the process should has only one thread
         debug_assert!(tasks.as_slice().len() == 1);

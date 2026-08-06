@@ -331,6 +331,8 @@ impl VmMapping {
                         )?;
                         cursor2.map(new_frame.into(), prop);
                         cursor2.flusher().sync_tlb_flush();
+                        // Invalidate TLB so the newly mapped writable frame is visible.
+                        TlbFlushOp::for_all().perform_on_current();
                         rss_delta.add(self.rss_type(), 1);
                         break 'retry;
                     }

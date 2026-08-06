@@ -330,7 +330,8 @@ jump_to_main:
     b       1f
 0:
     adr     x10, boot_l3pt_linear
-    str     xzr, [x10, #(1 * 8)]    /* slot 1 → 0 (invalid) */
+    ldr     x9, = ( PTE_DEVICE_1G | (1 << 30) )
+    str     x9, [x10, #(1 * 8)]     /* slot 1: PA 0x40000000 → Device 1 GiB (ARM-local) */
     str     xzr, [x10, #(2 * 8)]    /* slot 2 → 0 (invalid) */
     str     xzr, [x10, #(3 * 8)]    /* slot 3 → 0 (invalid) */
     /* Same for boot_l3pt_high slots 1-2: non-existent PA on RPi3 */
@@ -339,9 +340,9 @@ jump_to_main:
     str     xzr, [x10, #(2 * 8)]    /* slot 2: PA 0xC0000000 → 0 (invalid) */
     /* On RPi3 the ARM-local registers live at PA 0x40000000; keep slot 1
      * identity-mapped as Device and execute-never so the kernel can use it
-     * for the per-core timer/mailbox controller.  Slots 2-3 remain unmapped. */
+     * for the per-core timer/mailbox controller.  Also map it in the linear
+     * high VA so paddr_to_vaddr(0x40000000) is valid after TTBR0 switches. */
     adr     x10, boot_l3pt_low
-    ldr     x9, = ( PTE_DEVICE_1G | (1 << 30) )
     str     x9, [x10, #(1 * 8)]     /* slot 1: PA 0x40000000 → Device 1 GiB */
     str     xzr, [x10, #(2 * 8)]    /* slot 2: PA 0x80000000 → 0 (invalid) */
     str     xzr, [x10, #(3 * 8)]    /* slot 3: PA 0xC0000000 → 0 (invalid) */

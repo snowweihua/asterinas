@@ -368,6 +368,12 @@ impl SyscallArgument {
 }
 
 pub fn handle_syscall(ctx: &Context, user_ctx: &mut UserContext) {
+    static CNT: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+    let n = CNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+    if n < 5 {
+        let num = user_ctx.syscall_num();
+        ostd::console::early_print(format_args!("[syscall] #{} (cnt={})\n", num, n));
+    }
     let syscall_frame = SyscallArgument::new_from_context(user_ctx);
     let syscall_return = arch::syscall_dispatch(
         syscall_frame.syscall_number,

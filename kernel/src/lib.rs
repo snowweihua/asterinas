@@ -166,9 +166,13 @@ fn init_in_first_kthread(fs_resolver: &FsResolver) {
 }
 
 fn init_in_first_process(ctx: &Context) {
+    ostd::console::early_print(format_args!("[ifp] start\n"));
     device::init_in_first_process(ctx).unwrap();
+    ostd::console::early_print(format_args!("[ifp] device done\n"));
     fs::init_in_first_process(ctx);
+    ostd::console::early_print(format_args!("[ifp] fs done\n"));
     process::init_in_first_process(ctx);
+    ostd::console::early_print(format_args!("[ifp] done\n"));
 }
 
 fn ap_init() {

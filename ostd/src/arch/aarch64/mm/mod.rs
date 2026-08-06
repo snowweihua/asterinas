@@ -63,18 +63,24 @@ const SH_MASK: usize = 0b11 << 8;
 const SH_INNER_SHAREABLE: usize = 0b11 << 8;
 
 pub(crate) fn tlb_flush_addr(vaddr: Vaddr) {
-    // WORKAROUND: QEMU 6.2 hangs on ANY TLBI instruction (`vaae1`, `vmalle1`,
-    // etc.) once any user-space PTE has been written (COW, stack init, etc.).
-    // On single-CPU QEMU TCG, the software TLB self-invalidates on the next
-    // page-table walk triggered by the subsequent access fault; explicit TLBI
-    // is not required for correctness in this uniprocessor configuration.
-    // TODO: re-enable TLBI when upgrading past QEMU 6.2 or running on hardware.
-    let _ = vaddr;
-    unsafe {
-        asm!("dsb ishst", options(nostack, nomem, preserves_flags));
-        // Skip TLBI for both kernel and user VAs (QEMU 6.2 workaround).
-        asm!("dsb ish", options(nostack, nomem, preserves_flags));
-        asm!("isb", options(nostack, nomem, preserves_flags));
+    if crate::arch::board::IS_HARDWARE.load(core::sync::atomic::Ordering::Relaxed) {
+        unsafe {
+            asm!("dsb ishst", options(nostack, nomem, preserves_flags));
+            asm!("tlbi vaae1, {0}", in(reg) vaddr, options(nostack, nomem, preserves_flags));
+            asm!("dsb ish", options(nostack, nomem, preserves_flags));
+            asm!("isb", options(nostack, nomem, preserves_flags));
+        }
+    } else {
+        // WORKAROUND: QEMU 6.2 hangs on ANY TLBI instruction (`vaae1`, `vmalle1`,
+        // etc.) once any user-space PTE has been written (COW, stack init, etc.).
+        // On single-CPU QEMU TCG, the software TLB self-invalidates on the next
+        // page-table walk triggered by the subsequent access fault; explicit TLBI
+        // is not required for correctness in this uniprocessor configuration.
+        unsafe {
+            asm!("dsb ishst", options(nostack, nomem, preserves_flags));
+            asm!("dsb ish", options(nostack, nomem, preserves_flags));
+            asm!("isb", options(nostack, nomem, preserves_flags));
+        }
     }
 }
 
@@ -85,46 +91,63 @@ pub(crate) fn tlb_flush_addr_range(range: &Range<Vaddr>) {
 }
 
 pub(crate) fn tlb_flush_all_excluding_global() {
-    unsafe {
+    if crate::arch::board::IS_HARDWARE.load(core::sync::atomic::Ordering::Relaxed) {
+        unsafe {
+            asm!("dsb ishst", options(nostack, nomem, preserves_flags));
+            asm!("tlbi vmalle1", options(nostack, nomem, preserves_flags));
+            asm!("dsb ish", options(nostack, nomem, preserves_flags));
+            asm!("isb", options(nostack, nomem, preserves_flags));
+        }
+    } else {
         // WORKAROUND: QEMU 6.2 AArch64 TCG deadlocks on `tlbi vmalle1` when called
         // after user-space PTEs have been written. Instead, trigger QEMU's soft-TLB
         // flush by writing TTBR0_EL1 to itself (any write causes tlb_flush_by_mmuidx).
         // This clears negative/stale TLB entries without corrupting the page walk state.
-        let ttbr0: u64;
-        asm!("mrs {0}, ttbr0_el1", out(reg) ttbr0, options(nostack, nomem, preserves_flags));
-        asm!("dsb sy", options(nostack, nomem, preserves_flags));
-        asm!("msr ttbr0_el1, {0}", in(reg) ttbr0, options(nostack, nomem, preserves_flags));
-        asm!("isb", options(nostack, nomem, preserves_flags));
+        unsafe {
+            let ttbr0: u64;
+            asm!("mrs {0}, ttbr0_el1", out(reg) ttbr0, options(nostack, nomem, preserves_flags));
+            asm!("dsb sy", options(nostack, nomem, preserves_flags));
+            asm!("msr ttbr0_el1, {0}", in(reg) ttbr0, options(nostack, nomem, preserves_flags));
+            asm!("isb", options(nostack, nomem, preserves_flags));
+        }
     }
 }
 
 pub(crate) fn tlb_flush_all_including_global() {
-    unsafe {
-        crate::arch::boot::pl011_puts(b"[tlb.0] before dsb ishst\n");
-        asm!("dsb ishst", options(nostack, nomem, preserves_flags));
-        crate::arch::boot::pl011_puts(b"[tlb.1] after dsb ishst\n");
-        crate::arch::boot::pl011_puts(b"[tlb.2] before dsb sy (skipping tlbi)\n");
-        asm!("dsb sy", options(nostack, nomem, preserves_flags));
-        crate::arch::boot::pl011_puts(b"[tlb.3] after dsb sy\n");
-        crate::arch::boot::pl011_puts(b"[tlb.4] before isb\n");
-        asm!("isb", options(nostack, nomem, preserves_flags));
-        crate::arch::boot::pl011_puts(b"[tlb.5] after isb\n");
+    if crate::arch::board::IS_HARDWARE.load(core::sync::atomic::Ordering::Relaxed) {
+        unsafe {
+            asm!("dsb ishst", options(nostack, nomem, preserves_flags));
+            asm!("tlbi vmalle1", options(nostack, nomem, preserves_flags));
+            asm!("dsb ish", options(nostack, nomem, preserves_flags));
+            asm!("isb", options(nostack, nomem, preserves_flags));
+        }
+    } else {
+        // Same QEMU workaround as `tlb_flush_all_excluding_global`.
+        unsafe {
+            let ttbr0: u64;
+            asm!("mrs {0}, ttbr0_el1", out(reg) ttbr0, options(nostack, nomem, preserves_flags));
+            asm!("dsb sy", options(nostack, nomem, preserves_flags));
+            asm!("msr ttbr0_el1, {0}", in(reg) ttbr0, options(nostack, nomem, preserves_flags));
+            asm!("isb", options(nostack, nomem, preserves_flags));
+        }
     }
 }
 
 pub unsafe fn activate_page_table(root_paddr: Paddr, _root_pt_cache: CachePolicy) {
     assert!(root_paddr % PagingConsts::BASE_PAGE_SIZE == 0);
     // On AArch64, the kernel page table covers the high VA half and is loaded into TTBR1_EL1.
-    // NOTE: We skip the TLB invalidation here because:
-    //  1. The new KPT maps slot 0 with the same L3 table as the bootstrap TTBR1, so kernel
-    //     code/data VAs remain valid under any stale TLB entries.
-    //  2. New mappings (VMALLOC, linear map) have no stale TLB entries.
-    // TODO: Add tlbi vmalle1 here when SMP is enabled (after investigating QEMU cortex-a72
-    //       behavior with TLB broadcast and non-broadcast instructions).
     unsafe {
         asm!("dsb sy", options(nostack, nomem, preserves_flags));
         asm!("msr ttbr1_el1, {0}", in(reg) root_paddr, options(nostack, nomem, preserves_flags));
         asm!("isb", options(nostack, nomem, preserves_flags));
+    }
+    // On real hardware, invalidate all TLB entries so the new kernel mappings take effect.
+    if crate::arch::board::IS_HARDWARE.load(core::sync::atomic::Ordering::Relaxed) {
+        unsafe {
+            asm!("tlbi vmalle1", options(nostack, nomem, preserves_flags));
+            asm!("dsb ish", options(nostack, nomem, preserves_flags));
+            asm!("isb", options(nostack, nomem, preserves_flags));
+        }
     }
 }
 
@@ -137,17 +160,17 @@ pub unsafe fn activate_user_page_table(root_paddr: Paddr) {
     assert!(root_paddr % PagingConsts::BASE_PAGE_SIZE == 0);
     unsafe {
         asm!("dsb sy", options(nostack, nomem, preserves_flags));
-    }
-    unsafe {
         asm!("msr ttbr0_el1, {0}", in(reg) root_paddr, options(nostack, nomem, preserves_flags));
-    }
-    unsafe {
         asm!("isb", options(nostack, nomem, preserves_flags));
     }
-    // Note: TLBI vmalle1 is intentionally omitted here because it stalls on QEMU
-    // cortex-a72. Since we only switch to the user page table (not from it), and
-    // user space hasn't been executed yet, there are no stale TLB entries to flush.
-    // TODO: add proper TLB flush when switching between different user page tables.
+    // On real hardware we must flush stale user TLB entries when switching page tables.
+    if crate::arch::board::IS_HARDWARE.load(core::sync::atomic::Ordering::Relaxed) {
+        unsafe {
+            asm!("tlbi vmalle1", options(nostack, nomem, preserves_flags));
+            asm!("dsb ish", options(nostack, nomem, preserves_flags));
+            asm!("isb", options(nostack, nomem, preserves_flags));
+        }
+    }
 }
 
 /// Returns the physical address of the currently active user page table (TTBR0_EL1).

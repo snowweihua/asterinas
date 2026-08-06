@@ -54,17 +54,17 @@ fn set_im(value: u32) {
 }
 
 /// RPi3 mini-UART I/O register (data) virtual address.
-/// The peripheral is identity-mapped by the boot page table, so the PA is a
-/// valid VA in the low half of the address space.
+/// Use the kernel linear mapping so the UART remains accessible after TTBR0 is
+/// switched to a user page table (TTBR1 still points to the kernel PT).
 #[inline(always)]
 fn miniuart_io_va() -> usize {
-    MINIUART_BASE_PA + MINIUART_IO_OFFSET
+    MINIUART_BASE_PA + MINIUART_IO_OFFSET + PL011_LINEAR_OFFSET
 }
 
 /// RPi3 mini-UART line status register virtual address.
 #[inline(always)]
 fn miniuart_lsr_va() -> usize {
-    MINIUART_BASE_PA + MINIUART_LSR_OFFSET
+    MINIUART_BASE_PA + MINIUART_LSR_OFFSET + PL011_LINEAR_OFFSET
 }
 
 #[inline(always)]

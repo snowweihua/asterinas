@@ -397,6 +397,7 @@ pub(crate) fn might_preempt() {
     if !cpu_local::should_preempt() {
         return;
     }
+    crate::arch::boot::pl011_puts_safe(b"[might_preempt] before reschedule\n");
     reschedule(|local_rq| {
         let next_task_opt = local_rq.try_pick_next();
         if let Some(next_task) = next_task_opt {
@@ -484,6 +485,7 @@ pub(super) fn run_new_task(runnable: Arc<Task>) {
         set_need_preempt(preempt_cpu_id);
     }
 
+    crate::arch::boot::pl011_puts_safe(b"[run_new_task] before might_preempt\n");
     might_preempt();
 }
 

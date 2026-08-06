@@ -70,9 +70,9 @@ const UART_PERI_IRQ_BIT: u32 = 1 << 25;
 pub const UART_IRQ_NUM: usize = 57;
 
 fn local_ic_base_va() -> usize {
-    // On RPi3 the boot page table identity-maps the low physical address space,
-    // so we can access the ARM-local registers with the physical address as VA.
-    LOCAL_IC_BASE_PA
+    // Use the kernel linear mapping: the ARM-local registers stay accessible
+    // after TTBR0 is switched to a user page table.
+    crate::mm::kspace::paddr_to_vaddr(LOCAL_IC_BASE_PA)
 }
 
 /// Read MPIDR_EL1 and return the affinity level 0 (core ID within cluster).
@@ -99,8 +99,9 @@ pub unsafe fn init_on_bsp() {
     unsafe { write_reg(CORE0_TIMER_INT_CONTROL, 0) };
 
     // Disable ALL BCM2835 peripheral interrupts AND FIQ.
-    // The boot page table identity-maps the BCM2835 MMIO window, so use the PA as VA.
-    let ic_va = BCM2835_IC_BASE_PA;
+    // Use the kernel linear mapping so the MMIO window stays accessible after
+    // TTBR0 is switched to a user page table.
+    let ic_va = crate::mm::kspace::paddr_to_vaddr(BCM2835_IC_BASE_PA);
     unsafe {
         core::ptr::write_volatile((ic_va + BCM2835_DISABLE_IRQS_1) as *mut u32, 0xFFFF_FFFF);
         core::ptr::write_volatile((ic_va + BCM2835_DISABLE_IRQS_2) as *mut u32, 0xFFFF_FFFF);
@@ -135,7 +136,7 @@ pub fn enable_uart_irq() {
     if crate::arch::board::BoardType::cached() != 2 {
         return;
     }
-    let ic_va = BCM2835_IC_BASE_PA;
+    let ic_va = crate::mm::kspace::paddr_to_vaddr(BCM2835_IC_BASE_PA);
     unsafe {
         core::ptr::write_volatile(
             (ic_va + BCM2835_ENABLE_IRQS_2) as *mut u32,
@@ -160,7 +161,7 @@ pub fn acknowledge_interrupt() -> usize {
 
     if pending & GPU_IRQ_BIT != 0 {
         // A BCM2835 peripheral IRQ is pending.  Check which one.
-        let ic_va = BCM2835_IC_BASE_PA;
+        let ic_va = crate::mm::kspace::paddr_to_vaddr(BCM2835_IC_BASE_PA);
         let irq2 =
             unsafe { core::ptr::read_volatile((ic_va + BCM2835_IRQS_PENDING_2) as *const u32) };
         if irq2 & UART_PERI_IRQ_BIT != 0 {
@@ -172,9 +173,7 @@ pub fn acknowledge_interrupt() -> usize {
 
     if pending != 0 {
         // Unexpected ARM-local interrupt (PMU, mailbox, etc.).
-        unsafe {
-            crate::arch::boot::pl011_puts(b"[irq] unexpected CORE0_IRQ_SOURCE\n");
-        }
+        crate::console::early_print(format_args!("[irq] unexpected CORE0_IRQ_SOURCE\n"));
         return 0;
     }
 

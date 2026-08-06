@@ -97,6 +97,7 @@ impl Task {
     /// BUG: This method highly depends on the current scheduling policy.
     #[track_caller]
     pub fn run(self: &Arc<Self>) {
+        crate::arch::boot::pl011_puts_safe(b"[task] run start\n");
         scheduler::run_new_task(self.clone());
     }
 
@@ -166,6 +167,7 @@ impl TaskOptions {
         // have to disable name mangling for it.
         #[unsafe(no_mangle)]
         extern "C" fn kernel_task_entry() -> ! {
+            crate::arch::boot::pl011_puts_safe(b"[kte] start\n");
             // SAFETY: The new task is switched on a CPU for the first time, `after_switching_to`
             // hasn't been called yet.
             unsafe { processor::after_switching_to() };
@@ -179,6 +181,7 @@ impl TaskOptions {
             let task_func = task_func
                 .take()
                 .expect("task function is `None` when trying to run");
+            crate::console::early_print(format_args!("[kte] before task_func\n"));
             task_func();
 
             // Manually drop all the on-stack variables to prevent memory leakage!
