@@ -42,6 +42,14 @@ impl<const SLOT_SIZE: usize> SlabCache<SLOT_SIZE> {
     /// The caller must provide which cache is it because we don't know from
     /// `&mut self`. The information is used for deallocation.
     pub fn alloc(&mut self) -> Result<HeapSlot, AllocError> {
+        #[cfg(target_arch = "aarch64")]
+        if SLOT_SIZE == 2048 || SLOT_SIZE == 512 {
+            ostd::console::early_print(format_args!(
+                "[SC.alloc] start SLOT_SIZE={:x} partial={} empty={}\n",
+                SLOT_SIZE, self.partial.size(), self.empty.size()
+            ));
+        }
+
         // Try to allocate from the partial slabs first.
         if !self.partial.is_empty() {
             let mut cursor = self.partial.cursor_back_mut();
@@ -49,6 +57,10 @@ impl<const SLOT_SIZE: usize> SlabCache<SLOT_SIZE> {
             let allocated = current.alloc().unwrap();
             if current.nr_allocated() == current.capacity() {
                 self.full.push_front(cursor.take_current().unwrap());
+            }
+            #[cfg(target_arch = "aarch64")]
+            if SLOT_SIZE == 2048 || SLOT_SIZE == 512 {
+                ostd::console::early_print(format_args!("[SC.alloc] from partial\n"));
             }
             return Ok(allocated);
         }
@@ -58,14 +70,26 @@ impl<const SLOT_SIZE: usize> SlabCache<SLOT_SIZE> {
             let mut slab = self.empty.pop_front().unwrap();
             let allocated = slab.meta_mut().alloc().unwrap();
             self.add_slab(slab);
+            #[cfg(target_arch = "aarch64")]
+            if SLOT_SIZE == 2048 || SLOT_SIZE == 512 {
+                ostd::console::early_print(format_args!("[SC.alloc] from empty\n"));
+            }
             return Ok(allocated);
         }
 
         // If no empty slab is available, allocate new slabs.
+        #[cfg(target_arch = "aarch64")]
+        if SLOT_SIZE == 2048 || SLOT_SIZE == 512 {
+            ostd::console::early_print(format_args!("[SC.alloc] before Slab::new\n"));
+        }
         let Ok(mut allocated_empty) = Slab::new() else {
             log::error!("Failed to allocate a new slab");
             return Err(AllocError);
         };
+        #[cfg(target_arch = "aarch64")]
+        if SLOT_SIZE == 2048 || SLOT_SIZE == 512 {
+            ostd::console::early_print(format_args!("[SC.alloc] after Slab::new\n"));
+        }
         let allocated = allocated_empty.meta_mut().alloc().unwrap();
         self.add_slab(allocated_empty);
 

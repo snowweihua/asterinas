@@ -107,7 +107,9 @@ impl DeviceId {
 //
 // TODO: Figure out what should happen when unregistering the device.
 pub fn add_node(device: Arc<dyn Device>, path: &str, fs_resolver: &FsResolver) -> Result<Path> {
+    ostd::console::early_print(format_args!("[add_node] path={}\n", path));
     let mut dev_path = fs_resolver.lookup(&FsPath::try_from("/dev").unwrap())?;
+    ostd::console::early_print(format_args!("[add_node] lookup /dev done\n"));
     let mut relative_path = {
         let relative_path = path.trim_start_matches('/');
         if relative_path.is_empty() {

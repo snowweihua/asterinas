@@ -207,22 +207,29 @@ impl Dentry {
 
     /// Creates a `Dentry` by making an inode of the `type_` with the `mode`.
     pub(super) fn mknod(&self, name: &str, mode: InodeMode, type_: MknodType) -> Result<Arc<Self>> {
+        ostd::console::early_print(format_args!("[dentry.mknod] name={}\n", name));
         if self.type_() != InodeType::Dir {
             return_errno!(Errno::ENOTDIR);
         }
 
         let children = self.children.upread();
+        ostd::console::early_print(format_args!("[dentry.mknod] got children\n"));
         if children.contains_valid(name) {
             return_errno!(Errno::EEXIST);
         }
+        ostd::console::early_print(format_args!("[dentry.mknod] before inode.mknod\n"));
 
         let inode = self.inode.mknod(name, mode, type_)?;
+        ostd::console::early_print(format_args!("[dentry.mknod] after inode.mknod\n"));
         let name = String::from(name);
         let new_child = Dentry::new(inode, DentryOptions::Leaf((name.clone(), self.this())));
 
         if new_child.is_dentry_cacheable() {
+            ostd::console::early_print(format_args!("[dentry.mknod] before children.upgrade\n"));
             children.upgrade().insert(name, new_child.clone());
+            ostd::console::early_print(format_args!("[dentry.mknod] after insert\n"));
         }
+        ostd::console::early_print(format_args!("[dentry.mknod] done\n"));
 
         Ok(new_child)
     }

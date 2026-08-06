@@ -4,7 +4,7 @@
 //!
 //! Detects whether we're running on QEMU virt or Raspberry Pi 3B/3B+ hardware.
 
-use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 
 /// Set to true once board detection runs and identifies real hardware.
 pub(crate) static IS_HARDWARE: AtomicBool = AtomicBool::new(false);
@@ -162,16 +162,26 @@ impl BoardType {
 ///
 /// Reads the `/memory` node `reg` property to determine where RAM starts.
 /// Defaults to `0x4000_0000` (QEMU virt) if the DTB is unavailable.
+static DRAM_BASE_CACHE: AtomicUsize = AtomicUsize::new(usize::MAX);
+
 pub fn dram_base() -> usize {
     use crate::arch::boot::DEVICE_TREE;
 
-    let Some(fdt) = DEVICE_TREE.get() else {
-        return 0x4000_0000;
+    let cached = DRAM_BASE_CACHE.load(Ordering::Relaxed);
+    if cached != usize::MAX {
+        return cached;
+    }
+
+    let base = if let Some(fdt) = DEVICE_TREE.get() {
+        if let Some(region) = fdt.memory().regions().next() {
+            region.starting_address as usize
+        } else {
+            0x4000_0000
+        }
+    } else {
+        0x4000_0000
     };
 
-    let Some(region) = fdt.memory().regions().next() else {
-        return 0x4000_0000;
-    };
-
-    region.starting_address as usize
+    DRAM_BASE_CACHE.store(base, Ordering::Relaxed);
+    base
 }

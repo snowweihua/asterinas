@@ -211,7 +211,17 @@ pub enum GetFrameError {
 /// Gets the reference to a metadata slot.
 #[inline(always)]
 pub(super) fn get_slot(paddr: Paddr) -> Result<&'static MetaSlot, GetFrameError> {
+    #[cfg(target_arch = "aarch64")]
+    if paddr == 0x3498000 {
+        crate::console::early_print(format_args!("[GS] entry paddr={:x}\n", paddr));
+    }
+
     let frame_paddr_base = crate::arch::mm::frame_paddr_base();
+
+    #[cfg(target_arch = "aarch64")]
+    if paddr == 0x3498000 {
+        crate::console::early_print(format_args!("[GS] frame_paddr_base={:x}\n", frame_paddr_base));
+    }
 
     if paddr % PAGE_SIZE != 0 {
         return Err(GetFrameError::NotAligned);
@@ -219,12 +229,36 @@ pub(super) fn get_slot(paddr: Paddr) -> Result<&'static MetaSlot, GetFrameError>
     if paddr < frame_paddr_base {
         return Err(GetFrameError::OutOfBound);
     }
-    if paddr >= super::max_paddr() {
+
+    let max_paddr = super::max_paddr();
+
+    #[cfg(target_arch = "aarch64")]
+    if paddr == 0x3498000 {
+        crate::console::early_print(format_args!("[GS] max_paddr={:x}\n", max_paddr));
+    }
+
+    if paddr >= max_paddr {
         return Err(GetFrameError::OutOfBound);
     }
 
-    let ptr = if !crate::IN_BOOTSTRAP_CONTEXT.load(Ordering::Relaxed) {
+    #[cfg(target_arch = "aarch64")]
+    if paddr == 0x3498000 {
+        crate::console::early_print(format_args!("[GS] guards passed\n"));
+    }
+
+    let in_bootstrap = crate::IN_BOOTSTRAP_CONTEXT.load(Ordering::Relaxed);
+
+    #[cfg(target_arch = "aarch64")]
+    if paddr == 0x3498000 {
+        crate::console::early_print(format_args!("[GS] in_bootstrap={}\n", in_bootstrap));
+    }
+
+    let ptr = if !in_bootstrap {
         let vaddr = mapping::frame_to_meta::<PagingConsts>(paddr);
+        #[cfg(target_arch = "aarch64")]
+        if paddr == 0x3498000 {
+            crate::console::early_print(format_args!("[GS] bootstrap=false vaddr={:x}\n", vaddr));
+        }
         vaddr as *mut MetaSlot
     } else {
         let meta_paddr_base = FRAME_META_PADDR_BASE.load(Ordering::Relaxed);
@@ -233,10 +267,26 @@ pub(super) fn get_slot(paddr: Paddr) -> Result<&'static MetaSlot, GetFrameError>
         }
         let frame_idx = (paddr - frame_paddr_base) / PAGE_SIZE;
         let slot_paddr = meta_paddr_base + frame_idx * size_of::<MetaSlot>();
+        #[cfg(target_arch = "aarch64")]
+        if paddr == 0x3498000 {
+            crate::console::early_print(format_args!("[GS] bootstrap=true slot_paddr={:x}\n", slot_paddr));
+        }
         slot_paddr as *mut MetaSlot
     };
 
-    Ok(unsafe { &*ptr })
+    #[cfg(target_arch = "aarch64")]
+    if paddr == 0x3498000 {
+        crate::console::early_print(format_args!("[GS] ptr={:p}\n", ptr));
+    }
+
+    let r = unsafe { &*ptr };
+
+    #[cfg(target_arch = "aarch64")]
+    if paddr == 0x3498000 {
+        crate::console::early_print(format_args!("[GS] deref ok\n"));
+    }
+
+    Ok(r)
 }
 
 impl MetaSlot {
@@ -282,17 +332,43 @@ impl MetaSlot {
         metadata: M,
         as_unique_ptr: bool,
     ) -> *const Self {
+        #[cfg(target_arch = "aarch64")]
+        if paddr == 0x3498000 {
+            crate::console::early_print(format_args!("[GFU] paddr={:x} as_unique={}\n", paddr, as_unique_ptr));
+        }
+
         let slot = get_slot(paddr).expect("get_from_unused: frame out of bounds");
 
+        #[cfg(target_arch = "aarch64")]
+        if paddr == 0x3498000 {
+            crate::console::early_print(format_args!("[GFU] slot={:p}\n", slot));
+        }
+
         let test_val = slot.ref_count.load(Ordering::Relaxed);
+
+        #[cfg(target_arch = "aarch64")]
+        if paddr == 0x3498000 {
+            crate::console::early_print(format_args!("[GFU] test_val={:x}\n", test_val));
+        }
+
         if test_val != REF_COUNT_UNUSED {
             return core::ptr::null();
         }
         slot.ref_count.store(0, Ordering::Relaxed);
 
+        #[cfg(target_arch = "aarch64")]
+        if paddr == 0x3498000 {
+            crate::console::early_print(format_args!("[GFU] stored 0\n"));
+        }
+
         // SAFETY: The slot now has a reference count of `0`, other threads will
         // not access the metadata slot so it is safe to have a mutable reference.
         unsafe { slot.write_meta(metadata) };
+
+        #[cfg(target_arch = "aarch64")]
+        if paddr == 0x3498000 {
+            crate::console::early_print(format_args!("[GFU] write_meta done\n"));
+        }
 
         if as_unique_ptr {
             // No one can create a `Frame` instance directly from the page
@@ -302,6 +378,11 @@ impl MetaSlot {
             // `Release` is used to ensure that the metadata initialization
             // won't be reordered after this memory store.
             slot.ref_count.store(1, Ordering::Release);
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        if paddr == 0x3498000 {
+            crate::console::early_print(format_args!("[GFU] final store done\n"));
         }
 
         slot as *const MetaSlot

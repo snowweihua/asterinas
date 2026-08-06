@@ -91,6 +91,11 @@ impl<const SLOT_SIZE: usize> Slab<SLOT_SIZE> {
         // To ensure `nr_allocated` can be stored in a `u16`.
         const { assert!(PAGE_SIZE / SLOT_SIZE <= u16::MAX as usize) };
 
+        #[cfg(target_arch = "aarch64")]
+        if SLOT_SIZE == 2048 || SLOT_SIZE == 512 {
+            crate::console::early_print(format_args!("[Slab.new] start SLOT_SIZE={:x}\n", SLOT_SIZE));
+        }
+
         let mut slab: Slab<SLOT_SIZE> = FrameAllocOptions::new()
             .zeroed(false)
             .alloc_frame_with(Link::new(SlabMeta::<SLOT_SIZE> {
@@ -100,8 +105,21 @@ impl<const SLOT_SIZE: usize> Slab<SLOT_SIZE> {
             .try_into()
             .unwrap();
 
+        #[cfg(target_arch = "aarch64")]
+        if SLOT_SIZE == 2048 || SLOT_SIZE == 512 {
+            crate::console::early_print(format_args!("[Slab.new] got frame\n"));
+        }
+
         let head_paddr = slab.paddr();
         let head_vaddr = paddr_to_vaddr(head_paddr);
+
+        #[cfg(target_arch = "aarch64")]
+        if SLOT_SIZE == 2048 || SLOT_SIZE == 512 {
+            crate::console::early_print(format_args!(
+                "[Slab.new] paddr={:x} vaddr={:x}\n",
+                head_paddr, head_vaddr
+            ));
+        }
 
         // Push each slot to the free list.
         for slot_offset in (0..PAGE_SIZE).step_by(SLOT_SIZE) {
@@ -111,6 +129,11 @@ impl<const SLOT_SIZE: usize> Slab<SLOT_SIZE> {
             slab.meta_mut()
                 .free_list
                 .push(unsafe { HeapSlot::new(slot_ptr, super::SlotInfo::SlabSlot(SLOT_SIZE)) });
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        if SLOT_SIZE == 2048 || SLOT_SIZE == 512 {
+            crate::console::early_print(format_args!("[Slab.new] done\n"));
         }
 
         Ok(slab)

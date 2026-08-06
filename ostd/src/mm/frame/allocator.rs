@@ -67,7 +67,19 @@ impl FrameAllocOptions {
         // Instead allocate the raw paddr, then use the single-register
         // `Frame::init_unused`/`from_init_ptr` helpers.
         let layout = Layout::from_size_align(PAGE_SIZE, PAGE_SIZE).unwrap();
+
+        #[cfg(target_arch = "aarch64")]
+        if !self.zeroed && size_of::<M>() <= 64 {
+            crate::console::early_print(format_args!("[FA.alloc_frame_with] start size={}\n", size_of::<M>()));
+        }
+
         let pa = get_global_frame_allocator().alloc(layout);
+
+        #[cfg(target_arch = "aarch64")]
+        if !self.zeroed && size_of::<M>() <= 64 {
+            crate::console::early_print(format_args!("[FA.alloc_frame_with] pa={:x}\n", pa));
+        }
+
         if pa == NO_PADDR {
             return Err(Error::NoMemory);
         }
@@ -78,7 +90,18 @@ impl FrameAllocOptions {
             unsafe { core::ptr::write_bytes(addr, 0, PAGE_SIZE) }
         }
 
+        #[cfg(target_arch = "aarch64")]
+        if !self.zeroed && size_of::<M>() <= 64 {
+            crate::console::early_print(format_args!("[FA.alloc_frame_with] before init_unused\n"));
+        }
+
         let slot_ptr = Frame::<M>::init_unused(pa, metadata);
+
+        #[cfg(target_arch = "aarch64")]
+        if !self.zeroed && size_of::<M>() <= 64 {
+            crate::console::early_print(format_args!("[FA.alloc_frame_with] after init_unused\n"));
+        }
+
         // SAFETY: `init_unused` returned a valid metadata slot pointer.
         Ok(unsafe { Frame::<M>::from_init_ptr(slot_ptr) })
     }
@@ -241,6 +264,14 @@ pub(crate) unsafe fn init() {
         if region.typ() == MemoryRegionType::Usable {
             debug_assert!(region.base() % PAGE_SIZE == 0);
             debug_assert!(region.len() % PAGE_SIZE == 0);
+            #[cfg(target_arch = "aarch64")]
+            unsafe {
+                crate::arch::boot::pl011_puts(b"[alloc.init.reg] base=");
+                crate::arch::boot::pl011_puts_hex(region.base());
+                crate::arch::boot::pl011_puts(b" len=");
+                crate::arch::boot::pl011_puts_hex(region.len());
+                crate::arch::boot::pl011_puts(b"\n");
+            }
 
             for r1 in range_difference(&(region.base()..region.end()), &range_1) {
                 #[cfg(target_arch = "aarch64")]

@@ -183,7 +183,19 @@ impl<const SLOT_SIZE: usize> ObjectCache<SLOT_SIZE> {
         }
 
         let size_class = CommonSizeClass::from_size(SLOT_SIZE).unwrap();
+
+        #[cfg(target_arch = "aarch64")]
+        if SLOT_SIZE == 2048 || SLOT_SIZE == 512 {
+            ostd::console::early_print(format_args!("[OC.alloc] start SLOT_SIZE={:x}\n", SLOT_SIZE));
+        }
+
         let mut global_pool = GLOBAL_POOL.lock();
+
+        #[cfg(target_arch = "aarch64")]
+        if SLOT_SIZE == 2048 || SLOT_SIZE == 512 {
+            ostd::console::early_print(format_args!("[OC.alloc] locked\n"));
+        }
+
         for _ in 0..OBJ_CACHE_EXPECTED_SIZE / SLOT_SIZE {
             if let Ok(slot) = global_pool.alloc(size_class) {
                 self.list.push(slot);
@@ -193,14 +205,26 @@ impl<const SLOT_SIZE: usize> ObjectCache<SLOT_SIZE> {
             }
         }
 
-        if let Ok(new_slot) = global_pool.alloc(size_class) {
+        #[cfg(target_arch = "aarch64")]
+        if SLOT_SIZE == 2048 || SLOT_SIZE == 512 {
+            ostd::console::early_print(format_args!("[OC.alloc] filled list\n"));
+        }
+
+        let res = if let Ok(new_slot) = global_pool.alloc(size_class) {
             Ok(new_slot)
         } else if let Some(popped) = self.list.pop() {
             self.list_size -= SLOT_SIZE;
             Ok(popped)
         } else {
             Err(AllocError)
+        };
+
+        #[cfg(target_arch = "aarch64")]
+        if SLOT_SIZE == 2048 || SLOT_SIZE == 512 {
+            ostd::console::early_print(format_args!("[OC.alloc] done ok={}\n", if res.is_ok() { 1 } else { 0 }));
         }
+
+        res
     }
 
     fn dealloc(&mut self, slot: HeapSlot, class: CommonSizeClass) -> Result<(), AllocError> {
@@ -295,11 +319,29 @@ impl GlobalHeapAllocator for HeapAllocator {
             return HeapSlot::alloc_large(layout.size().div_ceil(PAGE_SIZE) * PAGE_SIZE);
         };
 
+        #[cfg(target_arch = "aarch64")]
+        if class == CommonSizeClass::Bytes2048 || class == CommonSizeClass::Bytes512 {
+            ostd::console::early_print(format_args!(
+                "[HA.alloc] class={:x} layout.size={:x}\n",
+                class as usize, layout.size()
+            ));
+        }
+
         let irq_guard = irq::disable_local();
         let this_cache = LOCAL_POOL.get_with(&irq_guard);
         let mut local_cache = this_cache.borrow_mut();
 
-        local_cache.alloc(class)
+        let res = local_cache.alloc(class);
+
+        #[cfg(target_arch = "aarch64")]
+        if class == CommonSizeClass::Bytes2048 || class == CommonSizeClass::Bytes512 {
+            ostd::console::early_print(format_args!(
+                "[HA.alloc] done ok={}\n",
+                if res.is_ok() { 1 } else { 0 }
+            ));
+        }
+
+        res
     }
 
     fn dealloc(&self, slot: HeapSlot) -> Result<(), AllocError> {
