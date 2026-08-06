@@ -60,6 +60,10 @@ SECTIONS
         PROVIDE(__etext = .);
     }
 
+    .rpi3_arc_clone         : AT(ADDR(.rpi3_arc_clone) - KERNEL_VMA_OFFSET) {
+        *(.rpi3_arc_clone)
+    }
+
     /* AArch64 vector table: must be 2KB (0x800) aligned */
     . = ALIGN(0x800);
     .vector                 : AT(ADDR(.vector) - KERNEL_VMA_OFFSET) {

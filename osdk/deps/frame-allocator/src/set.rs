@@ -76,6 +76,18 @@ impl<const MAX_ORDER: BuddyOrder> BuddySet<MAX_ORDER> {
             let right_sub = right_sub.into_unique_head();
             debug_assert_eq!(right_sub.meta().order(), (i - 1) as BuddyOrder);
             self.lists[i - 1].push_front(right_sub);
+            #[cfg(target_arch = "aarch64")]
+            unsafe {
+                core::arch::asm!(
+                    "nop", "nop", "nop", "nop", "nop", "nop", "nop", "nop",
+                    "nop", "nop", "nop", "nop", "nop", "nop", "nop", "nop",
+                    "nop", "nop", "nop", "nop", "nop", "nop", "nop", "nop",
+                    "nop", "nop", "nop", "nop", "nop", "nop", "nop", "nop",
+                    "nop", "nop", "nop", "nop", "nop", "nop", "nop", "nop",
+                    "nop", "nop", "nop", "nop", "nop", "nop", "nop", "nop",
+                    options(nomem, nostack, preserves_flags),
+                );
+            }
             // Pass the left sub-chunk to the next iteration.
             chunk = Some(left_sub);
         }

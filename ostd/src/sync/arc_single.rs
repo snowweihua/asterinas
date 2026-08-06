@@ -54,6 +54,21 @@ fn inc_count(counter: &AtomicUsize) {
     counter.store(old + 1, Ordering::Relaxed);
 }
 
+#[inline(never)]
+#[unsafe(link_section = ".rpi3_arc_clone")]
+pub fn arc_clone<T: ?Sized>(arc: &Arc<T>) -> Arc<T> {
+    if !is_rpi3_single_core() {
+        return Arc::clone(arc);
+    }
+
+    let raw = Arc::as_ptr(arc);
+    unsafe {
+        let inner = arc_inner_from_data(raw);
+        inc_count(&(*inner).strong);
+        Arc::from_raw(raw)
+    }
+}
+
 pub fn weak_clone<T: ?Sized>(weak: &Weak<T>) -> Weak<T> {
     if !is_rpi3_single_core() {
         return Weak::clone(weak);

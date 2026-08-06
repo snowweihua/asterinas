@@ -15,7 +15,7 @@ mod wait;
 
 pub(crate) use self::rcu::finish_grace_period;
 pub use self::{
-    arc_single::{arc_new_cyclic, weak_clone},
+    arc_single::{arc_clone, arc_new_cyclic, weak_clone},
     guard::{GuardTransfer, LocalIrqDisabled, PreemptDisabled, SpinGuardian, WriteIrqDisabled},
     mutex::{ArcMutexGuard, Mutex, MutexGuard},
     once::Once,

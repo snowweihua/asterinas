@@ -15,7 +15,7 @@ use ostd::{
         io_util::HasVmReaderWriter, Daddr, DmaDirection, DmaStream, FrameAllocOptions, HasDaddr,
         Infallible, VmReader, VmWriter, PAGE_SIZE,
     },
-    sync::{RwLock, SpinLock},
+    sync::{arc_clone, arc_new_cyclic, weak_clone, RwLock, SpinLock},
 };
 
 /// `DmaPool` is responsible for allocating small streaming DMA segments
@@ -66,7 +66,7 @@ impl DmaPool {
         assert!(segment_size <= PAGE_SIZE);
         assert!(high_watermark >= init_size);
 
-        Arc::new_cyclic(|pool| {
+        arc_new_cyclic(|pool| {
             let mut avail_pages = VecDeque::new();
             let mut all_pages = VecDeque::new();
 
@@ -76,11 +76,11 @@ impl DmaPool {
                         segment_size,
                         direction,
                         is_cache_coherent,
-                        Weak::clone(pool),
+                        weak_clone(pool),
                     )
                     .unwrap(),
                 );
-                avail_pages.push_back(page.clone());
+                avail_pages.push_back(arc_clone(&page));
                 all_pages.push_back(page);
             }
 
