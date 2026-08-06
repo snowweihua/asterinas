@@ -30,11 +30,23 @@ pub(super) fn register_callback(func: fn()) {
         match callbacks.get() {
             // Initialized, copy the vector, push the function and update.
             Some(callbacks_vec) => {
+                if attempt < 5 {
+                    ostd::arch::boot::pl011_puts_safe(b"[regcb] some branch\n");
+                }
                 let mut callbacks_cloned = callbacks_vec.clone();
+                if attempt < 5 {
+                    ostd::arch::boot::pl011_puts_safe(b"[regcb] cloned\n");
+                }
                 callbacks_cloned.push(func);
+                if attempt < 5 {
+                    ostd::arch::boot::pl011_puts_safe(b"[regcb] some before cx\n");
+                }
                 if callbacks.compare_exchange(Some(callbacks_cloned)).is_ok() {
                     ostd::arch::boot::pl011_puts_safe(b"[regcb] some cx ok\n");
                     break;
+                }
+                if attempt < 5 {
+                    ostd::arch::boot::pl011_puts_safe(b"[regcb] some cx failed\n");
                 }
             }
             // Uninitialized, initialize it.

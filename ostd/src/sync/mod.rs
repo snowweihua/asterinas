@@ -36,7 +36,7 @@ pub use self::{
 pub(crate) fn init() {
     #[cfg(target_arch = "aarch64")]
     unsafe { crate::arch::boot::pl011_puts(b"[sync.init.0] start\n"); }
-    // TEMPORARILY SKIPPED: rcu::init();
+    rcu::init();
     #[cfg(target_arch = "aarch64")]
     unsafe { crate::arch::boot::pl011_puts(b"[sync.init.1] after rcu::init\n"); }
 }

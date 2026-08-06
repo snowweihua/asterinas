@@ -239,6 +239,9 @@ impl<P: NonNullPtr + Send> RcuReadGuardInner<'_, P> {
             }
         };
 
+        #[cfg(target_arch = "aarch64")]
+        crate::arch::boot::pl011_puts_safe(b"[rcu cx] atomic compare done\n");
+
         if result.is_err() {
             let Some(new_ptr) = NonNull::new(new_ptr) else {
                 return Err(None);
@@ -256,7 +259,11 @@ impl<P: NonNullPtr + Send> RcuReadGuardInner<'_, P> {
             // 2. The pointer is removed from the RCU slot so that no one will
             //    use it after the end of the current grace period. The removal
             //    is done atomically, so it will only be dropped once.
+            #[cfg(target_arch = "aarch64")]
+            crate::arch::boot::pl011_puts_safe(b"[rcu cx] before delay_drop\n");
             unsafe { delay_drop::<P>(p) };
+            #[cfg(target_arch = "aarch64")]
+            crate::arch::boot::pl011_puts_safe(b"[rcu cx] after delay_drop\n");
         }
 
         Ok(())

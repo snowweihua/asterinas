@@ -154,10 +154,13 @@ pub struct TimerManager {
 impl TimerManager {
     /// Create a `TimerManager` instance from a clock.
     pub fn new(clock: Arc<dyn Clock>) -> Arc<Self> {
-        Arc::new(Self {
+        ostd::arch::boot::pl011_puts_safe(b"[tm_new] start\n");
+        let tm = Arc::new(Self {
             clock,
             timer_callbacks: SpinLock::new(BinaryHeap::new()),
-        })
+        });
+        ostd::arch::boot::pl011_puts_safe(b"[tm_new] done\n");
+        tm
     }
 
     /// Returns the clock associated with this timer manager.
