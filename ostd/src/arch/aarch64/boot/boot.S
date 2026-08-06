@@ -70,11 +70,14 @@ PTE_AIDX_DEVICE = (0 << 2)
 PTE_AIDX_MEMORY = (1 << 2)
 PTE_SH_INNER    = (3 << 8)
 PTE_AF          = (1 << 10)
+PTE_PXN         = (1 << 54)
+PTE_UXN         = (1 << 53)
 
 /* 1 GB block descriptors (used for GB 1-3 which are pure RAM or unused) */
 PTE_NORMAL_1G  = ( MM_TYPE_BLOCK | PTE_AIDX_MEMORY | PTE_SH_INNER | PTE_AF )
+PTE_DEVICE_1G  = ( MM_TYPE_BLOCK | PTE_AIDX_DEVICE | PTE_AF | PTE_PXN | PTE_UXN )
 /* 2 MB block descriptors for the MMIO region (0x00000000–0x3FFFFFFF) */
-PTE_DEVICE_2M  = ( MM_TYPE_BLOCK | PTE_AIDX_DEVICE | PTE_AF )
+PTE_DEVICE_2M  = ( MM_TYPE_BLOCK | PTE_AIDX_DEVICE | PTE_AF | PTE_PXN | PTE_UXN )
 /* 2 MB block descriptor for Normal RAM 2 MB blocks (0x40000000–0x7FFFFFFF) */
 PTE_NORMAL_2M  = ( MM_TYPE_BLOCK | PTE_AIDX_MEMORY | PTE_SH_INNER | PTE_AF )
 
@@ -334,9 +337,12 @@ jump_to_main:
     adr     x10, boot_l3pt_high
     str     xzr, [x10, #(1 * 8)]    /* slot 1: PA 0x80000000 → 0 (invalid) */
     str     xzr, [x10, #(2 * 8)]    /* slot 2: PA 0xC0000000 → 0 (invalid) */
-    /* Same for boot_l3pt_low slots 1-3 (TTBR0 identity map): non-existent PA on RPi3 */
+    /* On RPi3 the ARM-local registers live at PA 0x40000000; keep slot 1
+     * identity-mapped as Device and execute-never so the kernel can use it
+     * for the per-core timer/mailbox controller.  Slots 2-3 remain unmapped. */
     adr     x10, boot_l3pt_low
-    str     xzr, [x10, #(1 * 8)]    /* slot 1: PA 0x40000000 → 0 (invalid) */
+    ldr     x9, = ( PTE_DEVICE_1G | (1 << 30) )
+    str     x9, [x10, #(1 * 8)]     /* slot 1: PA 0x40000000 → Device 1 GiB */
     str     xzr, [x10, #(2 * 8)]    /* slot 2: PA 0x80000000 → 0 (invalid) */
     str     xzr, [x10, #(3 * 8)]    /* slot 3: PA 0xC0000000 → 0 (invalid) */
     dsb     sy

@@ -63,6 +63,12 @@ pub(crate) unsafe fn init_on_bsp() {
 
 pub(crate) fn init_interrupt(irq_num: u8) {
     if crate::arch::board::BoardType::cached() == 2 {
+        // The Raspberry Pi 3 has no GIC; enable the per-IP interrupt router.
+        if irq_num == 27 {
+            crate::arch::bcm2836_irq::enable_timer_irq();
+        } else if irq_num == 57 {
+            crate::arch::bcm2836_irq::enable_uart_irq();
+        }
         return;
     }
     let gic = GIC.get().expect("GICv2 is not initialized");
@@ -79,7 +85,9 @@ pub(crate) fn init_interrupt(irq_num: u8) {
 
 pub(crate) fn acknowledge_interrupt() -> Option<usize> {
     if crate::arch::board::BoardType::cached() == 2 {
-        return None;
+        // The Raspberry Pi 3 has no GIC; read the ARM-local IRQ source instead.
+        let irq = crate::arch::bcm2836_irq::acknowledge_interrupt();
+        return (irq != 0).then_some(irq);
     }
     let gic = GIC.get().expect("GICv2 is not initialized");
     let mut gic = gic.lock();
@@ -89,6 +97,7 @@ pub(crate) fn acknowledge_interrupt() -> Option<usize> {
 
 pub(crate) fn end_interrupt(irq_num: usize) {
     if crate::arch::board::BoardType::cached() == 2 {
+        crate::arch::bcm2836_irq::end_interrupt(irq_num);
         return;
     }
     if irq_num > u8::MAX as usize {

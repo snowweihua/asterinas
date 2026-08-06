@@ -18,6 +18,7 @@ pub(crate) mod task;
 mod timer;
 pub mod trap;
 pub(crate) mod board;
+pub(crate) mod bcm2836_irq;
 
 use aarch64_cpu::registers::*;
 
@@ -54,6 +55,9 @@ pub(crate) unsafe fn late_init_on_bsp() {
     unsafe { crate::arch::boot::pl011_puts(b"[late.trap] after trap::init\n"); }
     if crate::arch::board::BoardType::cached() == 2 {
         unsafe { crate::arch::boot::pl011_puts(b"[late.gic.skip] RPi3\n"); }
+        unsafe { crate::arch::boot::pl011_puts(b"[late.bcm2836] before init_on_bsp\n"); }
+        unsafe { bcm2836_irq::init_on_bsp() };
+        unsafe { crate::arch::boot::pl011_puts(b"[late.bcm2836] after init_on_bsp\n"); }
     } else {
         unsafe { gic::init_on_bsp() };
         #[cfg(target_arch = "aarch64")]
@@ -71,7 +75,9 @@ pub(crate) unsafe fn late_init_on_bsp() {
         unsafe { crate::arch::boot::pl011_puts(b"[late.smp] after boot_all_aps\n"); }
     }
     if crate::arch::board::BoardType::cached() == 2 {
-        unsafe { crate::arch::boot::pl011_puts(b"[late.timer.skip] RPi3\n"); }
+        unsafe { crate::arch::boot::pl011_puts(b"[late.timer.rpi3] before timer::init\n"); }
+        unsafe { timer::init() };
+        unsafe { crate::arch::boot::pl011_puts(b"[late.timer.rpi3] after timer::init\n"); }
     } else {
         unsafe { crate::arch::boot::pl011_puts(b"[late.timer.0] before timer::init\n"); }
         unsafe { timer::init() };

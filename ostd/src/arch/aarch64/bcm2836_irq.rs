@@ -20,7 +20,6 @@
 //!   bit 2: CNTVIRQ   (virtual timer)
 //!   bit 3: CNTHPIRQ  (hypervisor timer)
 
-use crate::mm::paddr_to_vaddr;
 
 /// BCM2836 ARM Local Interrupt Controller (one set of regs per core).
 const LOCAL_IC_BASE_PA: usize = 0x4000_0000;
@@ -71,7 +70,9 @@ const UART_PERI_IRQ_BIT: u32 = 1 << 25;
 pub const UART_IRQ_NUM: usize = 57;
 
 fn local_ic_base_va() -> usize {
-    paddr_to_vaddr(LOCAL_IC_BASE_PA)
+    // On RPi3 the boot page table identity-maps the low physical address space,
+    // so we can access the ARM-local registers with the physical address as VA.
+    LOCAL_IC_BASE_PA
 }
 
 /// Read MPIDR_EL1 and return the affinity level 0 (core ID within cluster).
@@ -98,9 +99,8 @@ pub unsafe fn init_on_bsp() {
     unsafe { write_reg(CORE0_TIMER_INT_CONTROL, 0) };
 
     // Disable ALL BCM2835 peripheral interrupts AND FIQ.
-    // This must be called after the KPT is activated so that paddr_to_vaddr()
-    // resolves to the correct uncacheable MMIO mapping.
-    let ic_va = paddr_to_vaddr(BCM2835_IC_BASE_PA);
+    // The boot page table identity-maps the BCM2835 MMIO window, so use the PA as VA.
+    let ic_va = BCM2835_IC_BASE_PA;
     unsafe {
         core::ptr::write_volatile((ic_va + BCM2835_DISABLE_IRQS_1) as *mut u32, 0xFFFF_FFFF);
         core::ptr::write_volatile((ic_va + BCM2835_DISABLE_IRQS_2) as *mut u32, 0xFFFF_FFFF);
@@ -135,7 +135,7 @@ pub fn enable_uart_irq() {
     if crate::arch::board::BoardType::cached() != 2 {
         return;
     }
-    let ic_va = paddr_to_vaddr(BCM2835_IC_BASE_PA);
+    let ic_va = BCM2835_IC_BASE_PA;
     unsafe {
         core::ptr::write_volatile(
             (ic_va + BCM2835_ENABLE_IRQS_2) as *mut u32,
@@ -154,13 +154,13 @@ pub fn acknowledge_interrupt() -> usize {
     let pending = unsafe { read_reg(offset) };
 
     if pending & CNTVIRQ_BIT != 0 {
-        // Timer IRQ: return the allocated IRQ number (16).
-        return 16;
+        // Timer IRQ: return the virtual timer PPI number used by AArch64 timer::init().
+        return 27;
     }
 
     if pending & GPU_IRQ_BIT != 0 {
         // A BCM2835 peripheral IRQ is pending.  Check which one.
-        let ic_va = paddr_to_vaddr(BCM2835_IC_BASE_PA);
+        let ic_va = BCM2835_IC_BASE_PA;
         let irq2 =
             unsafe { core::ptr::read_volatile((ic_va + BCM2835_IRQS_PENDING_2) as *const u32) };
         if irq2 & UART_PERI_IRQ_BIT != 0 {
@@ -173,7 +173,7 @@ pub fn acknowledge_interrupt() -> usize {
     if pending != 0 {
         // Unexpected ARM-local interrupt (PMU, mailbox, etc.).
         unsafe {
-            crate::arch::boot::early_puts(b"[irq] unexpected CORE0_IRQ_SOURCE\n");
+            crate::arch::boot::pl011_puts(b"[irq] unexpected CORE0_IRQ_SOURCE\n");
         }
         return 0;
     }
@@ -203,7 +203,7 @@ pub unsafe fn trigger_mailbox_irq(core_id: u32) {
     let reg_addr = base_va + offset;
     // SAFETY: early_puts writes directly to UART, safe during early boot
     unsafe {
-        crate::arch::boot::early_puts(b"[a2-smp] rpi3: mailbox base=");
+        crate::arch::boot::pl011_puts(b"[a2-smp] rpi3: mailbox base=");
         let mut buf = [0u8; 20];
         let hex = b"0123456789abcdef";
         buf[0] = b'0'; buf[1] = b'x';
@@ -212,12 +212,12 @@ pub unsafe fn trigger_mailbox_irq(core_id: u32) {
             buf[2 + i] = hex[nibble as usize];
         }
         buf[18] = b'\n'; buf[19] = 0;
-        crate::arch::boot::early_puts(&buf[..19]);
+        crate::arch::boot::pl011_puts(&buf[..19]);
     }
     // Read and print core IRQ source to see what's pending
     unsafe {
         let irq_src = core::ptr::read_volatile((base_va + 0x60) as *const u32);
-        crate::arch::boot::early_puts(b"[a2-smp] rpi3: core-irq-source=");
+        crate::arch::boot::pl011_puts(b"[a2-smp] rpi3: core-irq-source=");
         let mut buf = [0u8; 20];
         let hex = b"0123456789abcdef";
         buf[0] = b'0'; buf[1] = b'x';
@@ -226,7 +226,7 @@ pub unsafe fn trigger_mailbox_irq(core_id: u32) {
             buf[2 + i] = hex[nibble as usize];
         }
         buf[10] = b'\n'; buf[11] = 0;
-        crate::arch::boot::early_puts(&buf[..11]);
+        crate::arch::boot::pl011_puts(&buf[..11]);
     }
     unsafe {
         core::ptr::write_volatile((reg_addr) as *mut u32, 1);
