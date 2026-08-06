@@ -10,7 +10,6 @@ Usage:
 Then OpenCode talks to this process via stdio.
 """
 
-import json
 import socket
 import sys
 import threading
@@ -21,7 +20,6 @@ def log(msg):
     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {msg}", file=sys.stderr, flush=True)
 
 
-initialized = False
 sock = None
 lock = threading.Lock()
 
@@ -41,7 +39,7 @@ def forward_tcp_to_stdout():
 
 
 def main():
-    global sock, initialized
+    global sock
 
     if len(sys.argv) < 4:
         print(f"Usage: {sys.argv[0]} --host HOST --port PORT", file=sys.stderr)
@@ -86,63 +84,15 @@ def main():
     t1 = threading.Thread(target=forward_tcp_to_stdout, daemon=True)
     t1.start()
 
-    pending_responses = {}
-    req_id = 1
-
     for line in sys.stdin:
         if not line.strip():
             continue
 
         try:
-            req = json.loads(line)
-            method = req.get("method", "")
-            req_id = req.get("id", None)
-
-            if method == "initialize":
-                response = {
-                    "jsonrpc": "2.0",
-                    "id": req_id,
-                    "result": {
-                        "protocolVersion": "2024-11-05",
-                        "capabilities": {"tools": {}},
-                        "serverInfo": {"name": "tcp-bridge", "version": "1.0.0"}
-                    }
-                }
-                print(json.dumps(response), flush=True)
-                initialized = True
-
-                time.sleep(0.1)
-                notify_init = {
-                    "jsonrpc": "2.0",
-                    "method": "notifications/initialized"
-                }
-                sock.sendall((json.dumps(notify_init) + "\n").encode())
-                continue
-
-            if method == "notifications/initialized":
-                continue
-
-            if not initialized:
-                if req_id is not None:
-                    fallback = json.dumps({"jsonrpc": "2.0", "id": req_id, "error": {"code": -32002, "message": "Server initializing..."}})
-                    print(fallback, flush=True)
-                continue
-
-            if method == "tools/call":
-                with lock:
-                    sock.sendall(line.encode())
-            else:
-                with lock:
-                    sock.sendall(line.encode())
-
-        except json.JSONDecodeError:
             with lock:
                 sock.sendall(line.encode())
         except Exception as e:
             log(f"Error: {e}")
-            if req_id is not None:
-                error = {"jsonrpc": "2.0", "id": req_id, "error": {"code": -32603, "message": str(e)}}
-                print(json.dumps(error), flush=True)
 
     sock.close()
 

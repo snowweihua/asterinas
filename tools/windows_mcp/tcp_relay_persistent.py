@@ -1,118 +1,133 @@
 #!/usr/bin/env python3
-"""Persistent TCP-to-stdio relay for MCP servers.
+"""TCP-to-stdio relay for MCP servers.
 
-This relay keeps MCP processes running persistently and multiplexes
-multiple TCP client connections to the same process.
+Each TCP client gets an isolated MCP subprocess and stdio session.
 
 On Windows, run:
     python tcp_relay_persistent.py --power "python power_mcp.py" --serial "python serial_mcp.py"
 """
 
-import subprocess
-import threading
 import argparse
+import os
 import socket
-import time
+import subprocess
 import sys
+import threading
+import time
 
 
 def log(msg):
     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {msg}", flush=True)
 
 
-class MCPProcess:
-    """Manages a persistent MCP process with multiple TCP client connections."""
+class ClientSession:
+    """Owns one MCP subprocess and one TCP client connection."""
 
-    def __init__(self, cmd, log_prefix):
+    def __init__(self, conn, cmd, log_prefix):
+        self.conn = conn
         self.cmd = cmd
         self.log_prefix = log_prefix
+        self.send_lock = threading.Lock()
         self.proc = None
-        self.lock = threading.Lock()
-        self.clients = set()
-        self.start()
+        self.reader_thread = None
 
     def start(self):
-        log(f"{self.log_prefix} Starting MCP process: {self.cmd}")
+        log(f"{self.log_prefix} Starting MCP process for client: {self.cmd}")
+        creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
         self.proc = subprocess.Popen(
             self.cmd,
             shell=True,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
+            stderr=subprocess.DEVNULL,
             bufsize=0,
+            creationflags=creationflags,
         )
-        threading.Thread(target=self._reader_loop, daemon=True).start()
+        self.reader_thread = threading.Thread(target=self._reader_loop, daemon=True)
+        self.reader_thread.start()
 
     def _reader_loop(self):
-        """Read from MCP stdout and broadcast to all clients."""
         try:
-            while True:
-                if self.proc.stdout is None:
-                    break
+            while self.proc and self.proc.stdout:
                 chunk = self.proc.stdout.read(1)
                 if not chunk:
-                    log(f"{self.log_prefix} MCP process exited")
                     break
-                with self.lock:
-                    dead_clients = set()
-                    for client in self.clients:
-                        try:
-                            client.sendall(chunk)
-                        except:
-                            dead_clients.add(client)
-                    for client in dead_clients:
-                        self.clients.remove(client)
+                try:
+                    with self.send_lock:
+                        self.conn.sendall(chunk)
+                except OSError:
+                    break
         except Exception as e:
-            log(f"{self.log_prefix} Reader error: {e}")
+            log(f"{self.log_prefix} Client reader error: {e}")
+        finally:
+            log(f"{self.log_prefix} MCP process exited for client")
 
     def write(self, data):
-        """Write data to MCP stdin from any client."""
-        with self.lock:
-            if self.proc and self.proc.stdin:
+        if not self.proc or not self.proc.stdin or self.proc.poll() is not None:
+            return False
+        try:
+            self.proc.stdin.write(data)
+            self.proc.stdin.flush()
+            return True
+        except (BrokenPipeError, OSError):
+            return False
+
+    def close(self):
+        if not self.proc:
+            return
+        try:
+            if self.proc.stdin:
+                self.proc.stdin.close()
+        except OSError:
+            pass
+
+        if self.proc.poll() is None:
+            try:
+                if os.name == "nt":
+                    subprocess.run(
+                        ["taskkill", "/PID", str(self.proc.pid), "/T", "/F"],
+                        capture_output=True,
+                        timeout=5,
+                        check=False,
+                    )
+                else:
+                    self.proc.terminate()
+                self.proc.wait(timeout=5)
+            except (OSError, subprocess.TimeoutExpired):
                 try:
-                    self.proc.stdin.write(data)
-                    self.proc.stdin.flush()
-                except:
+                    self.proc.kill()
+                    self.proc.wait(timeout=5)
+                except (OSError, subprocess.TimeoutExpired):
                     pass
 
-    def add_client(self, client_sock):
-        with self.lock:
-            self.clients.add(client_sock)
-
-    def remove_client(self, client_sock):
-        with self.lock:
-            self.clients.discard(client_sock)
-
-    def restart_if_dead(self):
-        if self.proc and self.proc.poll() is not None:
-            log(f"{self.log_prefix} MCP process died, restarting...")
-            self.start()
+        if self.reader_thread and self.reader_thread is not threading.current_thread():
+            self.reader_thread.join(timeout=1)
 
 
-def handle_client(conn, mcp_process, log_prefix):
-    """Handle a single TCP client connection."""
-    log(f"{log_prefix} Client connected")
-    mcp_process.add_client(conn)
+def handle_client(conn, addr, cmd, log_prefix):
+    """Handle one TCP client with an isolated MCP process."""
+    log(f"{log_prefix} Client connected: {addr}")
+    session = ClientSession(conn, cmd, log_prefix)
 
     try:
+        session.start()
         while True:
             data = conn.recv(1024)
-            if not data:
+            if not data or not session.write(data):
                 break
-            mcp_process.write(data)
-    except:
-        pass
+    except OSError as e:
+        log(f"{log_prefix} Client error {addr}: {e}")
     finally:
-        mcp_process.remove_client(conn)
+        session.close()
         try:
             conn.close()
-        except:
+        except OSError:
             pass
-        log(f"{log_prefix} Client disconnected")
+        log(f"{log_prefix} Client disconnected: {addr}")
 
 
 def start_server(host, port, cmd, log_prefix):
-    """Start TCP server that forwards to MCP process."""
+    """Start a TCP server that creates one MCP process per client."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
@@ -124,20 +139,15 @@ def start_server(host, port, cmd, log_prefix):
     sock.listen(5)
     log(f"{log_prefix} Server listening on {host}:{port}")
 
-    mcp = MCPProcess(cmd, log_prefix)
-
-    # Monitor thread to restart MCP if it dies
-    def monitor():
-        while True:
-            time.sleep(5)
-            mcp.restart_if_dead()
-
-    threading.Thread(target=monitor, daemon=True).start()
-
     while True:
         try:
             conn, addr = sock.accept()
-            handle_client(conn, mcp, log_prefix)
+            thread = threading.Thread(
+                target=handle_client,
+                args=(conn, addr, cmd, log_prefix),
+                daemon=True,
+            )
+            thread.start()
         except Exception as e:
             log(f"{log_prefix} Accept error: {e}")
             time.sleep(1)
