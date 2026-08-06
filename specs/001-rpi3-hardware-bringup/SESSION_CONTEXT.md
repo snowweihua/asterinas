@@ -115,7 +115,10 @@ The project uses plain load/store or boot-safe single-core helpers only at runti
 
 ## Checkpoint (latest session)
 
-- Working tree is clean at `1698c702`. No uncommitted code changes.
+- The frame initialization sentinel change is committed as `0a0d3122`.
+- `cargo osdk build --release --target-arch aarch64 --boot-method qemu-direct --scheme aarch64-rpi3` completed successfully in the configured Docker build, and `/tmp/asterina.img` was deployed to `/mnt/d/pi_sd/asterina.img`.
+- Physical verification is blocked: this session's MCP registry exposed no build, power, or serial servers; the configured TCP power/serial bridges accepted connections and local handshakes but did not return `tools/call` or `tools/list` responses. No power cycle or boot result is claimed.
+- Unrelated `knowledge/` working-tree edits remain untouched.
 - Tried and REVERTED (each regressed the boundary earlier, back to first heap allocation in `[mac.3]`):
   - `#[inline(always)]` on `get_global_frame_allocator`/`get_global_heap_allocator`
     (they return 16-byte `&'static dyn Trait` fat pointers).
