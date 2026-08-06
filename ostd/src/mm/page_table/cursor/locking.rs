@@ -105,49 +105,19 @@ fn try_traverse_and_lock_subtree_root<'rcu, C: PageTableConfig>(
             break;
         }
 
-        #[cfg(target_arch = "aarch64")]
-        unsafe {
-            crate::arch::boot::pl011_puts(b"[cursor] level=");
-            crate::arch::boot::pl011_puts_hex(cur_level as usize);
-            crate::arch::boot::pl011_puts(b" idx=");
-            crate::arch::boot::pl011_puts_hex(start_idx);
-            crate::arch::boot::pl011_puts(b" pt_paddr=");
-            crate::arch::boot::pl011_puts_hex(cur_pt_addr);
-            crate::arch::boot::pl011_puts(b"\n");
-        }
         let cur_pt_ptr = paddr_to_vaddr(cur_pt_addr) as *mut C::E;
-        #[cfg(target_arch = "aarch64")]
-        unsafe {
-            crate::arch::boot::pl011_puts(b"[cursor] pt_vptr=");
-            crate::arch::boot::pl011_puts_hex(cur_pt_ptr as usize);
-            crate::arch::boot::pl011_puts(b"\n");
-        }
         // SAFETY:
         //  - The page table node is alive because (1) the root node is alive and
         //    (2) all child nodes cannot be recycled because we're in the RCU critical section.
         //  - The index is inside the bound, so the page table entry is valid.
         //  - All page table entries are aligned and accessed with atomic operations only.
         let cur_pte = unsafe { load_pte(cur_pt_ptr.add(start_idx), Ordering::Acquire) };
-        #[cfg(target_arch = "aarch64")]
-        unsafe {
-            crate::arch::boot::pl011_puts(b"[cursor] pte_is_present=");
-            crate::arch::boot::pl011_puts_hex(cur_pte.is_present() as usize);
-            crate::arch::boot::pl011_puts(b" pte_paddr=");
-            crate::arch::boot::pl011_puts_hex(cur_pte.paddr());
-            crate::arch::boot::pl011_puts(b"\n");
-        }
 
         if cur_pte.is_present() {
             if cur_pte.is_last(cur_level) {
                 break;
             }
             cur_pt_addr = cur_pte.paddr();
-            #[cfg(target_arch = "aarch64")]
-            unsafe {
-                crate::arch::boot::pl011_puts(b"[cursor] next_pt_addr=");
-                crate::arch::boot::pl011_puts_hex(cur_pt_addr);
-                crate::arch::boot::pl011_puts(b"\n");
-            }
             cur_node_guard = None;
             continue;
         }

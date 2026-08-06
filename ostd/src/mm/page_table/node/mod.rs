@@ -74,26 +74,16 @@ impl<C: PageTableConfig> PageTableNode<C> {
                 .expect("AArch64 bootstrap page-table reserve exhausted");
         }
 
-        #[cfg(target_arch = "aarch64")]
-        unsafe { crate::arch::boot::pl011_puts(b"[node.alloc] start\n"); }
         let meta: PageTablePageMeta<C> = PageTablePageMeta::new(level);
-        #[cfg(target_arch = "aarch64")]
-        unsafe { crate::arch::boot::pl011_puts(b"[node.alloc] meta created\n"); }
 
-        #[cfg(target_arch = "aarch64")]
-        unsafe { crate::arch::boot::pl011_puts(b"[node.alloc] calling alloc_frame_with\n"); }
         let frame = FrameAllocOptions::new()
             .zeroed(true)
             .alloc_frame_with(meta)
             .expect("Failed to allocate a page table node");
-        #[cfg(target_arch = "aarch64")]
-        unsafe { crate::arch::boot::pl011_puts(b"[node.alloc] alloc_frame_with returned\n"); }
 
         // The allocated frame is zeroed. Make sure zero is absent PTE.
         debug_assert_eq!(C::E::new_absent().as_usize(), 0);
 
-        #[cfg(target_arch = "aarch64")]
-        unsafe { crate::arch::boot::pl011_puts(b"[node.alloc] done\n"); }
         frame
     }
 

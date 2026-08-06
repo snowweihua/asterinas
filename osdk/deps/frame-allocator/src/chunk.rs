@@ -210,13 +210,9 @@ impl FreeChunk {
         let new_order = order - 1;
         let left_child_addr = addr;
         let right_child_addr = addr ^ size_of_order(new_order);
-        #[cfg(target_arch = "aarch64")]
-        ostd::arch::boot::pl011_puts_safe(b"[split] start\n");
 
         debug_assert_eq!(self.addr(), left_child_addr);
         self.head.meta_mut().order = new_order;
-        #[cfg(target_arch = "aarch64")]
-        ostd::arch::boot::pl011_puts_safe(b"[split] before right child\n");
 
         let right_child = FreeChunk {
             head: unsafe {
@@ -226,8 +222,6 @@ impl FreeChunk {
                 ))
             },
         };
-        #[cfg(target_arch = "aarch64")]
-        ostd::arch::boot::pl011_puts_safe(b"[split] done\n");
         right_child
     }
 

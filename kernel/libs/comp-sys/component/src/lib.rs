@@ -254,13 +254,14 @@ fn match_and_call(
     info!("[mac-post] info printed ok");
 
     for i in infos {
-        mini_uart_puts(b"\n");
+        mini_uart_puts(b"[comp] before\n");
         info!("Component initializing:{:?}", i);
         if let Err(res) = i.function.unwrap().call(()) {
             error!("Component initialize error:{:?}", res);
         } else {
             info!("Component initialize complete");
         }
+        mini_uart_puts(b"[comp] after\n");
     }
     info!("All components initialization in {stage:?} stage completed");
     Ok(())
