@@ -35,24 +35,23 @@ impl<M: AnyFrameMeta> UniqueFrame<M> {
     ///
     /// The caller should provide the initial metadata of the page.
     pub fn from_unused(paddr: Paddr, metadata: M) -> Result<Self, GetFrameError> {
-        let ptr = Self::try_init_unused(paddr, metadata);
+        let ptr = MetaSlot::get_from_unused(paddr, metadata, true);
         if ptr.is_null() {
             return Err(GetFrameError::InUse);
         }
-        Ok(unsafe { Self::from_init_ptr(ptr) })
-    }
-
-    pub(super) fn try_init_unused(paddr: Paddr, metadata: M) -> *const () {
-        MetaSlot::get_from_unused(paddr, metadata, true) as *const ()
+        Ok(Self {
+            ptr,
+            _marker: PhantomData,
+        })
     }
 
     /// Concrete helper that returns a single-register `*const ()` pointer,
     /// panicking on error — avoids the 16-byte generic `Result<UniqueFrame<M>>`
     /// return that triggers a Cortex-A53 epilogue bug (x30 corruption).
     pub fn init_unused(paddr: Paddr, metadata: M) -> *const () {
-        let ptr = Self::try_init_unused(paddr, metadata);
+        let ptr = MetaSlot::get_from_unused(paddr, metadata, true);
         assert!(!ptr.is_null(), "UniqueFrame::init_unused: frame is not unused");
-        ptr
+        ptr as *const ()
     }
 
     /// # Safety
