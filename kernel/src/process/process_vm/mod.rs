@@ -123,10 +123,15 @@ impl Clone for ProcessVm {
 impl ProcessVm {
     /// Allocates a new `ProcessVm`
     pub fn alloc() -> Self {
+        ostd::arch::boot::pl011_puts_safe(b"[PVM] new_root\n");
         let root_vmar = Vmar::<Full>::new_root();
+        ostd::arch::boot::pl011_puts_safe(b"[PVM] init_stack\n");
         let init_stack = InitStack::new();
+        ostd::arch::boot::pl011_puts_safe(b"[PVM] heap new\n");
         let heap = Heap::new();
+        ostd::arch::boot::pl011_puts_safe(b"[PVM] heap map\n");
         heap.alloc_and_map_vm(&root_vmar).unwrap();
+        ostd::arch::boot::pl011_puts_safe(b"[PVM] done\n");
         Self {
             root_vmar: Mutex::new(Some(root_vmar)),
             heap,

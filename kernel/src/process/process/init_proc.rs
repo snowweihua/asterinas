@@ -49,8 +49,9 @@ fn create_init_process(
     let pid = allocate_posix_tid();
     ostd::arch::boot::pl011_puts_safe(b"[create] pid\n");
     let parent = Weak::new();
+    ostd::arch::boot::pl011_puts_safe(b"[create] before vm alloc\n");
     let process_vm = ProcessVm::alloc();
-    ostd::arch::boot::pl011_puts_safe(b"[create] vm alloc\n");
+    ostd::arch::boot::pl011_puts_safe(b"[create] after vm alloc\n");
     let resource_limits = ResourceLimits::default();
     let nice = Nice::default();
     let oom_score_adj = 0;

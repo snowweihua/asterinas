@@ -16,12 +16,9 @@ PROJECT_NAME = "asterinas"
 def get_project_container_tag() -> str:
     try:
         remote = subprocess.check_output(
-            ["git", "remote", "get-url", "origin"], text=True, stderr=subprocess.DEVNULL
+            ["git", "config", "--get", "remote.origin.url"], text=True, stderr=subprocess.DEVNULL
         ).strip()
-        branch = subprocess.check_output(
-            ["git", "branch", "--show-current"], text=True, stderr=subprocess.DEVNULL
-        ).strip()
-        project_identity = f"{remote}:{branch}:{PROJECT_PATH}"
+        project_identity = f"remote:{remote}"
         hash_val = hashlib.sha256(project_identity.encode()).hexdigest()[:16]
         return f"opencode_project_{hash_val}"
     except Exception:

@@ -512,11 +512,19 @@ impl PageTable<KernelPtConfig> {
     /// This should be the only way to create the user page table, that is to
     /// duplicate the kernel page table with all the kernel mappings shared.
     pub(in crate::mm) fn create_user_page_table(&'static self) -> PageTable<UserPtConfig> {
+        #[cfg(target_arch = "aarch64")]
+        unsafe { crate::arch::boot::pl011_puts(b"[cupt] alloc new_root\n"); }
         let new_root = PageTableNode::alloc(PagingConsts::NR_LEVELS);
+        #[cfg(target_arch = "aarch64")]
+        unsafe { crate::arch::boot::pl011_puts(b"[cupt] lock root\n"); }
 
         let preempt_guard = disable_preempt();
         let mut root_node = self.root.borrow().lock(&preempt_guard);
+        #[cfg(target_arch = "aarch64")]
+        unsafe { crate::arch::boot::pl011_puts(b"[cupt] lock new\n"); }
         let mut new_node = new_root.borrow().lock(&preempt_guard);
+        #[cfg(target_arch = "aarch64")]
+        unsafe { crate::arch::boot::pl011_puts(b"[cupt] copy entries\n"); }
 
         const {
             assert!(!KernelPtConfig::TOP_LEVEL_CAN_UNMAP);
@@ -527,25 +535,27 @@ impl PageTable<KernelPtConfig> {
         }
 
         for i in KernelPtConfig::TOP_LEVEL_INDEX_RANGE {
-            let root_entry = root_node.entry(i);
-            let child = root_entry.to_ref();
-            let ChildRef::PageTable(pt) = child else {
-                panic!("The kernel page table doesn't contain shared nodes");
-            };
+            // SAFETY: The index is within the top-level range, so it is inside
+            // the page table node bound.
+            let pte = unsafe { root_node.read_pte(i) };
+            if !pte.is_present() {
+                continue;
+            }
 
             // We do not add additional reference count specifically for the
             // shared kernel page tables. It requires user page tables to
             // outlive the kernel page table, which is trivially true.
             // See also `<PageTablePageMeta as AnyFrameMeta>::on_drop`.
-            let pt_addr = pt.paddr();
-            let pte = PageTableEntry::new_pt(pt_addr);
             // SAFETY: The index is within the bounds and the PTE is at the
-            // correct paging level. However, neither it's a `UserPtConfig`
-            // child nor the node has the ownership of the child. It is
-            // still safe because `UserPtConfig::TOP_LEVEL_INDEX_RANGE`
-            // guarantees that the cursor won't access it.
+            // correct paging level. Although the PTE belongs to the kernel
+            // page table, it is safe to copy it into the user top-level
+            // entries because `UserPtConfig::TOP_LEVEL_INDEX_RANGE` does not
+            // overlap with `KernelPtConfig::TOP_LEVEL_INDEX_RANGE`, so user
+            // page table drop won't iterate over these entries.
             unsafe { new_node.write_pte(i, pte) };
         }
+        #[cfg(target_arch = "aarch64")]
+        unsafe { crate::arch::boot::pl011_puts(b"[cupt] copy done\n"); }
         drop(new_node);
 
         PageTable::<UserPtConfig> { root: new_root }
