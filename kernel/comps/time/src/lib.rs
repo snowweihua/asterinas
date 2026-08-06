@@ -25,12 +25,40 @@ pub static VDSO_DATA_HIGH_RES_UPDATE_FN: Once<Arc<dyn Fn(Instant, u64) + Sync + 
     Once::new();
 static RTC_DRIVER: Once<Arc<dyn Driver + Send + Sync>> = Once::new();
 
+/// Fallback RTC used on platforms (e.g. RPi3) without a supported hardware RTC.
+/// Reports the Unix epoch so monotonic time and clocksource initialization can
+/// proceed even when no real-time clock is available.
+struct FallbackRtc;
+
+impl Driver for FallbackRtc {
+    fn try_new() -> Option<Self>
+    where
+        Self: Sized,
+    {
+        Some(Self)
+    }
+
+    fn read_rtc(&self) -> SystemTime {
+        SystemTime {
+            year: 1970,
+            month: 1,
+            day: 1,
+            hour: 0,
+            minute: 0,
+            second: 0,
+            nanos: 0,
+        }
+    }
+}
+
 #[init_component]
 fn time_init() -> Result<(), ComponentInitError> {
     ostd::arch::boot::pl011_puts_safe(b"[cmp.time] init\n");
-    let rtc = rtc::init_rtc_driver().ok_or(ComponentInitError::Unknown)?;
+    let rtc = rtc::init_rtc_driver().unwrap_or_else(|| Arc::new(FallbackRtc));
+    ostd::arch::boot::pl011_puts_safe(b"[cmp.time] rtc done\n");
     RTC_DRIVER.call_once(|| rtc);
     tsc::init();
+    ostd::arch::boot::pl011_puts_safe(b"[cmp.time] tsc init done\n");
     Ok(())
 }
 

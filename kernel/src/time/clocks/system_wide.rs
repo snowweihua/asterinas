@@ -224,13 +224,17 @@ macro_rules! define_timer_managers {
 
         fn _init_system_wide_timer_managers() {
             $(
+                ostd::arch::boot::pl011_puts_safe(b"[tmgr] start loop\n");
                 let clock = paste! {[<$clock_id _INSTANCE>].get().unwrap().clone()};
+                ostd::arch::boot::pl011_puts_safe(b"[tmgr] clock cloned\n");
                 let timer_manager = TimerManager::new(clock);
+                ostd::arch::boot::pl011_puts_safe(b"[tmgr] manager created\n");
                 for cpu in ostd::cpu::all_cpus() {
                     paste! {
                         [<$clock_id _MANAGER>].get_on_cpu(cpu).call_once(|| timer_manager.clone());
                     }
                 }
+                ostd::arch::boot::pl011_puts_safe(b"[tmgr] call_once done\n");
                 let callback = || {
                     let preempt_guard = ostd::task::disable_preempt();
                     let cpu = preempt_guard.current_cpu();
@@ -238,7 +242,9 @@ macro_rules! define_timer_managers {
                         [<$clock_id _MANAGER>].get_on_cpu(cpu).get().unwrap().process_expired_timers();
                     }
                 };
+                ostd::arch::boot::pl011_puts_safe(b"[tmgr] before register_callback\n");
                 time::softirq::register_callback(callback);
+                ostd::arch::boot::pl011_puts_safe(b"[tmgr] after register_callback\n");
             )*
         }
     }
@@ -295,9 +301,13 @@ fn init_coarse_clock() {
 }
 
 pub(super) fn init() {
+    ostd::arch::boot::pl011_puts_safe(b"[clk] init_system_wide_clocks\n");
     init_system_wide_clocks();
+    ostd::arch::boot::pl011_puts_safe(b"[clk] init_system_wide_timer_managers\n");
     init_system_wide_timer_managers();
+    ostd::arch::boot::pl011_puts_safe(b"[clk] init_jiffies_clock_manager\n");
     init_jiffies_clock_manager();
+    ostd::arch::boot::pl011_puts_safe(b"[clk] init_coarse_clock\n");
     init_coarse_clock();
 }
 

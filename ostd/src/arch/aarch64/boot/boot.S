@@ -36,7 +36,10 @@ SPSR_EL2_VALUE = ( (7 << 6) | 0b0101 )
 /* SCTLR_EL1: mandatory RES1 bits + MMU disabled */
 SCTLR_RES1            = ( (3 << 28) | (3 << 22) | (1 << 20) | (1 << 11) | (1 << 8) | (1 << 7) )
 SCTLR_MMU_DISABLED    = SCTLR_RES1
-SCTLR_MMU_ENABLED     = ( SCTLR_RES1 | 1 )
+/* Enable MMU, data cache (C, bit 2) and instruction cache (I, bit 12).
+ * The Cortex-A53 on RPi3 does not support LDXR/STXR to non-cacheable
+ * memory; the exclusive monitor needs C and I enabled. */
+SCTLR_MMU_ENABLED     = ( SCTLR_RES1 | (1 << 12) | (1 << 2) | 1 )
 
 /* TCR_EL1: 48-bit VA both halves, 4 KB granule, inner-shareable,
  * write-back write-allocate caches, 32-bit IPA */
@@ -362,7 +365,14 @@ jump_to_main:
     dsb     ish
     isb
 
-    /* Enable MMU */
+    /* Clean+invalidate all data caches by set/way, then invalidate
+     * the instruction cache, before enabling C and I. */
+    bl      flush_dcache_all
+    ic      iallu
+    dsb     nsh
+    isb
+
+    /* Enable MMU and caches */
     ldr     x5, =SCTLR_MMU_ENABLED
     msr     sctlr_el1, x5
     isb
@@ -382,6 +392,59 @@ jump_to_main:
     /* Should never return */
 1:  wfe
     b       1b
+
+/* --------------------------------------------------------------------------
+ * Cache maintenance helpers.
+ * Clean+invalidate all data caches by set/way.  Does not use the stack.
+ * Clobbers x0-x7, x9-x16, x30 (saved/restored in x15).
+ * -------------------------------------------------------------------------- */
+flush_dcache_all:
+    dsb     sy
+    mrs     x10, clidr_el1
+    ubfx    x11, x10, #24, #3       /* x11 = LoC (Level of Coherency) */
+    cbz     x11, 5f
+    mov     x15, x30                 /* save lr */
+    mov     x16, xzr                 /* Cortex-A53 / QEMU virt have no FEAT_CCIDX */
+    mov     x0, xzr                  /* start at cache level 0 */
+
+2:  add     x12, x0, x0, lsl #1     /* x12 = 3 * level */
+    lsr     x12, x10, x12
+    and     x12, x12, #7            /* x12 = cache type for this level */
+    cmp     x12, #2
+    b.lt    4f                       /* skip if no data/unified cache here */
+    bl      flush_dcache_level
+4:  add     x0, x0, #1
+    cmp     x11, x0
+    b.gt    2b
+    mov     x0, xzr
+    msr     csselr_el1, x0          /* restore CSSSELR to level 0 */
+    dsb     sy
+    isb
+    mov     x30, x15                 /* restore lr */
+5:  ret
+
+flush_dcache_level:
+    lsl     x12, x0, #1
+    msr     csselr_el1, x12         /* select cache level */
+    isb
+    mrs     x6, ccsidr_el1
+    ubfx    x2, x6, #0, #3          /* x2 = log2(line size) - 4 */
+    ubfx    x3, x6, #3, #10         /* x3 = number of ways - 1 */
+    ubfx    x4, x6, #13, #15        /* x4 = number of sets - 1 */
+    add     x2, x2, #4              /* x2 = log2(line size) */
+    clz     w5, w3                  /* x5 = bit position of number of ways */
+
+6:  mov     x6, x3
+7:  lsl     x7, x6, x5
+    orr     x9, x12, x7             /* way + level */
+    lsl     x7, x4, x2
+    orr     x9, x9, x7               /* set + way + level */
+    dc      cisw, x9                 /* clean and invalidate by set/way */
+    subs    x6, x6, #1
+    b.ge    7b
+    subs    x4, x4, #1
+    b.ge    6b
+    ret
 
 /* --------------------------------------------------------------------------
  * Boot page tables (4 KB granule, 4 levels: PGD -> PUD -> PMD -> PTE)

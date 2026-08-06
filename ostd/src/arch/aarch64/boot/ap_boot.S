@@ -32,8 +32,15 @@ ap_boot_entry:
     dsb     ish
     isb
 
+    /* Clean+invalidate data caches and invalidate instruction cache
+     * before enabling C/I bits in SCTLR. */
+    bl      ap_flush_dcache_all
+    ic      iallu
+    dsb     nsh
+    isb
+
     /* Enable MMU with early boot configuration (same as BSP boot) */
-    /* SCTLR_EL1: mandatory RES1 bits + enable MMU */
+    /* SCTLR_EL1: mandatory RES1 bits + enable MMU and caches */
     ldr     x0, =SCTLR_MMU_ENABLED
     msr     sctlr_el1, x0
     isb
@@ -78,6 +85,55 @@ ap_boot_entry:
 .align 8
 __ap_boot_info_array_pointer:
     .quad   0
+
+/* Cache maintenance helpers for AP boot (duplicate of BSP version). */
+ap_flush_dcache_all:
+    dsb     sy
+    mrs     x10, clidr_el1
+    ubfx    x11, x10, #24, #3       /* x11 = LoC */
+    cbz     x11, 5f
+    mov     x15, x30                 /* save lr */
+    mov     x16, xzr                 /* no FEAT_CCIDX */
+    mov     x0, xzr
+
+2:  add     x12, x0, x0, lsl #1
+    lsr     x12, x10, x12
+    and     x12, x12, #7
+    cmp     x12, #2
+    b.lt    4f
+    bl      ap_flush_dcache_level
+4:  add     x0, x0, #1
+    cmp     x11, x0
+    b.gt    2b
+    mov     x0, xzr
+    msr     csselr_el1, x0
+    dsb     sy
+    isb
+    mov     x30, x15
+5:  ret
+
+ap_flush_dcache_level:
+    lsl     x12, x0, #1
+    msr     csselr_el1, x12
+    isb
+    mrs     x6, ccsidr_el1
+    ubfx    x2, x6, #0, #3
+    ubfx    x3, x6, #3, #10
+    ubfx    x4, x6, #13, #15
+    add     x2, x2, #4
+    clz     w5, w3
+
+6:  mov     x6, x3
+7:  lsl     x7, x6, x5
+    orr     x9, x12, x7
+    lsl     x7, x4, x2
+    orr     x9, x9, x7
+    dc      cisw, x9
+    subs    x6, x6, #1
+    b.ge    7b
+    subs    x4, x4, #1
+    b.ge    6b
+    ret
 
 /* Page table root pointer - filled by BSP before kicking APs */
 .global __boot_page_table_pointer

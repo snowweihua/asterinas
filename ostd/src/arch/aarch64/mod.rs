@@ -98,7 +98,23 @@ pub(crate) fn interrupts_ack(irq_number: usize) {
 
 /// Return the frequency of TSC. The unit is Hz.
 pub fn tsc_freq() -> u64 {
-    timer::get_timebase_freq()
+    let freq = timer::get_timebase_freq();
+    if freq != 0 {
+        return freq;
+    }
+
+    // RPi3 single-core bring-up skips `timer::init()` (it needs a GIC),
+    // so `TIMEBASE_FREQ` is never set. Read CNTFRQ_EL0 directly; the
+    // firmware initializes it to the system counter frequency.
+    let cntfrq: u64;
+    unsafe {
+        core::arch::asm!(
+            "mrs {0}, cntfrq_el0",
+            out(reg) cntfrq,
+            options(nostack, nomem, preserves_flags)
+        );
+    }
+    cntfrq
 }
 
 /// Reads the current value of the processor’s time-stamp counter (TSC).

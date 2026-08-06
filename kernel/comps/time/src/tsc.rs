@@ -24,15 +24,21 @@ const MAX_DELAY_SECS: u64 = 100;
 
 /// Init tsc clocksource module.
 pub(super) fn init() {
+    ostd::arch::boot::pl011_puts_safe(b"[tsc] init start\n");
     init_clock();
+    ostd::arch::boot::pl011_puts_safe(b"[tsc] clock inited\n");
     calibrate();
+    ostd::arch::boot::pl011_puts_safe(b"[tsc] calibrated\n");
     init_timer();
+    ostd::arch::boot::pl011_puts_safe(b"[tsc] timer registered\n");
 }
 
 fn init_clock() {
     CLOCK.call_once(|| {
+        let freq = tsc_freq();
+        ostd::arch::boot::pl011_puts_safe(b"[tsc] freq computed\n");
         Arc::new(ClockSource::new(
-            tsc_freq(),
+            freq,
             MAX_DELAY_SECS,
             Arc::new(read_tsc),
         ))
@@ -41,10 +47,14 @@ fn init_clock() {
 
 /// Calibrate the TSC and system time based on the RTC time.
 fn calibrate() {
+    ostd::arch::boot::pl011_puts_safe(b"[tsc] calibrate start\n");
     let clock = CLOCK.get().unwrap();
     let cycles = clock.read_cycles();
     clock.calibrate(cycles);
-    START_TIME.call_once(crate::read);
+    ostd::arch::boot::pl011_puts_safe(b"[tsc] read start time\n");
+    let start = crate::read();
+    ostd::arch::boot::pl011_puts_safe(b"[tsc] start time read\n");
+    START_TIME.call_once(|| start);
 }
 
 /// Read an `Instant` of tsc clocksource.
