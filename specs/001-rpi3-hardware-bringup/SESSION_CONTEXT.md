@@ -90,7 +90,7 @@ The project uses plain load/store or boot-safe single-core helpers only at runti
 
 - Boot reaches `[cmp.systree] init` with active frame allocation deterministically on the committed image (`1698c702`).
 - All six bootstrap components are discovered, sorted, and dispatched (block, console, input, PCI, softirq, systree).
-- The hang is inside systree init's heap/frame allocation path: cache hits complete, two buddy `[split] done` markers complete, then silence (no `[EL1-SYNC]`).
+- On the current baseline (`9ad49c3c`), the hang is inside the first component's frame-cache refill: markers `[cache.a]` through `[CA.c] pop_front miss, calling pools::alloc` print, then no further output (no `[EL1-SYNC]`).
 
 ## Root Cause: 16-Byte Register Returns Corrupt x30
 
@@ -120,7 +120,8 @@ The project uses plain load/store or boot-safe single-core helpers only at runti
 - The Windows relay now supports isolated MCP subprocesses per client, and the WSL TCP client forwards the full MCP handshake; live power/serial calls work from this session.
 - Commit `e137f8c1` routes the network DMA pool through RPi3-safe `arc_clone`, `weak_clone`, and `arc_new_cyclic` paths, with a target-specific layout compensation. Hardware reached component dispatch after the allocator path; full network/logger completion remains unverified.
 - A prior image without the `arc_new_cyclic` change reached `DmaPool::new` and faulted at `ldxr` in the `Arc::new_cyclic` strong-count path (`ELR=ffff00000011a8b0`).
-- The latest image with `arc_new_cyclic` no longer reproduced that abort but stopped later during component registry dispatch after `[mac.I] item`; temporary UART probes used to locate boundaries were removed.
+- The latest image with `arc_new_cyclic` no longer reproduced that abort but stopped later during a frame-cache refill inside `pools::alloc` (last marker `[CA.c] pop_front miss, calling pools::alloc`).
+- The failure is after `match_and_call` dispatches the first bootstrap component and the allocator begins refilling the CPU-local cache.
 - Unrelated `knowledge/` working-tree edits remain untouched.
 - Tried and REVERTED (each regressed the boundary earlier, back to first heap allocation in `[mac.3]`):
   - `#[inline(always)]` on `get_global_frame_allocator`/`get_global_heap_allocator`
@@ -157,9 +158,11 @@ The project uses plain load/store or boot-safe single-core helpers only at runti
 ## Next Investigation
 
 - Eliminate the remaining 16-byte register returns in the heap/frame path:
-  `MetaSlot::get_from_unused`, `Frame::from_unused`, `UniqueFrame::from_unused`,
-  and the public `Result`-returning wrappers, using the single-register
-  `*const ()`/`Paddr` sentinel pattern.
+  `MetaSlot::get_slot` (the `Result<&MetaSlot, GetFrameError>` helper called by
+  `get_from_unused`/`get_from_in_use`), `MetaSlot::get_from_in_use`,
+  `Frame::from_unused`, `UniqueFrame::from_unused`, and the public
+  `Result`-returning wrappers, using the single-register `*const ()`/`Paddr`
+  sentinel pattern.
 - Reach `[cmp.logger] init` and verify that logger initialization completes
   without the former `spin::Once` abort.
 - Keep changes scoped to runtime-confirmed RPi3 failures; do not globally replace

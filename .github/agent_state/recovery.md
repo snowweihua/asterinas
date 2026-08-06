@@ -1,69 +1,57 @@
-# RPi3 Boot Debug Recovery Notes (2026-07-14)
+# RPi3 Boot Debug Recovery Notes (2026-07-15)
 
 ## Current Problem
-Kernel hangs in `mm::kspace::init_kernel_page_table(meta_pages)` when trying to allocate a frame for a new kernel page table.
+Kernel hangs during the first component's frame-cache refill, inside `osdk_frame_allocator::pools::alloc`.
 
 ## Hang Location (Pinpointed)
-1. `init_kernel_page_table()` calls `PageTable::new_kernel_page_table()`
-2. `new_kernel_page_table()` calls `PageTableNode::alloc(level)`
-3. `PageTableNode::alloc()` calls `FrameAllocOptions::new().alloc_frame_with(meta)`
-4. `alloc_frame_with()` calls `get_global_frame_allocator().alloc(layout)`
-5. The hang happens INSIDE `get_global_frame_allocator()` - it never reaches `FrameAllocator::alloc()`
+1. `match_and_call` dispatches a bootstrap component (e.g. block/console/input/PCI/softirq/systree).
+2. The component init path calls `FrameAllocOptions::new().alloc_frame_with(meta)`.
+3. `alloc_frame_with()` calls `get_global_frame_allocator().alloc(layout)`.
+4. The concrete `FrameAllocator::alloc()` routes through `cache::alloc` and `CacheArray::alloc`.
+5. `CacheArray::alloc()` cache miss prints `[CA.c] pop_front miss, calling pools::alloc` and calls `pools::alloc()`.
+6. No further markers appear (no `[CA.d]`, no `[EL1-SYNC]`, no `[spin.L]`); execution stops inside `pools::alloc`.
 
 ## What's Working
-- `spin::Once` → `SimpleOnce` replacement complete
-- `Vec::with_capacity(0)` works (no actual allocation)
-- Empty `String::new()` works (no allocation)
-- Frame allocator was successfully initialized earlier
-- The early frame allocator works for boot allocations
+- All boot-time frame/heap setup through `allocator::init`, `kspace::init`, and `activate_kernel_page_table`.
+- Static component discovery and sorting (`[cmp.*]` dispatch sequence).
+- CPU-local cache fast path (`[CA.b] pop_front hit`) for at least the first few frames.
 
 ## What's Failing
-- Frame allocation through `FrameAllocator::alloc()` in the global frame allocator
-- The hang is INSIDE `get_global_frame_allocator()` itself - before reaching `FrameAllocator::alloc()`
-- The `log::info!()` added to `FrameAllocator::alloc()` was NEVER printed
+- `pools::alloc()` during the first cache refill after component dispatch.
+- The failure is downstream of the previous `get_global_frame_allocator()`/early-alloc suspicion; the global allocator reference is resolved and the allocator body is executing.
 
-## Key Serial Output (last successful markers):
+## Key Serial Output (last successful markers)
 ```
-[kspace] W: start
-[pt] 0: start
-[ptnode] alloc: start
-[ptnode] alloc: meta created
-[falloc] start
-[falloc] layout created
-[falloc] calling global allocator
+[cache.a] start
+[cache.b] before CACHE.get_with
+[cache.c] after CACHE.get_with
+[cache.d] before borrow_mut
+[cache.e] after borrow_mut
+[CA.a] start
+[CA.b] pop_front hit
+[CA.a] start
+[CA.b] pop_front hit
+...
+[CA.a] start
+[CA.c] pop_front miss, calling pools::alloc
 ```
-(Hangs after "calling global allocator" - INSIDE `get_global_frame_allocator()`)
 
 ## Suspected Root Cause
-`get_global_frame_allocator()` does:
-```rust
-unsafe { __GLOBAL_FRAME_ALLOCATOR_REF }
-```
+A 16-byte aggregate function return on the allocator hot path corrupts x30 and causes the eventual `ret` from `pools::alloc` (or one of its callees) to land in `.eh_frame`/invalid memory, producing a silent SError/abort routed to EL3.
 
-Where `__GLOBAL_FRAME_ALLOCATOR_REF` is a `static` created by the `#[global_frame_allocator]` macro:
-```rust
-#[no_mangle]
-static __GLOBAL_FRAME_ALLOCATOR_REF: &'static dyn GlobalFrameAllocator = &#static_name;
-```
+Candidate 16-byte returns on this path:
+- `MetaSlot::get_slot()` returns `Result<&'static MetaSlot, GetFrameError>` (16 bytes, currently `#[inline(never)]`).
+- `MetaSlot::get_from_in_use()` returns `Result<*const Self, GetFrameError>` (16 bytes).
+- Public `Frame::from_unused`/`UniqueFrame::from_unused` `Result` wrappers (not hit in this exact path but latent).
 
-The hang is likely due to:
-1. The `__GLOBAL_FRAME_ALLOCATOR_REF` static being in an unmapped memory region
-2. The reference value being invalid/null
-3. Some linker script issue placing the static incorrectly
+## Current Experiment
+- Mark `MetaSlot::get_slot` as `#[inline(always)]` so its `Result` is folded into callers and its standalone `ret` disappears.
+- Rebuild, deploy, and verify whether the boot boundary moves.
 
-## Files Changed
-- `ostd/src/boot/mod.rs` - SimpleOnce implementation + debug markers
-- `ostd/src/arch/aarch64/cpu/extension.rs` - SimpleOnce
-- `ostd/src/cpu/local/mod.rs` - SimpleOnce for CPU_LOCAL_STORAGES
-- `ostd/src/mm/frame/allocator.rs` - Fixed boot_info() → EARLY_INFO.get() + debug markers
-- `ostd/src/mm/frame/meta.rs` - Fixed boot_info() → EARLY_INFO.get()
-- `ostd/src/mm/kspace/mod.rs` - Added debug markers
-- `ostd/src/mm/page_table/mod.rs` - Added debug markers
-- `ostd/src/mm/page_table/node/mod.rs` - Added debug markers
-- `osdk/deps/frame-allocator/src/lib.rs` - Added debug markers
+## Files Changed (in this experiment)
+- `ostd/src/mm/frame/meta.rs` — `get_slot` from `#[inline(never)]` to `#[inline(always)]`.
 
 ## Next Debug Steps
-1. Check if `__GLOBAL_FRAME_ALLOCATOR_REF` is accessible (add marker before the static load)
-2. Check the linker script for the static's section placement
-3. Consider if the global frame allocator is being referenced before it's initialized
-4. Try bypassing the global frame allocator and using the early allocator directly
+1. Verify whether inlining `get_slot` moves the hang.
+2. If the hang moves, continue eliminating remaining 16-byte returns (`get_from_in_use`, `Frame::from_unused`, `UniqueFrame::from_unused`, `alloc_frame_with`).
+3. If the hang persists at `[CA.c]`, use the `set.rs` nop compensation block to shift `pools::alloc`/`alloc_chunk` `ret` alignment.
