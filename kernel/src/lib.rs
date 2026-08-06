@@ -147,13 +147,20 @@ fn init_on_each_cpu() {
 }
 
 fn init_in_first_kthread(fs_resolver: &FsResolver) {
+    ostd::arch::boot::pl011_puts_safe(b"[ifk] component::init_all(Kthread)\n");
     component::init_all(InitStage::Kthread, component::parse_metadata!()).unwrap();
+    ostd::arch::boot::pl011_puts_safe(b"[ifk] after components\n");
     // Work queue should be initialized before interrupt is enabled,
     // in case any irq handler uses work queue as bottom half
+    ostd::arch::boot::pl011_puts_safe(b"[ifk] before work_queue\n");
     thread::work_queue::init_in_first_kthread();
+    ostd::arch::boot::pl011_puts_safe(b"[ifk] before net\n");
     net::init_in_first_kthread();
+    ostd::arch::boot::pl011_puts_safe(b"[ifk] before fs\n");
     fs::init_in_first_kthread(fs_resolver);
+    ostd::arch::boot::pl011_puts_safe(b"[ifk] before ipc\n");
     ipc::init_in_first_kthread();
+    ostd::arch::boot::pl011_puts_safe(b"[ifk] done\n");
     #[cfg(any(target_arch = "x86_64", target_arch = "riscv64"))]
     vdso::init_in_first_kthread();
 }
@@ -189,18 +196,33 @@ fn ap_init() {
 fn first_kthread() {
     // TODO: After introducing the mount namespace, use an initial mount namespace to create
     // the `FsResolver`, and the initial mount namespace should be passed to the first process.
+    ostd::arch::boot::pl011_puts_safe(b"[fk] start\n");
     let fs_resolver = FsResolver::new();
+    ostd::arch::boot::pl011_puts_safe(b"[fk] before init_in_first_kthread\n");
     init_in_first_kthread(&fs_resolver);
+    ostd::arch::boot::pl011_puts_safe(b"[fk] after init_in_first_kthread\n");
 
+    ostd::arch::boot::pl011_puts_safe(b"[fk] before print_banner\n");
     print_banner();
+    ostd::arch::boot::pl011_puts_safe(b"[fk] after print_banner\n");
 
+    ostd::arch::boot::pl011_puts_safe(b"[fk] before karg\n");
     let karg: KCmdlineArg = boot_info().kernel_cmdline.into();
+    ostd::arch::boot::pl011_puts_safe(b"[fk] karg parsed\n");
+    ostd::arch::boot::pl011_puts_safe(b"[fk] before argv vec\n");
+    let argv = karg.get_initproc_argv().to_vec();
+    ostd::arch::boot::pl011_puts_safe(b"[fk] argv done\n");
+    ostd::arch::boot::pl011_puts_safe(b"[fk] before envp vec\n");
+    let envp = karg.get_initproc_envp().to_vec();
+    ostd::arch::boot::pl011_puts_safe(b"[fk] envp done\n");
+    ostd::arch::boot::pl011_puts_safe(b"[fk] before spawn_init_process\n");
     let initproc = spawn_init_process(
         karg.get_initproc_path().unwrap(),
-        karg.get_initproc_argv().to_vec(),
-        karg.get_initproc_envp().to_vec(),
+        argv,
+        envp,
     )
     .expect("Run init process failed.");
+    ostd::arch::boot::pl011_puts_safe(b"[fk] spawn_init_process done\n");
 
     // Wait till initproc become zombie.
     while !initproc.status().is_zombie() {
