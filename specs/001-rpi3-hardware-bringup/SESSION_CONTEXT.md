@@ -115,9 +115,12 @@ The project uses plain load/store or boot-safe single-core helpers only at runti
 
 ## Checkpoint (latest session)
 
-- The frame initialization sentinel change is committed as `0a0d3122`.
-- `cargo osdk build --release --target-arch aarch64 --boot-method qemu-direct --scheme aarch64-rpi3` completed successfully in the configured Docker build, and `/tmp/asterina.img` was deployed to `/mnt/d/pi_sd/asterina.img`.
-- Physical verification is blocked: this session's MCP registry exposed no build, power, or serial servers; the configured TCP power/serial bridges accepted connections and local handshakes but did not return `tools/call` or `tools/list` responses. No power cycle or boot result is claimed.
+- The frame initialization sentinel experiment `0a0d3122` was reverted as `8c602480` after the physical image regressed to the managed cursor boundary.
+- The configured Docker AArch64 build, ELF conversion, and deployment to `/mnt/d/pi_sd/asterina.img` are working.
+- The Windows relay now supports isolated MCP subprocesses per client, and the WSL TCP client forwards the full MCP handshake; live power/serial calls work from this session.
+- Commit `e137f8c1` routes the network DMA pool through RPi3-safe `arc_clone`, `weak_clone`, and `arc_new_cyclic` paths, with a target-specific layout compensation. Hardware reached component dispatch after the allocator path; full network/logger completion remains unverified.
+- A prior image without the `arc_new_cyclic` change reached `DmaPool::new` and faulted at `ldxr` in the `Arc::new_cyclic` strong-count path (`ELR=ffff00000011a8b0`).
+- The latest image with `arc_new_cyclic` no longer reproduced that abort but stopped later during component registry dispatch after `[mac.I] item`; temporary UART probes used to locate boundaries were removed.
 - Unrelated `knowledge/` working-tree edits remain untouched.
 - Tried and REVERTED (each regressed the boundary earlier, back to first heap allocation in `[mac.3]`):
   - `#[inline(always)]` on `get_global_frame_allocator`/`get_global_heap_allocator`
