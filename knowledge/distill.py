@@ -78,6 +78,17 @@ def call_llm(prompt: str, system_prompt: str, retries: int = None) -> Optional[s
     return None
 
 
+def extract_json(text: str) -> str:
+    text = re.sub(r"<thinking>[\s\S]*?</thinking>", "", text)
+    text = re.sub(r"<think>[\s\S]*?</think>", "", text)
+    text = text.strip()
+    start = text.find("[")
+    end = text.rfind("]") + 1
+    if start == -1 or end == 0:
+        return ""
+    return text[start:end]
+
+
 def distill_chunk(chunk_data: dict) -> list:
     content = chunk_data.get("content", "")
     if not content or len(content.strip()) < 50:
@@ -86,26 +97,23 @@ def distill_chunk(chunk_data: dict) -> list:
     prompt = DISTILL_USER_PROMPT.format(content=content[:3000])
     response = call_llm(prompt, DISTILL_SYSTEM_PROMPT)
     if not response:
+        print(f"[distill] WARN: LLM returned None/empty for {chunk_data.get('chunk_id')}", flush=True)
         return []
-
-    def extract_json(text: str) -> str:
-        text = re.sub(r"<think>[\s\S]*?</think>", "", text)
-        start = text.find("[")
-        end = text.rfind("]") + 1
-        if start == -1 or end == 0:
-            return ""
-        return text[start:end]
+    if len(response) < 50:
+        print(f"[distill] WARN: LLM short response for {chunk_data.get('chunk_id')}: {repr(response[:100])}", flush=True)
 
     try:
         json_str = extract_json(response)
         if not json_str:
+            print(f"[distill] WARN: empty json_str for {chunk_data.get('chunk_id')}, response[:100]={response[:100]}", flush=True)
             return []
         items = json.loads(json_str)
         if not isinstance(items, list):
+            print(f"[distill] WARN: non-list response for {chunk_data.get('chunk_id')}: {type(items)}", flush=True)
             return []
         return items
     except json.JSONDecodeError as e:
-        print(f"[distill] JSON parse error: {e}, response: {response[:200]}", flush=True)
+        print(f"[distill] JSON parse error: {e}, response[:200]={response[:200]}", flush=True)
         return []
 
 
@@ -116,7 +124,7 @@ def distill_all(batch_size: int = None):
     init_db()
     conn = get_db_connection()
     cur = conn.cursor()
-    cur.execute("SELECT chunk_id, source, session_id, topic_hint, content FROM chunks")
+    cur.execute("SELECT chunk_id, source, session_id, topic_hint, content FROM chunks WHERE distilled = 0")
     rows = cur.fetchall()
     conn.close()
 
@@ -141,9 +149,9 @@ def distill_all(batch_size: int = None):
             continue
 
         from .schema import insert_memory
-        for item in items:
+        for j, item in enumerate(items):
             try:
-                mem_id = f"MEM-{date_str.replace('-','')}-{chunk_id[-8:]}"
+                mem_id = f"MEM-{date_str.replace('-','')}-{chunk_id[-8:]}_{j}"
                 mem = Memory(
                     id=mem_id,
                     title=item.get("title", "Untitled")[:100],
@@ -164,6 +172,12 @@ def distill_all(batch_size: int = None):
             except Exception as e:
                 print(f"[distill] Error creating memory: {e}", flush=True)
                 continue
+
+        conn2 = get_db_connection()
+        cur2 = conn2.cursor()
+        cur2.execute("UPDATE chunks SET distilled = 1 WHERE chunk_id = ?", (chunk_id,))
+        conn2.commit()
+        conn2.close()
 
         if (i + 1) % batch_size == 0:
             print(f"[distill] Processed {i + 1}/{len(rows)} chunks, {memories_created} memories created", flush=True)

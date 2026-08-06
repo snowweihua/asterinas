@@ -124,9 +124,15 @@ def init_db():
             topic_hint TEXT,
             content TEXT,
             token_count INTEGER,
-            created TEXT DEFAULT ''
+            created TEXT DEFAULT '',
+            distilled INTEGER DEFAULT 0
         )
     """)
+
+    try:
+        cur.execute("ALTER TABLE chunks ADD COLUMN distilled INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
 
     cur.execute("""
         CREATE TABLE IF NOT EXISTS source_stats (

@@ -1,5 +1,6 @@
 import json
 import pathlib
+import datetime
 
 from . import config
 
@@ -36,35 +37,18 @@ def parse_devin_session(path: pathlib.Path) -> dict:
     if isinstance(data, dict):
         ts = data.get("created_at")
         if ts:
-            import datetime
             date = datetime.datetime.fromtimestamp(ts).strftime("%Y-%m-%d")
 
-        backend = data.get("backend_type", "devin")
-        model = data.get("model", "")
-        title = data.get("title", "")
-
-        cogs = data.get("cogs_json", [])
-        if isinstance(cogs, list):
-            for cog in cogs:
-                for msg in cog.get("messages", []):
-                    role = msg.get("role", "assistant")
-                    content = msg.get("content", "")
-                    if content:
-                        messages.append({
-                            "role": role,
-                            "content": content,
-                            "tool_calls": [],
-                            "timestamp": None
-                        })
-
         for msg in data.get("messages", []):
-            role = msg.get("role", "assistant")
-            content = msg.get("content", "")
-            if content:
+            chat = msg.get("chat_message", {})
+            if not isinstance(chat, dict):
+                continue
+            role = chat.get("role", "assistant")
+            content = chat.get("content", "")
+            if content and str(content).strip():
                 messages.append({
                     "role": role,
                     "content": content,
-                    "tool_calls": [],
                     "timestamp": None
                 })
 

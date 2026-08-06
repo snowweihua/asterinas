@@ -30,8 +30,18 @@ MINIMAX_MODEL = "MiniMax-M2.7"
 F0G_BASE_URL = "https://f0g.dev:8142/v1"
 F0G_MODEL = "gpt-5.5"
 
+def _load_minimax_key() -> str:
+    auth_path = pathlib.Path.home() / ".local" / "share" / "opencode" / "auth.json"
+    try:
+        with open(auth_path) as f:
+            data = json.load(f)
+        return data.get("minimax-cn-coding-plan", {}).get("key", "") or os.environ.get("MINIMAX_API_KEY", "")
+    except Exception:
+        return os.environ.get("MINIMAX_API_KEY", "")
+
+
 def get_llm_config():
-    minimax_key = os.environ.get("MINIMAX_API_KEY")
+    minimax_key = _load_minimax_key()
     if minimax_key:
         return {"base_url": MINIMAX_BASE_URL, "model": MINIMAX_MODEL, "api_key": minimax_key}
     f0g_key = os.environ.get("F0G_API_KEY") or os.environ.get("OPENAI_API_KEY")

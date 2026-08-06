@@ -1,6 +1,5 @@
 import json
 import pathlib
-from typing import Iterator
 
 from . import config
 
@@ -26,36 +25,49 @@ def parse_opencode_session(path: pathlib.Path) -> dict:
                 continue
 
             msg_type = entry.get("type", "")
-            data = entry.get("data", {})
-
-            if msg_type == "user":
-                content = data.get("input", "")
-                role = "user"
-                tool_calls = []
-            elif msg_type == "assistant":
-                content = ""
-                tool_calls = []
-                if isinstance(data, dict):
-                    content = data.get("content", "")
-                    for tc in data.get("toolRequests", []):
-                        tool_calls.append({
-                            "tool_name": tc.get("name", ""),
-                            "tool_args": tc.get("arguments", "")
-                        })
-                role = "assistant"
-            else:
-                continue
-
             timestamp = entry.get("timestamp") or entry.get("createdAt")
             if not date and timestamp:
                 date = timestamp[:10]
 
-            messages.append({
-                "role": role,
-                "content": content,
-                "tool_calls": tool_calls,
-                "timestamp": timestamp
-            })
+            if msg_type == "user":
+                content = entry.get("content", "")
+                messages.append({
+                    "role": "user",
+                    "content": content,
+                    "timestamp": timestamp
+                })
+            elif msg_type == "tool_use":
+                tool_name = entry.get("tool_name", "")
+                tool_input = entry.get("tool_input", {})
+                content = f"[tool: {tool_name}] {json.dumps(tool_input)}"
+                messages.append({
+                    "role": "assistant",
+                    "content": content,
+                    "timestamp": timestamp
+                })
+            elif msg_type == "tool_result":
+                tool_name = entry.get("tool_name", "")
+                tool_output = entry.get("tool_output", {})
+                if isinstance(tool_output, dict):
+                    output_str = json.dumps(tool_output)
+                else:
+                    output_str = str(tool_output)
+                content = f"[result: {tool_name}] {output_str}"
+                messages.append({
+                    "role": "assistant",
+                    "content": content,
+                    "timestamp": timestamp
+                })
+            elif msg_type == "assistant":
+                data = entry.get("data", {})
+                if isinstance(data, dict):
+                    content = data.get("content", "")
+                    if content:
+                        messages.append({
+                            "role": "assistant",
+                            "content": content,
+                            "timestamp": timestamp
+                        })
 
     return {
         "session_id": session_id,
