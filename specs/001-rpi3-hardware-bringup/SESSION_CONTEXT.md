@@ -5,14 +5,16 @@ This file records durable findings only. Temporary probe chronology and supersed
 ## Current Status
 
 - Target: Raspberry Pi 3 Model B, AArch64, single-core runtime.
-- Boot reaches kernel component initialization on the physical board.
-- Verified through the latest clean image:
+- Boot reaches the init process shell (`/ #`) on the physical board.
+- Verified through the latest image:
   - metadata mapping completes;
   - kernel page-table activation completes;
   - all 12 static component records are discovered and sorted;
-  - bootstrap components reach `[cmp.systree] init`.
-- The latest clean image stops intermittently during a later allocator refill before the logger component. No new exception was observed in those runs.
-- Logger post-fix hardware verification is therefore partial.
+  - bootstrap components initialize;
+  - `init_in_first_process` completes device-node creation and `ramfs.mknod`;
+  - the first process runs `/bin/sh` and prints a `/ #` prompt.
+- User-space exceptions and `SA_RESTORER` warnings remain; serial input to the
+  shell prompt has not been confirmed yet.
 
 ## Durable RPi3 Constraints
 
@@ -79,6 +81,20 @@ The project uses plain load/store or boot-safe single-core helpers only at runti
 - `ComponentInfo` now stores `&'static str` and registry matching uses borrowed path slices.
 - Hardware subsequently completed metadata parsing, registry matching, sorting, and component calls through block, console, input, PCI, softirq, and systree.
 
+### DRAM Base Address
+
+- `board::dram_base()` originally re-parsed the device tree on every call via
+  `fdt.memory().regions().next()`.
+- The `Fdt` object holds the DTB pointer from early boot, which is a low
+  identity-mapped virtual address. After the init process activates its own
+  user page table (`TTBR0`), that low VA is no longer valid.
+- Accessing the cached `Fdt` from a later kernel path (e.g. `MetaSlot::get_slot`
+  during heap allocation) then produced a silent synchronous abort and hung the
+  init process inside `Frame::init_unused`.
+- The DRAM base is now read once and cached in an `AtomicUsize`; subsequent
+  callers avoid the FDT walk. Hardware confirms the boot proceeds through
+  `init_in_first_process`, `ramfs.mknod`, and reaches the `/bin/sh` prompt.
+
 ### Logger Backend
 
 - The original logger failure was captured as an EL1 synchronous abort in `spin::once::Once::try_call_once_slow`.
@@ -88,9 +104,13 @@ The project uses plain load/store or boot-safe single-core helpers only at runti
 
 ## Latest Hardware Evidence
 
-- Boot reaches `[cmp.systree] init` with active frame allocation deterministically on the committed image (`1698c702`).
-- All six bootstrap components are discovered, sorted, and dispatched (block, console, input, PCI, softirq, systree).
-- On the current baseline (`9ad49c3c`), the hang is inside the first component's frame-cache refill: markers `[cache.a]` through `[CA.c] pop_front miss, calling pools::alloc` print, then no further output (no `[EL1-SYNC]`).
+- Boot reaches the `/bin/sh` prompt (`/ #`) on the current image (`00001414`).
+- The init process executes `SYS_OPENAT`, `SYS_READ`, `SYS_MMAP`, `SYS_IOCTL`, and
+  other syscalls; some user-space exceptions (`0x92000047`, `0x82000007`) are
+  reported and handled without halting the shell.
+- `dram_base()` caching was verified by toggling: restoring the uncached FDT walk
+  causes the boot to hang at `MetaSlot::get_slot`; the cached version reaches the
+  shell prompt.
 
 ## Root Cause: 16-Byte Register Returns Corrupt x30
 
@@ -157,13 +177,13 @@ The project uses plain load/store or boot-safe single-core helpers only at runti
 
 ## Next Investigation
 
-- Eliminate the remaining 16-byte register returns in the heap/frame path:
-  `MetaSlot::get_slot` (the `Result<&MetaSlot, GetFrameError>` helper called by
-  `get_from_unused`/`get_from_in_use`), `MetaSlot::get_from_in_use`,
-  `Frame::from_unused`, `UniqueFrame::from_unused`, and the public
-  `Result`-returning wrappers, using the single-register `*const ()`/`Paddr`
-  sentinel pattern.
-- Reach `[cmp.logger] init` and verify that logger initialization completes
-  without the former `spin::Once` abort.
+- Confirm serial input reaches the `/bin/sh` prompt; if not, verify the RPi3
+  mini-UART RX path or the `/dev/console` wiring used by the initramfs shell.
+- Investigate and resolve remaining user-space exceptions (`0x92000047`,
+  `0x82000007`) and the `SA_RESTORER fallback mechanism not implemented for this
+  architecture` warning.
+- Re-evaluate remaining 16-byte register returns in the heap/frame path if new
+  hangs appear; keep changes scoped to runtime-confirmed RPi3 failures.
+- Clean up temporary UART/heap/fs diagnostics once the shell is interactive.
 - Keep changes scoped to runtime-confirmed RPi3 failures; do not globally replace
   remaining `spin::Once` uses without hardware evidence.
