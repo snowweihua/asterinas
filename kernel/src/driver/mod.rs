@@ -56,16 +56,8 @@ fn poll_uart_input() {
     // the polling below still drains the FIFO.
     serial::reenable_rx_irq();
 
-    static POLL_CNT: core::sync::atomic::AtomicUsize =
-        core::sync::atomic::AtomicUsize::new(0);
-    let cnt = POLL_CNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-    if cnt % 1000 == 0 {
-        ostd::console::early_print(format_args!("[poll_uart] alive\n"));
-    }
-
     while serial::has_data() {
         let byte = serial::receive();
-        ostd::console::early_print(format_args!("[poll_uart] byte={:#x}\n", byte));
         if let Some(callback) = UART_CALLBACK.get() {
             let ch = [byte];
             let reader = VmReader::<Infallible>::from(ch.as_slice());

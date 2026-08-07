@@ -265,7 +265,6 @@ pub fn acknowledge_interrupt() -> usize {
 
     if pending != 0 {
         // Unexpected ARM-local interrupt (PMU, mailbox, etc.).
-        crate::console::early_print(format_args!("[irq] unexpected CORE0_IRQ_SOURCE\n"));
         return 0;
     }
 

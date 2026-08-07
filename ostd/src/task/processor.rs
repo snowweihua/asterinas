@@ -61,8 +61,6 @@ pub(super) fn switch_to_task(next_task: Arc<Task>) {
     // We must disable IRQs when switching, see `after_switching_to`.
     core::mem::forget(irq_guard);
 
-    crate::arch::boot::pl011_puts_safe(b"[switch_to_task] before context switch\n");
-
     let current_task_ctx_ptr = if !current_task_ptr.is_null() {
         // SAFETY: The pointer is set by `switch_to_task` and is guaranteed to be
         // built with `Arc::into_raw`. It will only be dropped as a previous task,
@@ -71,7 +69,6 @@ pub(super) fn switch_to_task(next_task: Arc<Task>) {
         // Until `after_switching_to`, the task's context is alive and can be exclusively used.
         current_task.ctx.get()
     } else {
-        crate::arch::boot::pl011_puts_safe(b"[switch_to_task] first context switch\n");
         // SAFETY:
         // 1. We have exclusive access to the next context (see above).
         // 2. The next context is valid (because it is either correctly initialized or written by a
@@ -85,7 +82,6 @@ pub(super) fn switch_to_task(next_task: Arc<Task>) {
     // 1. We have exclusive access to both the current context and the next context (see above).
     // 2. The next context is valid (because it is either correctly initialized or written by a
     //    previous `context_switch`).
-    crate::arch::boot::pl011_puts_safe(b"[switch_to_task] context switch\n");
     unsafe {
         context_switch(next_task_ctx_ptr, current_task_ctx_ptr);
     }
@@ -141,12 +137,8 @@ pub(super) unsafe fn after_switching_to() {
         handler();
     }
 
-    crate::console::early_print(format_args!("[after_switch] handler done\n"));
-
     // See `switch_to_task`, where we forgot an IRQ guard.
-    crate::console::early_print(format_args!("[after_switch] before enable_local\n"));
     crate::arch::irq::enable_local();
-    crate::console::early_print(format_args!("[after_switch] after enable_local\n"));
 
     // It was forgotten using `Arc::into_raw` at `switch_to_task`.
     // We drop it after enabling the IRQ in case dropping user-provided
