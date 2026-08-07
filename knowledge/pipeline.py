@@ -16,13 +16,14 @@ from . import publish
 
 def cmd_ingest(args):
     sources = args.sources.split(",") if args.sources else ["opencode", "copilot", "devin", "docs"]
+    incremental = getattr(args, "incremental", False)
     total = 0
     if "opencode" in sources:
         total += opencode_parser.ingest()
     if "copilot" in sources:
         total += copilot_parser.ingest()
     if "devin" in sources:
-        total += devin_parser.ingest()
+        total += devin_parser.ingest(incremental=incremental)
     if "docs" in sources:
         total += docs_parser.ingest()
     print(f"[pipeline] Ingest complete: {total} sessions processed")
@@ -107,6 +108,8 @@ def main():
     p_ingest = sub.add_parser("ingest", help="Ingest raw sources")
     p_ingest.add_argument("--sources", default="opencode,copilot,devin,docs",
                           help="Comma-separated sources (default: all)")
+    p_ingest.add_argument("--incremental", action="store_true",
+                          help="Skip sessions already ingested (for devin source)")
 
     p_chunk = sub.add_parser("chunk", help="Chunk normalized sessions")
     p_chunk.add_argument("--sources", help="Comma-separated sources")

@@ -1,8 +1,9 @@
 # Knowledge Distillation Pipeline — Design
 
 **Date:** 2026-08-05
+**Updated:** 2026-08-07
 **Project:** Asterinas RPi3 Firmware — Engineering Memory System
-**Status:** Draft
+**Status:** Implemented
 
 ---
 
@@ -42,29 +43,29 @@ Windsurf: no accessible history found.
 ```
 knowledge/
 ├── raw/                          ← Source-agnostic raw log store
-│   ├── opencode/
-│   │   └── ses_*.jsonl           ← OpenCode session transcripts
-│   ├── copilot/
-│   │   └── transcripts/           ← GitHub Copilot JSONL transcripts
-│   ├── devin/
-│   │   └── session_*.json       ← Devin exported sessions
-│   └── docs/
-│       ├── specs/                 ← specs/001-rpi3-hardware-bringup/
-│       └── SESSION_CONTEXT.md
+│   ├── opencode/                  ← Normalized OpenCode sessions
+│   ├── copilot/                  ← Normalized Copilot sessions
+│   ├── devin/                    ← Normalized Devin sessions
+│   └── docs/                     ← Normalized project docs
 │
 ├── staging/
 │   ├── chunks/                   ← Pre-distillation chunked conversations
-│   └── memories.db               ← SQLite staging DB (FTS5)
+│   ├── memories.db               ← SQLite staging DB (FTS5)
+│   └── ingest_state.json         ← Tracks processed sessions (incremental mode)
 │
-├── pipeline.py                   ← CLI entry point
+├── __main__.py                   ← Entry point for python3 -m knowledge
+├── pipeline.py                   ← CLI entry point (python3 -m knowledge.pipeline)
+├── opencode_parser.py            ← Parse OpenCode JSONL transcripts
+├── copilot_parser.py             ← Parse GitHub Copilot transcripts
+├── devin_parser.py               ← Parse Devin exported sessions
+├── docs_parser.py                ← Parse project markdown docs
+├── chunk.py                      ← Conversation segmentation
 ├── distill.py                    ← LLM distillation logic
 ├── merge.py                      ← Deduplication and merge
-├── ingest.py                     ← Source parsing and normalization
-├── chunk.py                      ← Conversation segmentation
 ├── score.py                      ← Confidence/importance scoring
 ├── publish.py                    ← opencode-mem publishing
 ├── schema.py                     ← Memory schema definitions
-└── config.py                     ← LLM endpoint, DB paths
+└── config.py                     ← LLM endpoint, DB paths, state tracking
 ```
 
 ---
@@ -81,6 +82,8 @@ Parsers:
 - `docs_parser.py` — reads markdown files, segments by heading
 
 Each normalized chunk gets metadata: `{source, session_id, date, turn_count}`.
+
+**Incremental mode:** Use `--incremental` flag to skip sessions already processed. State is tracked in `staging/ingest_state.json`. New Devin sessions can be added without re-processing existing sessions.
 
 ### Stage 2 — Chunk (`pipeline.py chunk`)
 Split long sessions into topic-focused chunks (max ~2000 tokens each).
@@ -205,10 +208,11 @@ CREATE TABLE source_stats (
 
 ```bash
 # Full pipeline
-python3 -m knowledge.pipeline --full
+python3 -m knowledge.pipeline full
 
 # Individual stages
 python3 -m knowledge.pipeline ingest --sources opencode,copilot,devin,docs
+python3 -m knowledge.pipeline ingest --sources devin --incremental   # Skip already-processed
 python3 -m knowledge.pipeline chunk --max-tokens 2000
 python3 -m knowledge.pipeline distill --batch-size 10
 python3 -m knowledge.pipeline merge --similarity-threshold 0.7
@@ -235,26 +239,16 @@ python3 -m knowledge.pipeline stats
 
 | File | Responsibility |
 |------|----------------|
+| `__main__.py` | Entry point for `python3 -m knowledge` |
 | `pipeline.py` | CLI entry point, stage orchestration |
-| `ingest.py` | Source parsers (opencode, copilot, devin, docs) |
+| `opencode_parser.py` | Parse OpenCode JSONL transcripts |
+| `copilot_parser.py` | Parse GitHub Copilot transcripts |
+| `devin_parser.py` | Parse Devin exported sessions |
+| `docs_parser.py` | Parse project markdown docs |
 | `chunk.py` | Topic segmentation and token budgeting |
 | `distill.py` | LLM API calls, memory extraction prompt |
 | `merge.py` | FTS5 similarity dedup and merging |
 | `score.py` | Confidence/importance scoring |
 | `publish.py` | opencode-mem API publishing |
 | `schema.py` | Memory schema, DB creation |
-| `config.py` | Paths, API endpoints, defaults |
-
----
-
-## 10. Implementation Priority
-
-1. `config.py`, `schema.py` — foundation
-2. `ingest.py` + `opencode_parser.py` — validate on existing OpenCode transcripts first
-3. `chunk.py` — simple topic split
-4. `distill.py` — LLM call wrapper + prompt
-5. `pipeline.py` — stage runner
-6. `merge.py` — FTS5 dedup
-7. `score.py` — scoring
-8. `publish.py` — opencode-mem integration
-9. Remaining parsers (copilot, devin, docs)
+| `config.py` | Paths, API endpoints, state tracking (`load_ingest_state`, `save_ingest_state`) |

@@ -52,3 +52,24 @@ DEFAULT_BATCH_SIZE = 10
 DEFAULT_SIMILARITY_THRESHOLD = 0.7
 DEFAULT_MIN_CONFIDENCE = 80
 DEFAULT_RETRIES = 3
+
+# State file for tracking processed sessions (for incremental mode)
+STATE_FILE = STAGING_DIR / "ingest_state.json"
+
+
+def load_ingest_state() -> dict:
+    """Load the ingest state tracking which sessions have been processed."""
+    if STATE_FILE.exists():
+        try:
+            with open(STATE_FILE) as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+
+def save_ingest_state(state: dict):
+    """Save the ingest state tracking which sessions have been processed."""
+    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with open(STATE_FILE, "w") as f:
+        json.dump(state, f, indent=2)
