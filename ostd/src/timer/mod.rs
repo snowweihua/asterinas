@@ -36,10 +36,12 @@ where
     F: Fn() + Sync + Send + 'static,
 {
     let irq_guard = irq::disable_local();
-    INTERRUPT_CALLBACKS
-        .get_with(&irq_guard)
-        .borrow_mut()
-        .push(Box::new(func));
+    let callbacks = INTERRUPT_CALLBACKS.get_with(&irq_guard);
+    callbacks.borrow_mut().push(Box::new(func));
+    crate::console::early_print(format_args!(
+        "[timer] register_callback_on_cpu: now {} callbacks\n",
+        callbacks.borrow().len()
+    ));
 }
 
 pub(crate) fn call_timer_callback_functions(_: &TrapFrame) {

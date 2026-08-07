@@ -8,6 +8,7 @@ use ostd::arch::serial;
 use ostd::arch::trap::TrapFrame;
 use ostd::irq::IrqLine;
 use ostd::mm::{Infallible, VmReader};
+use ostd::timer;
 use spin::Once;
 
 static UART_CALLBACK: Once<Box<dyn Fn(VmReader<Infallible>) + Send + Sync>> = Once::new();
@@ -26,6 +27,10 @@ pub fn init() {
     {
         aster_console::register_device("serial-uart".to_string(), Arc::new(SerialConsole));
         init_uart_irq();
+        // The RPi3 VideoCore firmware can clobber the AUX enable bit in
+        // ENABLE_IRQS_1.  Poll the RX FIFO on the 1 ms timer tick so that
+        // serial input works even when the AUX IRQ is transiently disabled.
+        timer::register_callback_on_cpu(poll_uart_input);
     }
 }
 
@@ -41,8 +46,26 @@ fn init_uart_irq() {
 
 #[cfg(target_arch = "aarch64")]
 fn uart_irq_handler(_trapframe: &TrapFrame) {
+    poll_uart_input();
+}
+
+#[cfg(target_arch = "aarch64")]
+fn poll_uart_input() {
+    // Re-enable the AUX interrupt in case the firmware cleared it.  If the
+    // interrupt path is alive the next byte will trigger the handler; if not,
+    // the polling below still drains the FIFO.
+    serial::reenable_rx_irq();
+
+    static POLL_CNT: core::sync::atomic::AtomicUsize =
+        core::sync::atomic::AtomicUsize::new(0);
+    let cnt = POLL_CNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+    if cnt % 1000 == 0 {
+        ostd::console::early_print(format_args!("[poll_uart] alive\n"));
+    }
+
     while serial::has_data() {
         let byte = serial::receive();
+        ostd::console::early_print(format_args!("[poll_uart] byte={:#x}\n", byte));
         if let Some(callback) = UART_CALLBACK.get() {
             let ch = [byte];
             let reader = VmReader::<Infallible>::from(ch.as_slice());

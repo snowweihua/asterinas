@@ -34,6 +34,14 @@ const MINIUART_IER_RX: u32 = MINIUART_IER_RX_ENABLE | MINIUART_IER_REQUIRED;
 const MINIUART_CNTL_RX_ENABLE: u32 = 1 << 0;
 const MINIUART_CNTL_TX_ENABLE: u32 = 1 << 1;
 
+/// GPIO block for the RPi3 pinmux.
+const GPIO_BASE_PA: usize = 0x3F20_0000;
+const GPIO_GPFSEL1_OFFSET: usize = 0x04;
+const GPIO_GPPUD_OFFSET: usize = 0x94;
+const GPIO_GPPUDCLK0_OFFSET: usize = 0x98;
+const GPIO_PIN_14: u32 = 1 << 14;
+const GPIO_PIN_15: u32 = 1 << 15;
+
 const FR_TXFF: u32 = 1 << 5;
 const FR_RXFE: u32 = 1 << 4;
 const IM_RXIM: u32 = 1 << 4;
@@ -88,6 +96,12 @@ fn miniuart_base_va() -> usize {
     MINIUART_BASE_PA + KERNEL_BASE_VADDR
 }
 
+/// RPi3 GPIO block base virtual address.
+#[inline(always)]
+fn miniuart_gpio_base_va() -> usize {
+    GPIO_BASE_PA + KERNEL_BASE_VADDR
+}
+
 #[inline(always)]
 fn miniuart_read_lsr() -> u32 {
     unsafe { core::ptr::read_volatile(miniuart_lsr_va() as *const u32) }
@@ -122,50 +136,91 @@ pub fn irq_num() -> u8 {
 pub fn init_rx_irq() {
     if is_rpi3() {
         unsafe {
-            // Enable the mini-UART RX interrupt.  Preserve the line settings
-            // (LCR, MCR, BAUD) that the firmware/U-Boot already configured for
-            // 115200 8N1; re-writing the baud register is unsafe because the AUX
-            // clock may not be exactly 250 MHz.
+            const MINIUART_IIR_OFFSET: usize = 0x48;
+            const MINIUART_LCR_OFFSET: usize = 0x4C;
+            const MINIUART_MCR_OFFSET: usize = 0x50;
+            const MINIUART_BAUD_OFFSET: usize = 0x68;
+
             let base = miniuart_base_va();
 
-            let aux_en =
+            // Preserve the baud rate U-Boot chose; reset modem control to a
+            // known value (RTS high, no flow control).
+            let aux_en_before =
                 core::ptr::read_volatile((base + MINIUART_AUX_ENABLES_OFFSET) as *const u32);
+            let baud_before =
+                core::ptr::read_volatile((base + MINIUART_BAUD_OFFSET) as *const u32) & 0xffff;
+
+            // Re-initialise the mini-UART from a known-good sequence. Disable
+            // RX/TX while configuring so the IER/FIFO setup is not raced by
+            // incoming data.
             core::ptr::write_volatile(
                 (base + MINIUART_AUX_ENABLES_OFFSET) as *mut u32,
-                aux_en | MINIUART_AUX_ENABLES_MINIUART,
+                aux_en_before | MINIUART_AUX_ENABLES_MINIUART,
             );
+            core::ptr::write_volatile((base + MINIUART_CNTL_OFFSET) as *mut u32, 0);
 
-            let cntl = core::ptr::read_volatile((base + MINIUART_CNTL_OFFSET) as *const u32);
-            core::ptr::write_volatile(
-                (base + MINIUART_CNTL_OFFSET) as *mut u32,
-                cntl | MINIUART_CNTL_RX_ENABLE | MINIUART_CNTL_TX_ENABLE,
-            );
+            // 8-bit mode and clear DLAB so IER is the interrupt enable register.
+            core::ptr::write_volatile((base + MINIUART_LCR_OFFSET) as *mut u32, 3);
+            // RTS high, no auto flow control.
+            core::ptr::write_volatile((base + MINIUART_MCR_OFFSET) as *mut u32, 0);
+            core::ptr::write_volatile((base + MINIUART_BAUD_OFFSET) as *mut u32, baud_before);
 
-            // Clear any stale mini-UART interrupt/FIFO state before enabling.
-            const MINIUART_IIR_OFFSET: usize = 0x48;
+            // Clear the FIFOs and any pending interrupt state.
             core::ptr::write_volatile(
                 (base + MINIUART_IIR_OFFSET) as *mut u32,
-                0x06, // clear receive and transmit FIFOs (FreeBSD IIR_CLEAR)
+                0xC6, // clear receive and transmit FIFOs, keep FIFO enable bits
             );
 
-            // Enable the RX interrupt.  The BCM2835 mini-UART needs bits 2 and 3
-            // of IER set as well as bit 0 to generate interrupts on real hardware.
+            // Keep interrupts disabled while we poll; we will re-enable the
+            // AUX bit in the peripheral controller from the timer tick.
+            core::ptr::write_volatile((base + MINIUART_IER_OFFSET) as *mut u32, 0);
+
+            // Re-route GPIO 14/15 to mini-UART (alt5) and disable pull-up/down.
+            // The firmware or U-Boot may leave these pins configured for a
+            // different function, which can make RX input appear dead even
+            // though TX output works.
+            let gpio_base = miniuart_gpio_base_va();
+            let gpfsel1 = (gpio_base + GPIO_GPFSEL1_OFFSET) as *mut u32;
+            let mut gpfsel1_val = core::ptr::read_volatile(gpfsel1);
+            gpfsel1_val &= !((7 << 12) | (7 << 15));
+            gpfsel1_val |= (2 << 12) | (2 << 15);
+            core::ptr::write_volatile(gpfsel1, gpfsel1_val);
+
             core::ptr::write_volatile(
-                (base + MINIUART_IER_OFFSET) as *mut u32,
-                MINIUART_IER_RX,
+                (gpio_base + GPIO_GPPUD_OFFSET) as *mut u32,
+                0,
             );
+            for _ in 0..150 {
+                core::arch::asm!("nop", options(nomem, nostack, preserves_flags));
+            }
+            core::ptr::write_volatile(
+                (gpio_base + GPIO_GPPUDCLK0_OFFSET) as *mut u32,
+                GPIO_PIN_14 | GPIO_PIN_15,
+            );
+            for _ in 0..150 {
+                core::arch::asm!("nop", options(nomem, nostack, preserves_flags));
+            }
+            core::ptr::write_volatile((gpio_base + GPIO_GPPUD_OFFSET) as *mut u32, 0);
+            core::ptr::write_volatile((gpio_base + GPIO_GPPUDCLK0_OFFSET) as *mut u32, 0);
 
-            let aux_en2 =
-                core::ptr::read_volatile((base + MINIUART_AUX_ENABLES_OFFSET) as *const u32);
-            let cntl2 = core::ptr::read_volatile((base + MINIUART_CNTL_OFFSET) as *const u32);
-            let ier = core::ptr::read_volatile((base + MINIUART_IER_OFFSET) as *const u32);
-            crate::console::early_print(format_args!(
-                "[init_rx_irq] base={:#x} aux_en={:#x} cntl={:#x} ier={:#x}\n",
-                base, aux_en2, cntl2, ier
-            ));
+            // Re-enable RX and TX.
+            core::ptr::write_volatile(
+                (base + MINIUART_CNTL_OFFSET) as *mut u32,
+                MINIUART_CNTL_RX_ENABLE | MINIUART_CNTL_TX_ENABLE,
+            );
         }
     } else {
         set_im(IM_RXIM);
+    }
+}
+
+/// Re-enable the mini-UART RX interrupt at the peripheral interrupt controller.
+///
+/// The VideoCore firmware can overwrite ENABLE_IRQS_1 while managing its own
+/// interrupts, so the AUX enable bit may need to be set again after init.
+pub fn reenable_rx_irq() {
+    if is_rpi3() {
+        crate::arch::bcm2836_irq::reenable_miniuart_irq();
     }
 }
 

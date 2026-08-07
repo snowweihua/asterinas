@@ -55,6 +55,7 @@ const BCM2835_IRQS_PENDING_1: usize = 0x04; // pending GPU IRQs 0-31
 const BCM2835_IRQS_PENDING_2: usize = 0x08; // pending GPU IRQs 32-63
 const BCM2835_ENABLE_IRQS_1: usize = 0x10; // enable GPU IRQs 0-31
 const BCM2835_ENABLE_IRQS_2: usize = 0x14; // enable GPU IRQs 32-63
+const BCM2835_ENABLE_BASIC: usize = 0x18; // enable basic ARM IRQs
 const BCM2835_DISABLE_IRQS_1: usize = 0x1C; // disable IRQs 0-31
 const BCM2835_DISABLE_IRQS_2: usize = 0x20; // disable IRQs 32-63
 const BCM2835_DISABLE_BASIC: usize = 0x24; // disable basic IRQs
@@ -69,6 +70,9 @@ const GPU_IRQ_BIT: u32 = 1 << 8;
 
 /// AUX mini-UART is GPU IRQ 29 → bit 29 of IRQS_PENDING_1 / ENABLE_IRQS_1.
 const AUX_PERI_IRQ_BIT: u32 = 1 << 29;
+
+/// SYSTEM_TIMER match register 1 is GPU IRQ 1 → bit 1 of IRQS_PENDING_1 / ENABLE_IRQS_1.
+const SYSTEM_TIMER1_BIT: u32 = 1 << 1;
 
 /// PL011 UART is GPU IRQ 57 → bit 25 of IRQS_PENDING_2 / ENABLE_IRQS_2.
 const UART_PERI_IRQ_BIT: u32 = 1 << 25;
@@ -159,19 +163,36 @@ pub fn enable_miniuart_irq() {
     if crate::arch::board::BoardType::cached() != 2 {
         return;
     }
-    let ic_va = peri_ic_base_va();
+    crate::arch::irq::disable_local();
     unsafe {
-        core::ptr::write_volatile(
-            (ic_va + BCM2835_ENABLE_IRQS_1) as *mut u32,
-            AUX_PERI_IRQ_BIT,
-        );
-        let enabled = core::ptr::read_volatile((ic_va + BCM2835_ENABLE_IRQS_1) as *const u32);
-        crate::console::early_print(format_args!(
-            "[en_miniuart] ic_va={:#x} enabled_irqs1={:#x}\n",
-            ic_va,
-            enabled
-        ));
+        write_aux_irq_enable();
     }
+    crate::arch::irq::enable_local();
+}
+
+/// Re-enable the BCM2835 AUX mini-UART IRQ.
+///
+/// The VideoCore firmware can clobber the AUX enable bit in ENABLE_IRQS_1
+/// while managing SYSTEM_TIMER_IRQ_1, so this may be called periodically
+/// (e.g. from the timer tick or UART interrupt handler) to ensure the RX
+/// interrupt stays enabled.  No-op on non-RPi3 boards.
+pub fn reenable_miniuart_irq() {
+    if crate::arch::board::BoardType::cached() != 2 {
+        return;
+    }
+    unsafe {
+        write_aux_irq_enable();
+    }
+}
+
+#[inline(always)]
+unsafe fn write_aux_irq_enable() {
+    let ic_va = peri_ic_base_va();
+    core::ptr::write_volatile(
+        (ic_va + BCM2835_ENABLE_IRQS_1) as *mut u32,
+        AUX_PERI_IRQ_BIT,
+    );
+    core::arch::asm!("dsb sy", "isb", options(nostack, preserves_flags));
 }
 
 /// Enable the BCM2835 PL011 UART IRQ (GPU IRQ 57).
@@ -214,6 +235,24 @@ pub fn acknowledge_interrupt() -> usize {
             unsafe { core::ptr::read_volatile((ic_va + BCM2835_IRQS_PENDING_1) as *const u32) };
         if irq1 & AUX_PERI_IRQ_BIT != 0 {
             return MINIUART_IRQ_NUM; // AUX mini-UART RX
+        }
+        if irq1 & SYSTEM_TIMER1_BIT != 0 {
+            // The firmware sometimes leaves SYSTEM_TIMER_IRQ_1 enabled and
+            // pending.  We don't use it, so disable and clear it to prevent an
+            // IRQ storm.
+            const BCM2835_SYSTEM_TIMER_BASE_PA: usize = 0x3F00_3000;
+            const BCM2835_ST_CS: usize = 0x00;
+            let st_va = crate::mm::kspace::KERNEL_BASE_VADDR + BCM2835_SYSTEM_TIMER_BASE_PA;
+            unsafe {
+                core::ptr::write_volatile(
+                    (ic_va + BCM2835_DISABLE_IRQS_1) as *mut u32,
+                    SYSTEM_TIMER1_BIT,
+                );
+                core::arch::asm!("dsb sy", "isb", options(nostack, preserves_flags));
+                core::ptr::write_volatile((st_va + BCM2835_ST_CS) as *mut u32, SYSTEM_TIMER1_BIT);
+                core::arch::asm!("dsb sy", "isb", options(nostack, preserves_flags));
+            }
+            return 0;
         }
         let irq2 =
             unsafe { core::ptr::read_volatile((ic_va + BCM2835_IRQS_PENDING_2) as *const u32) };

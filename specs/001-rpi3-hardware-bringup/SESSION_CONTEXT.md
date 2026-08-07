@@ -13,8 +13,12 @@ This file records durable findings only. Temporary probe chronology and supersed
   - bootstrap components initialize;
   - `init_in_first_process` completes device-node creation and `ramfs.mknod`;
   - the first process runs `/bin/sh` and prints a `/ #` prompt.
-- User-space exceptions and `SA_RESTORER` warnings remain; serial input to the
-  shell prompt has not been confirmed yet.
+- The mini-UART RX path is now driven by a combined interrupt + timer-polling
+  workaround (see `Confirmed Fix: RPi3 mini-UART RX Input` below).  A previous
+  image with this workaround showed an interactive shell prompt and echoed
+  serial input characters (e.g. `+x-` patterns in the serial log).
+- User-space exceptions and `SA_RESTORER` warnings remain; the `ctrl-o` path
+  still needs verification in a fresh session.
 
 ## Durable RPi3 Constraints
 
@@ -102,6 +106,35 @@ The project uses plain load/store or boot-safe single-core helpers only at runti
 - `ostd/src/logger.rs` now uses boot `SimpleOnce`.
 - This is the minimal mechanism-matched fix, but the clean post-fix image has not yet reached `[cmp.logger] init`; do not claim full logger toggle verification yet.
 
+### RPi3 mini-UART RX Input
+
+- The VideoCore firmware can overwrite the ARM peripheral interrupt controller
+  `ENABLE_IRQS_1` register, which clears the AUX mini-UART RX enable bit (bit
+  29) and makes the shell prompt non-interactive even though TX output works.
+- Workaround implemented in `ostd/src/arch/aarch64/bcm2836_irq.rs`:
+  - `reenable_miniuart_irq()` re-sets the `AUX_PERI_IRQ_BIT` in `ENABLE_IRQS_1`
+    each time it is called.
+  - `acknowledge_interrupt()` also disables and clears a spurious
+    `SYSTEM_TIMER1` (GPU IRQ 1) pending interrupt to prevent an IRQ storm.
+- `ostd/src/arch/aarch64/serial.rs`:
+  - `init_rx_irq()` re-initialises the mini-UART from a known-good sequence
+    while preserving the U-Boot baud rate.
+  - It clears the RX/TX FIFOs, resets `MCR` and `LCR`, and re-routes GPIO 14/15
+    to mini-UART (alt5) with pull-up/down disabled.
+  - `reenable_rx_irq()` exposes the periodic AUX enable re-write to the
+    kernel driver.
+- `kernel/src/driver/mod.rs`:
+  - `poll_uart_input()` re-enables the AUX IRQ, then polls `serial::has_data()`
+    and drains the RX FIFO by calling the registered UART callback for each
+    received byte.
+  - `poll_uart_input()` is registered as a 1 ms timer callback and is also
+    invoked directly from the UART IRQ handler.
+  - This timer-driven path keeps RX input alive even when the VideoCore
+    firmware has transiently disabled the AUX interrupt.
+- The current image contains temporary `early_print` probes in `poll_uart_input`
+  and `register_callback_on_cpu` to trace RX bytes and callback registration;
+  these should be removed once the shell input path is fully verified.
+
 ## Latest Hardware Evidence
 
 - Boot reaches the `/bin/sh` prompt (`/ #`) on the current image (`00001414`).
@@ -111,6 +144,10 @@ The project uses plain load/store or boot-safe single-core helpers only at runti
 - `dram_base()` caching was verified by toggling: restoring the uncached FDT walk
   causes the boot to hang at `MetaSlot::get_slot`; the cached version reaches the
   shell prompt.
+- A prior image with the AUX re-enable/timer-polling workaround printed the
+  `/ #` prompt and reflected typed characters in the serial log (e.g. `+x-`
+  byte markers), indicating serial input reached the shell.  The `ctrl-o`
+  path has not been fully verified and should be retried in the next session.
 
 ## Root Cause: 16-Byte Register Returns Corrupt x30
 
@@ -177,13 +214,14 @@ The project uses plain load/store or boot-safe single-core helpers only at runti
 
 ## Next Investigation
 
-- Confirm serial input reaches the `/bin/sh` prompt; if not, verify the RPi3
-  mini-UART RX path or the `/dev/console` wiring used by the initramfs shell.
+- Build, deploy, and power-cycle the current image; verify that serial input
+  (including `ctrl-o` and normal characters) reaches the `/bin/sh` prompt.
+- Remove temporary `early_print` probes in `poll_uart_input` and
+  `register_callback_on_cpu` once RX input is confirmed.
 - Investigate and resolve remaining user-space exceptions (`0x92000047`,
   `0x82000007`) and the `SA_RESTORER fallback mechanism not implemented for this
   architecture` warning.
 - Re-evaluate remaining 16-byte register returns in the heap/frame path if new
   hangs appear; keep changes scoped to runtime-confirmed RPi3 failures.
-- Clean up temporary UART/heap/fs diagnostics once the shell is interactive.
 - Keep changes scoped to runtime-confirmed RPi3 failures; do not globally replace
   remaining `spin::Once` uses without hardware evidence.
