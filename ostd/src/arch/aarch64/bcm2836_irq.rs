@@ -24,6 +24,9 @@
 /// BCM2836 ARM Local Interrupt Controller (one set of regs per core).
 const LOCAL_IC_BASE_PA: usize = 0x4000_0000;
 
+const LOCAL_CONTROL: usize = 0x00;
+const LOCAL_GPU_ROUTING: usize = 0x0C;
+
 const CORE0_TIMER_INT_CONTROL: usize = 0x40;
 const CORE0_IRQ_SOURCE: usize = 0x60;
 
@@ -48,7 +51,9 @@ const CNTVIRQ_BIT: u32 = 1 << 3;
 /// pending peripheral interrupt re-enters `irq_current`, which returns without
 /// dismissing the source, causing an IRQ storm → stack overflow → random crash.
 const BCM2835_IC_BASE_PA: usize = 0x3F00_B200;
+const BCM2835_IRQS_PENDING_1: usize = 0x04; // pending GPU IRQs 0-31
 const BCM2835_IRQS_PENDING_2: usize = 0x08; // pending GPU IRQs 32-63
+const BCM2835_ENABLE_IRQS_1: usize = 0x10; // enable GPU IRQs 0-31
 const BCM2835_ENABLE_IRQS_2: usize = 0x14; // enable GPU IRQs 32-63
 const BCM2835_DISABLE_IRQS_1: usize = 0x1C; // disable IRQs 0-31
 const BCM2835_DISABLE_IRQS_2: usize = 0x20; // disable IRQs 32-63
@@ -62,17 +67,30 @@ const BCM2835_FIQ_CONTROL: usize = 0x0C;
 /// CORE0_IRQ_SOURCE bit 8 = GPU IRQ (a BCM2835 peripheral IRQ is pending).
 const GPU_IRQ_BIT: u32 = 1 << 8;
 
+/// AUX mini-UART is GPU IRQ 29 → bit 29 of IRQS_PENDING_1 / ENABLE_IRQS_1.
+const AUX_PERI_IRQ_BIT: u32 = 1 << 29;
+
 /// PL011 UART is GPU IRQ 57 → bit 25 of IRQS_PENDING_2 / ENABLE_IRQS_2.
 const UART_PERI_IRQ_BIT: u32 = 1 << 25;
 
+/// Abstract IRQ number returned by `acknowledge_interrupt()` for the AUX mini-UART.
+pub const MINIUART_IRQ_NUM: usize = 29;
+
 /// Abstract IRQ number returned by `acknowledge_interrupt()` for the PL011 UART.
-/// Must match the number allocated via `IrqLine::alloc_specific` in the kernel driver.
 pub const UART_IRQ_NUM: usize = 57;
 
 fn local_ic_base_va() -> usize {
     // Use the kernel linear mapping: the ARM-local registers stay accessible
     // after TTBR0 is switched to a user page table.
     crate::mm::kspace::paddr_to_vaddr(LOCAL_IC_BASE_PA)
+}
+
+fn peri_ic_base_va() -> usize {
+    // The BCM2835 peripheral interrupt controller is inside the 0x3F000000 MMIO
+    // window.  Access it through the kernel high-half mapping (boot_l2pt_gb0) so
+    // the reads/writes are treated as Device memory and cached values are not
+    // returned for the pending/enable registers.
+    crate::mm::kspace::KERNEL_BASE_VADDR + BCM2835_IC_BASE_PA
 }
 
 /// Read MPIDR_EL1 and return the affinity level 0 (core ID within cluster).
@@ -95,13 +113,20 @@ unsafe fn write_reg(offset: usize, value: u32) {
 }
 
 pub unsafe fn init_on_bsp() {
+    // Route GPU IRQ and FIQ to core 0, and make sure the control register is
+    // in its default state (timer sourced from the 19.2 MHz crystal).
+    unsafe {
+        write_reg(LOCAL_CONTROL, 0);
+        write_reg(LOCAL_GPU_ROUTING, 0);
+    }
+
     // Disable ARM-local timer IRQ on Core 0 (re-enabled later by enable_timer_irq).
     unsafe { write_reg(CORE0_TIMER_INT_CONTROL, 0) };
 
     // Disable ALL BCM2835 peripheral interrupts AND FIQ.
-    // Use the kernel linear mapping so the MMIO window stays accessible after
-    // TTBR0 is switched to a user page table.
-    let ic_va = crate::mm::kspace::paddr_to_vaddr(BCM2835_IC_BASE_PA);
+    // Use the high-half mapping (Device memory) so the writes actually reach the
+    // controller and are not trapped in an inner cache.
+    let ic_va = peri_ic_base_va();
     unsafe {
         core::ptr::write_volatile((ic_va + BCM2835_DISABLE_IRQS_1) as *mut u32, 0xFFFF_FFFF);
         core::ptr::write_volatile((ic_va + BCM2835_DISABLE_IRQS_2) as *mut u32, 0xFFFF_FFFF);
@@ -126,9 +151,32 @@ pub unsafe fn init_on_ap() {
     unsafe { write_reg(offset, CNTVIRQ_BIT) };
 }
 
+/// Enable the BCM2835 AUX mini-UART IRQ (GPU IRQ 29).
+///
+/// Writes bit 29 to ENABLE_IRQS_1 so that mini-UART RX interrupts are routed
+/// from the peripheral controller to CPU0.  No-op on non-RPi3 boards.
+pub fn enable_miniuart_irq() {
+    if crate::arch::board::BoardType::cached() != 2 {
+        return;
+    }
+    let ic_va = peri_ic_base_va();
+    unsafe {
+        core::ptr::write_volatile(
+            (ic_va + BCM2835_ENABLE_IRQS_1) as *mut u32,
+            AUX_PERI_IRQ_BIT,
+        );
+        let enabled = core::ptr::read_volatile((ic_va + BCM2835_ENABLE_IRQS_1) as *const u32);
+        crate::console::early_print(format_args!(
+            "[en_miniuart] ic_va={:#x} enabled_irqs1={:#x}\n",
+            ic_va,
+            enabled
+        ));
+    }
+}
+
 /// Enable the BCM2835 PL011 UART IRQ (GPU IRQ 57).
 ///
-/// Writes bit 25 to ENABLE_IRQS_2 so that UART RX interrupts are routed
+/// Writes bit 25 to ENABLE_IRQS_2 so that PL011 RX interrupts are routed
 /// from the peripheral controller to CPU0.  No-op on non-RPi3 boards.
 pub fn enable_uart_irq() {
     // BCM2835 peripheral controller only exists on RPi3 (cached board type 2).
@@ -136,7 +184,7 @@ pub fn enable_uart_irq() {
     if crate::arch::board::BoardType::cached() != 2 {
         return;
     }
-    let ic_va = crate::mm::kspace::paddr_to_vaddr(BCM2835_IC_BASE_PA);
+    let ic_va = peri_ic_base_va();
     unsafe {
         core::ptr::write_volatile(
             (ic_va + BCM2835_ENABLE_IRQS_2) as *mut u32,
@@ -161,7 +209,12 @@ pub fn acknowledge_interrupt() -> usize {
 
     if pending & GPU_IRQ_BIT != 0 {
         // A BCM2835 peripheral IRQ is pending.  Check which one.
-        let ic_va = crate::mm::kspace::paddr_to_vaddr(BCM2835_IC_BASE_PA);
+        let ic_va = peri_ic_base_va();
+        let irq1 =
+            unsafe { core::ptr::read_volatile((ic_va + BCM2835_IRQS_PENDING_1) as *const u32) };
+        if irq1 & AUX_PERI_IRQ_BIT != 0 {
+            return MINIUART_IRQ_NUM; // AUX mini-UART RX
+        }
         let irq2 =
             unsafe { core::ptr::read_volatile((ic_va + BCM2835_IRQS_PENDING_2) as *const u32) };
         if irq2 & UART_PERI_IRQ_BIT != 0 {

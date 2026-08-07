@@ -10,8 +10,6 @@ use ostd::irq::IrqLine;
 use ostd::mm::{Infallible, VmReader};
 use spin::Once;
 
-const PL011_UART_IRQ: u8 = 33;
-
 static UART_CALLBACK: Once<Box<dyn Fn(VmReader<Infallible>) + Send + Sync>> = Once::new();
 static UART_IRQ: Once<IrqLine> = Once::new();
 
@@ -26,7 +24,7 @@ pub fn init() {
 
     #[cfg(target_arch = "aarch64")]
     {
-        aster_console::register_device("pl011-uart".to_string(), Arc::new(Pl011Console));
+        aster_console::register_device("serial-uart".to_string(), Arc::new(SerialConsole));
         init_uart_irq();
     }
 }
@@ -34,7 +32,7 @@ pub fn init() {
 #[cfg(target_arch = "aarch64")]
 fn init_uart_irq() {
     UART_IRQ.call_once(|| {
-        let mut uart_irq = IrqLine::alloc_specific(PL011_UART_IRQ).unwrap();
+        let mut uart_irq = IrqLine::alloc_specific(serial::irq_num()).unwrap();
         uart_irq.on_active(uart_irq_handler);
         serial::init_rx_irq();
         uart_irq
@@ -55,10 +53,10 @@ fn uart_irq_handler(_trapframe: &TrapFrame) {
 
 #[cfg(target_arch = "aarch64")]
 #[derive(Debug)]
-struct Pl011Console;
+struct SerialConsole;
 
 #[cfg(target_arch = "aarch64")]
-impl aster_console::AnyConsoleDevice for Pl011Console {
+impl aster_console::AnyConsoleDevice for SerialConsole {
     fn send(&self, buf: &[u8]) {
         for &byte in buf {
             serial::send(byte);

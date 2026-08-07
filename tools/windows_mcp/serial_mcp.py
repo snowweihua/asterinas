@@ -195,6 +195,7 @@ class SerialBackend:
         try:
             if self._serial and self._serial.is_open:
                 self._serial.write(text.encode())
+                self._serial.flush()
                 return "OK"
             else:
                 log("write: serial not open")
