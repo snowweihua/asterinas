@@ -173,21 +173,14 @@ pub(crate) static EARLY_INFO: Once<EarlyBootInfo> = Once::new();
 static TEST_ONCE: Once<usize> = Once::new();
 
 pub(crate) fn init_after_heap() {
-    unsafe { crate::arch::boot::pl011_puts(b"[IAH] START\n"); }
 
-    unsafe { crate::arch::boot::pl011_puts(b"[IAH] TEST_ONCE start\n"); }
     let _test_val = TEST_ONCE.call_once(|| {
-        unsafe { crate::arch::boot::pl011_puts(b"[IAH] TEST_ONCE inside\n"); }
         42
     });
-    unsafe { crate::arch::boot::pl011_puts(b"[IAH] TEST_ONCE done\n"); }
 
     let boot_time_info = EARLY_INFO.get().unwrap();
-    unsafe { crate::arch::boot::pl011_puts(b"[IAH] got EARLY_INFO\n"); }
 
-    unsafe { crate::arch::boot::pl011_puts(b"[IAH] before INFO.call_once\n"); }
     let _bi = INFO.call_once(|| {
-        unsafe { crate::arch::boot::pl011_puts(b"[IAH.1] inside call_once\n"); }
         BootInfo {
             bootloader_name: boot_time_info.bootloader_name,
             kernel_cmdline: boot_time_info.kernel_cmdline,
@@ -196,8 +189,6 @@ pub(crate) fn init_after_heap() {
             memory_regions: &boot_time_info.memory_regions,
         }
     });
-    unsafe { crate::arch::boot::pl011_puts(b"[IAH.2] after INFO.call_once\n"); }
-    unsafe { crate::arch::boot::pl011_puts(b"[IAH] done\n"); }
 }
 
 /// Calls the OSTD-user defined entrypoint of the actual kernel.

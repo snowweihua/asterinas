@@ -74,19 +74,13 @@ pub(crate) unsafe fn boot_all_aps() {
     let num_cpus = crate::cpu::num_cpus();
 
     if num_cpus == 1 {
-        #[cfg(target_arch = "aarch64")]
         {
-            use crate::arch::boot::pl011_puts;
-            unsafe { pl011_puts(b"[a2-smp] only 1 CPU, skipping SMP\n") };
         }
         return;
     }
 
     // Debug output
-    #[cfg(target_arch = "aarch64")]
     {
-        use crate::arch::boot::pl011_puts;
-        unsafe { pl011_puts(b"[a2-smp] SMP init starting\n") };
     }
 
     log::info!("Booting {} processors", num_cpus - 1);

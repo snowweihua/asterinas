@@ -38,11 +38,7 @@ pub fn dma_type() -> DmaType {
 }
 
 pub fn init() {
-    #[cfg(target_arch = "aarch64")]
-    unsafe { crate::arch::boot::pl011_puts(b"[dma.init.0] start\n"); }
     DMA_MAPPING_SET.call_once(|| SpinLock::new(BTreeSet::new()));
-    #[cfg(target_arch = "aarch64")]
-    unsafe { crate::arch::boot::pl011_puts(b"[dma.init.1] done\n"); }
 }
 
 /// Checks whether the physical addresses has dma mapping.

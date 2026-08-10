@@ -79,14 +79,8 @@ pub struct VmSpace {
 impl VmSpace {
     /// Creates a new VM address space.
     pub fn new() -> Self {
-        #[cfg(target_arch = "aarch64")]
-        unsafe { crate::arch::boot::pl011_puts(b"[vmspace] get KPT\n"); }
         let kpt = KERNEL_PAGE_TABLE.get().unwrap();
-        #[cfg(target_arch = "aarch64")]
-        unsafe { crate::arch::boot::pl011_puts(b"[vmspace] create user PT\n"); }
         let pt = kpt.create_user_page_table();
-        #[cfg(target_arch = "aarch64")]
-        unsafe { crate::arch::boot::pl011_puts(b"[vmspace] done\n"); }
         Self {
             pt,
             cpus: AtomicCpuSet::new(CpuSet::new_empty()),

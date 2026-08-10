@@ -65,9 +65,7 @@ fn psci_call(function_id: u64, arg0: u64, arg1: u64, arg2: u64) -> u64 {
 }
 
 pub(crate) unsafe fn bringup_all_aps(info_ptr: *const PerApRawInfo, pt_ptr: Paddr, num_cpus: u32) {
-    use crate::arch::boot::pl011_puts;
 
-    unsafe { pl011_puts(b"[a2-smp] bringup_all_aps start\n") };
 
     let ap_entry_paddr = ap_boot_entry as usize as u64;
 
@@ -76,7 +74,6 @@ pub(crate) unsafe fn bringup_all_aps(info_ptr: *const PerApRawInfo, pt_ptr: Padd
         __boot_page_table_pointer = pt_ptr as u64;
     }
 
-    unsafe { pl011_puts(b"[a2-smp] PSCI CPU_ON call\n") };
 
     for cpu_id in 1..num_cpus {
         let mpidr = get_mpidr(cpu_id);
@@ -91,5 +88,4 @@ pub(crate) unsafe fn bringup_all_aps(info_ptr: *const PerApRawInfo, pt_ptr: Padd
         }
     }
 
-    unsafe { pl011_puts(b"[a2-smp] bringup_all_aps done\n") };
 }

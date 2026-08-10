@@ -48,49 +48,25 @@ pub(crate) fn init_cvm_guest() {
 }
 
 pub(crate) unsafe fn late_init_on_bsp() {
-    #[cfg(target_arch = "aarch64")]
-    unsafe { crate::arch::boot::pl011_puts(b"[late.0] start\n"); }
     unsafe { trap::init() };
-    #[cfg(target_arch = "aarch64")]
-    unsafe { crate::arch::boot::pl011_puts(b"[late.trap] after trap::init\n"); }
     if crate::arch::board::BoardType::cached() == 2 {
-        unsafe { crate::arch::boot::pl011_puts(b"[late.gic.skip] RPi3\n"); }
-        unsafe { crate::arch::boot::pl011_puts(b"[late.bcm2836] before init_on_bsp\n"); }
         unsafe { bcm2836_irq::init_on_bsp() };
-        unsafe { crate::arch::boot::pl011_puts(b"[late.bcm2836] after init_on_bsp\n"); }
     } else {
         unsafe { gic::init_on_bsp() };
-        #[cfg(target_arch = "aarch64")]
-        unsafe { crate::arch::boot::pl011_puts(b"[late.gic] after gic::init_on_bsp\n"); }
     }
-    unsafe { crate::arch::boot::pl011_puts(b"[late.io_mem.0] before construct_io_mem_allocator_builder\n"); }
     let io_mem_builder = io::construct_io_mem_allocator_builder();
-    unsafe { crate::arch::boot::pl011_puts(b"[late.io_mem.1] after construct_io_mem_allocator_builder\n"); }
     if crate::arch::board::BoardType::cached() == 2 {
-        unsafe { crate::arch::boot::pl011_puts(b"[late.smp.skip] RPi3 single-core\n"); }
     } else {
-        unsafe { crate::arch::boot::pl011_puts(b"[late.smp.0] before boot_all_aps\n"); }
         unsafe { crate::boot::smp::boot_all_aps() };
-        #[cfg(target_arch = "aarch64")]
-        unsafe { crate::arch::boot::pl011_puts(b"[late.smp] after boot_all_aps\n"); }
     }
     if crate::arch::board::BoardType::cached() == 2 {
-        unsafe { crate::arch::boot::pl011_puts(b"[late.timer.rpi3] before timer::init\n"); }
         unsafe { timer::init() };
-        unsafe { crate::arch::boot::pl011_puts(b"[late.timer.rpi3] after timer::init\n"); }
     } else {
-        unsafe { crate::arch::boot::pl011_puts(b"[late.timer.0] before timer::init\n"); }
         unsafe { timer::init() };
-        #[cfg(target_arch = "aarch64")]
-        unsafe { crate::arch::boot::pl011_puts(b"[late.timer] after timer::init\n"); }
     }
     if crate::arch::board::BoardType::cached() == 2 {
-        unsafe { crate::arch::boot::pl011_puts(b"[late.io.skip] RPi3\n"); }
     } else {
-        unsafe { crate::arch::boot::pl011_puts(b"[late.io.0] before io::init\n"); }
         unsafe { crate::io::init(io_mem_builder) };
-        #[cfg(target_arch = "aarch64")]
-        unsafe { crate::arch::boot::pl011_puts(b"[late.io] after io::init\n"); }
     }
 }
 
