@@ -281,11 +281,8 @@ impl DirEntry {
     fn new(this: Weak<RamInode>, parent: Weak<RamInode>) -> Self {
         // Quick sanity test: can we insert into a HashMap with CStr256 keys?
         let mut test_map = HashMap::new();
-        ostd::console::early_print(format_args!("[DirEntry::new] test_map created\n"));
         let test_key = CStr256::from("null");
-        ostd::console::early_print(format_args!("[DirEntry::new] test_key created\n"));
         test_map.insert(test_key, 0usize);
-        ostd::console::early_print(format_args!("[DirEntry::new] test_map insert ok\n"));
         let _ = test_map;
         Self {
             children: SlotVec::new(),
@@ -327,17 +324,10 @@ impl DirEntry {
     }
 
     fn append_entry(&mut self, name: &str, inode: Arc<RamInode>) -> usize {
-        ostd::console::early_print(format_args!("[append_entry] start name={}\n", name));
         let name = CStr256::from(name);
-        ostd::console::early_print(format_args!("[append_entry] cstr done\n"));
         let idx = self.children.put((name, inode));
-        ostd::console::early_print(format_args!("[append_entry] put done idx={}\n", idx));
-        ostd::console::early_print(format_args!("[append_entry] before reserve\n"));
         self.idx_map.reserve(1);
-        ostd::console::early_print(format_args!("[append_entry] after reserve\n"));
-        ostd::console::early_print(format_args!("[append_entry] before insert\n"));
         self.idx_map.insert(name, idx);
-        ostd::console::early_print(format_args!("[append_entry] insert done\n"));
         idx
     }
 
@@ -469,7 +459,6 @@ impl RamInode {
         gid: Gid,
         device: Arc<dyn Device>,
     ) -> Arc<Self> {
-        ostd::console::early_print(format_args!("[ramfs.new_device] start\n"));
         Arc::new_cyclic(|weak_self| RamInode {
             inner: Inner::new_device(device.clone()),
             metadata: SpinLock::new(InodeMeta::new(mode, uid, gid)),
@@ -712,7 +701,6 @@ impl Inode for RamInode {
     }
 
     fn mknod(&self, name: &str, mode: InodeMode, type_: MknodType) -> Result<Arc<dyn Inode>> {
-        ostd::console::early_print(format_args!("[ramfs.mknod] name={}\n", name));
         if name.len() > NAME_MAX {
             return_errno!(Errno::ENAMETOOLONG);
         }
@@ -721,11 +709,9 @@ impl Inode for RamInode {
         }
 
         let self_dir = self.inner.as_direntry().unwrap().upread();
-        ostd::console::early_print(format_args!("[ramfs.mknod] got self_dir\n"));
         if self_dir.contains_entry(name) {
             return_errno_with_message!(Errno::EEXIST, "entry exists");
         }
-        ostd::console::early_print(format_args!("[ramfs.mknod] before new_inode\n"));
 
         let new_inode = match type_ {
             MknodType::CharDevice(device) | MknodType::BlockDevice(device) => RamInode::new_device(
@@ -742,17 +728,12 @@ impl Inode for RamInode {
                 Gid::new_root(),
             ),
         };
-        ostd::console::early_print(format_args!("[ramfs.mknod] new_inode done\n"));
 
-        ostd::console::early_print(format_args!("[ramfs.mknod] before upgrade\n"));
         let mut self_dir = self_dir.upgrade();
-        ostd::console::early_print(format_args!("[ramfs.mknod] after upgrade\n"));
         self_dir.append_entry(name, new_inode.clone());
-        ostd::console::early_print(format_args!("[ramfs.mknod] append done\n"));
         drop(self_dir);
 
         self.metadata.lock().inc_size();
-        ostd::console::early_print(format_args!("[ramfs.mknod] inc size done\n"));
         Ok(new_inode)
     }
 

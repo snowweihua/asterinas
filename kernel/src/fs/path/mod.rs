@@ -248,9 +248,7 @@ impl Path {
 
     /// Creates a `Path` by making an inode of the `type_` with the `mode`.
     pub fn mknod(&self, name: &str, mode: InodeMode, type_: MknodType) -> Result<Self> {
-        ostd::console::early_print(format_args!("[path.mknod] name={}\n", name));
         let inner = self.dentry.mknod(name, mode, type_)?;
-        ostd::console::early_print(format_args!("[path.mknod] done\n"));
         Ok(Self::new(self.mount.clone(), inner))
     }
 
