@@ -86,23 +86,14 @@ mod vm;
 #[ostd::main]
 #[controlled]
 fn main() {
-    ostd::arch::boot::pl011_puts_safe(b"[KM.main] start\n");
-    ostd::arch::boot::pl011_puts_safe(b"[KM.main] before component::init_all\n");
-    ostd::arch::boot::pl011_puts_safe(b"[mac.3] before call\n");
     component::init_all(InitStage::Bootstrap, component::parse_metadata!()).unwrap();
-    ostd::arch::boot::pl011_puts_safe(b"[mac.4] after call\n");
-    ostd::arch::boot::pl011_puts_safe(b"[KM.main] after component::init_all\n");
 
     init();
-    ostd::arch::boot::pl011_puts_safe(b"[KM.main] after init\n");
 
     // Spawn all AP idle threads.
-    ostd::arch::boot::pl011_puts_safe(b"[KM.main] before register_ap_entry\n");
     ostd::boot::smp::register_ap_entry(ap_init);
-    ostd::arch::boot::pl011_puts_safe(b"[KM.main] after register_ap_entry\n");
 
     init_on_each_cpu();
-    ostd::arch::boot::pl011_puts_safe(b"[KM.main] after init_on_each_cpu\n");
 
     // Spawn the first kernel thread on BSP.
     ThreadOptions::new(first_kthread)
@@ -112,32 +103,14 @@ fn main() {
 }
 
 fn init() {
-    ostd::arch::boot::pl011_puts_safe(b"DBG: init() start\n");
-    ostd::arch::boot::pl011_puts_safe(b"DBG: before thread::init()\n");
     thread::init();
-    ostd::arch::boot::pl011_puts_safe(b"DBG: thread::init() done\n");
-    ostd::arch::boot::pl011_puts_safe(b"DBG: before util::random::init()\n");
     util::random::init();
-    ostd::arch::boot::pl011_puts_safe(b"DBG: util::random::init() done\n");
-    ostd::arch::boot::pl011_puts_safe(b"DBG: before driver::init()\n");
     driver::init();
-    ostd::arch::boot::pl011_puts_safe(b"DBG: driver::init() done\n");
-    ostd::arch::boot::pl011_puts_safe(b"DBG: before time::init()\n");
     time::init();
-    ostd::arch::boot::pl011_puts_safe(b"DBG: time::init() done\n");
-    ostd::arch::boot::pl011_puts_safe(b"DBG: before net::init()\n");
     net::init();
-    ostd::arch::boot::pl011_puts_safe(b"DBG: net::init() done\n");
-    ostd::arch::boot::pl011_puts_safe(b"DBG: before sched::init()\n");
     sched::init();
-    ostd::arch::boot::pl011_puts_safe(b"DBG: sched::init() done\n");
-    ostd::arch::boot::pl011_puts_safe(b"DBG: before process::init()\n");
     process::init();
-    ostd::arch::boot::pl011_puts_safe(b"DBG: process::init() done\n");
-    ostd::arch::boot::pl011_puts_safe(b"DBG: before fs::init()\n");
     fs::init();
-    ostd::arch::boot::pl011_puts_safe(b"DBG: fs::init() done\n");
-    ostd::arch::boot::pl011_puts_safe(b"DBG: init() complete\n");
 }
 
 fn init_on_each_cpu() {
@@ -147,32 +120,21 @@ fn init_on_each_cpu() {
 }
 
 fn init_in_first_kthread(fs_resolver: &FsResolver) {
-    ostd::arch::boot::pl011_puts_safe(b"[ifk] component::init_all(Kthread)\n");
     component::init_all(InitStage::Kthread, component::parse_metadata!()).unwrap();
-    ostd::arch::boot::pl011_puts_safe(b"[ifk] after components\n");
     // Work queue should be initialized before interrupt is enabled,
     // in case any irq handler uses work queue as bottom half
-    ostd::arch::boot::pl011_puts_safe(b"[ifk] before work_queue\n");
     thread::work_queue::init_in_first_kthread();
-    ostd::arch::boot::pl011_puts_safe(b"[ifk] before net\n");
     net::init_in_first_kthread();
-    ostd::arch::boot::pl011_puts_safe(b"[ifk] before fs\n");
     fs::init_in_first_kthread(fs_resolver);
-    ostd::arch::boot::pl011_puts_safe(b"[ifk] before ipc\n");
     ipc::init_in_first_kthread();
-    ostd::arch::boot::pl011_puts_safe(b"[ifk] done\n");
     #[cfg(any(target_arch = "x86_64", target_arch = "riscv64"))]
     vdso::init_in_first_kthread();
 }
 
 fn init_in_first_process(ctx: &Context) {
-    ostd::console::early_print(format_args!("[ifp] start\n"));
     device::init_in_first_process(ctx).unwrap();
-    ostd::console::early_print(format_args!("[ifp] device done\n"));
     fs::init_in_first_process(ctx);
-    ostd::console::early_print(format_args!("[ifp] fs done\n"));
     process::init_in_first_process(ctx);
-    ostd::console::early_print(format_args!("[ifp] done\n"));
 }
 
 fn ap_init() {
@@ -200,26 +162,14 @@ fn ap_init() {
 fn first_kthread() {
     // TODO: After introducing the mount namespace, use an initial mount namespace to create
     // the `FsResolver`, and the initial mount namespace should be passed to the first process.
-    ostd::arch::boot::pl011_puts_safe(b"[fk] start\n");
     let fs_resolver = FsResolver::new();
-    ostd::arch::boot::pl011_puts_safe(b"[fk] before init_in_first_kthread\n");
     init_in_first_kthread(&fs_resolver);
-    ostd::arch::boot::pl011_puts_safe(b"[fk] after init_in_first_kthread\n");
 
-    ostd::arch::boot::pl011_puts_safe(b"[fk] before print_banner\n");
     print_banner();
-    ostd::arch::boot::pl011_puts_safe(b"[fk] after print_banner\n");
 
-    ostd::arch::boot::pl011_puts_safe(b"[fk] before karg\n");
     let karg: KCmdlineArg = boot_info().kernel_cmdline.into();
-    ostd::arch::boot::pl011_puts_safe(b"[fk] karg parsed\n");
-    ostd::arch::boot::pl011_puts_safe(b"[fk] before argv vec\n");
     let argv = karg.get_initproc_argv().to_vec();
-    ostd::arch::boot::pl011_puts_safe(b"[fk] argv done\n");
-    ostd::arch::boot::pl011_puts_safe(b"[fk] before envp vec\n");
     let envp = karg.get_initproc_envp().to_vec();
-    ostd::arch::boot::pl011_puts_safe(b"[fk] envp done\n");
-    ostd::arch::boot::pl011_puts_safe(b"[fk] before spawn_init_process\n");
     let initproc = spawn_init_process(
         karg.get_initproc_path().unwrap(),
         argv,

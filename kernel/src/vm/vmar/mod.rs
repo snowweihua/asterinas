@@ -429,13 +429,9 @@ pub fn is_userspace_vaddr(vaddr: Vaddr) -> bool {
 
 impl Vmar_ {
     fn new_root() -> Arc<Self> {
-        ostd::arch::boot::pl011_puts_safe(b"[Vmar_] inner new\n");
         let inner = VmarInner::new();
-        ostd::arch::boot::pl011_puts_safe(b"[Vmar_] vm_space new\n");
         let vm_space = VmSpace::new();
-        ostd::arch::boot::pl011_puts_safe(b"[Vmar_] counters\n");
         let rss_counters = array::from_fn(|_| PerCpuCounter::new());
-        ostd::arch::boot::pl011_puts_safe(b"[Vmar_] arc new\n");
         Arc::new(Vmar_ {
             inner: RwMutex::new(inner),
             vm_space: Arc::new(vm_space),

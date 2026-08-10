@@ -166,7 +166,6 @@ impl TaskOptions {
         // have to disable name mangling for it.
         #[unsafe(no_mangle)]
         extern "C" fn kernel_task_entry() -> ! {
-            crate::arch::boot::pl011_puts_safe(b"[kte] start\n");
             // SAFETY: The new task is switched on a CPU for the first time, `after_switching_to`
             // hasn't been called yet.
             unsafe { processor::after_switching_to() };

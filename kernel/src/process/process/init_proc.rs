@@ -42,19 +42,14 @@ fn create_init_process(
     argv: Vec<CString>,
     envp: Vec<CString>,
 ) -> Result<Arc<Process>> {
-    ostd::arch::boot::pl011_puts_safe(b"[create] start\n");
     let pid = allocate_posix_tid();
-    ostd::arch::boot::pl011_puts_safe(b"[create] pid\n");
     let parent = Weak::new();
-    ostd::arch::boot::pl011_puts_safe(b"[create] before vm alloc\n");
     let process_vm = ProcessVm::alloc();
-    ostd::arch::boot::pl011_puts_safe(b"[create] after vm alloc\n");
     let resource_limits = ResourceLimits::default();
     let nice = Nice::default();
     let oom_score_adj = 0;
     let sig_dispositions = Arc::new(Mutex::new(SigDispositions::default()));
     let user_ns = UserNamespace::get_init_singleton().clone();
-    ostd::arch::boot::pl011_puts_safe(b"[create] before Process::new\n");
 
     let init_proc = Process::new(
         pid,
@@ -67,7 +62,6 @@ fn create_init_process(
         sig_dispositions,
         user_ns,
     );
-    ostd::arch::boot::pl011_puts_safe(b"[create] Process::new done\n");
 
     let init_task = create_init_task(
         pid,
@@ -77,9 +71,7 @@ fn create_init_process(
         argv,
         envp,
     )?;
-    ostd::arch::boot::pl011_puts_safe(b"[create] task done\n");
     init_proc.tasks().lock().insert(init_task).unwrap();
-    ostd::arch::boot::pl011_puts_safe(b"[create] done\n");
 
     Ok(init_proc)
 }
