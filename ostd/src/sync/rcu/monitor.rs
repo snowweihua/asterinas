@@ -29,8 +29,6 @@ impl RcuMonitor {
     /// This function is used to initialize a singleton instance of `RcuMonitor`.
     /// The singleton instance is globally accessible via the `RCU_MONITOR`.
     pub(super) fn new() -> Self {
-        #[cfg(target_arch = "aarch64")]
-        unsafe { crate::arch::boot::pl011_puts(b"[rcu.monitor.new.0] start\n"); }
         Self {
             is_monitoring: AtomicBool::new(false),
             state: SpinLock::new(State::new()),
@@ -82,31 +80,17 @@ impl RcuMonitor {
     where
         F: FnOnce() + Send + 'static,
     {
-        #[cfg(target_arch = "aarch64")]
-        crate::arch::boot::pl011_puts_safe(b"[rcu.agp] start\n");
         let mut state = self.state.disable_irq().lock();
-        #[cfg(target_arch = "aarch64")]
-        crate::arch::boot::pl011_puts_safe(b"[rcu.agp] lock acquired\n");
 
         state.next_callbacks.push_back(Box::new(f));
-        #[cfg(target_arch = "aarch64")]
-        crate::arch::boot::pl011_puts_safe(b"[rcu.agp] pushed\n");
 
         if !state.current_gp.is_complete() {
-            #[cfg(target_arch = "aarch64")]
-            crate::arch::boot::pl011_puts_safe(b"[rcu.agp] gp not complete, return\n");
             return;
         }
 
         let callbacks = core::mem::take(&mut state.next_callbacks);
-        #[cfg(target_arch = "aarch64")]
-        crate::arch::boot::pl011_puts_safe(b"[rcu.agp] took callbacks\n");
         state.current_gp.restart(callbacks);
-        #[cfg(target_arch = "aarch64")]
-        crate::arch::boot::pl011_puts_safe(b"[rcu.agp] restarted\n");
         self.is_monitoring.store(true, Relaxed);
-        #[cfg(target_arch = "aarch64")]
-        crate::arch::boot::pl011_puts_safe(b"[rcu.agp] done\n");
     }
 }
 
