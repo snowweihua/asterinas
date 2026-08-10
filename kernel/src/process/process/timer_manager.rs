@@ -81,8 +81,8 @@ fn update_cpu_time() {
 /// Registers a function to update the CPU clock in processes and
 /// threads during the system timer interrupt.
 pub(super) fn init_on_each_cpu() {
-    // Disabled for RPi3 timer-callback debugging.
-    // timer::register_callback_on_cpu(update_cpu_time);
+    // Re-enabled for RPi3 testing.
+    timer::register_callback_on_cpu(update_cpu_time);
 }
 
 /// Represents timer resources and utilities for a POSIX process.

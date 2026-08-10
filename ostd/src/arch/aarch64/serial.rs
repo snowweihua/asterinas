@@ -22,9 +22,12 @@ const MINIUART_IO_OFFSET: usize = 0x40;
 const MINIUART_LSR_OFFSET: usize = 0x54;
 const MINIUART_IER_OFFSET: usize = 0x44;
 const MINIUART_CNTL_OFFSET: usize = 0x60;
+const MINIUART_STAT_OFFSET: usize = 0x64;
 const MINIUART_AUX_ENABLES_MINIUART: u32 = 1 << 0;
 const MINIUART_LSR_TX_EMPTY: u32 = 1 << 5;
 const MINIUART_LSR_RX_READY: u32 = 1 << 0;
+// AUX_MU_STAT_REG bit 1: transmitter FIFO can accept at least one more symbol.
+const MINIUART_STAT_TX_SPACE: u32 = 1 << 1;
 const MINIUART_IER_RX_ENABLE: u32 = 1 << 0;
 // The BCM2835 mini-UUART interrupt enable register needs bits 2 and 3 set as
 // well as the RX-enable bit; real hardware does not generate interrupts without
@@ -90,6 +93,12 @@ fn miniuart_lsr_va() -> usize {
     MINIUART_BASE_PA + MINIUART_LSR_OFFSET + KERNEL_BASE_VADDR
 }
 
+/// RPi3 mini-UART status register virtual address.
+#[inline(always)]
+fn miniuart_stat_va() -> usize {
+    MINIUART_BASE_PA + MINIUART_STAT_OFFSET + KERNEL_BASE_VADDR
+}
+
 /// RPi3 mini-UART base virtual address.
 #[inline(always)]
 fn miniuart_base_va() -> usize {
@@ -105,6 +114,11 @@ fn miniuart_gpio_base_va() -> usize {
 #[inline(always)]
 fn miniuart_read_lsr() -> u32 {
     unsafe { core::ptr::read_volatile(miniuart_lsr_va() as *const u32) }
+}
+
+#[inline(always)]
+fn miniuart_read_stat() -> u32 {
+    unsafe { core::ptr::read_volatile(miniuart_stat_va() as *const u32) }
 }
 
 #[inline(always)]
@@ -171,9 +185,11 @@ pub fn init_rx_irq() {
                 0xC6, // clear receive and transmit FIFOs, keep FIFO enable bits
             );
 
-            // Keep interrupts disabled while we poll; we will re-enable the
-            // AUX bit in the peripheral controller from the timer tick.
-            core::ptr::write_volatile((base + MINIUART_IER_OFFSET) as *mut u32, 0);
+            // Enable RX interrupts so input is driven by the AUX IRQ path.
+            // The AUX enable bit in the peripheral controller is set separately
+            // by the kernel driver; the timer tick still re-enables it as a
+            // fallback if the firmware clears it.
+            core::ptr::write_volatile((base + MINIUART_IER_OFFSET) as *mut u32, MINIUART_IER_RX);
 
             // Re-route GPIO 14/15 to mini-UART (alt5) and disable pull-up/down.
             // The firmware or U-Boot may leave these pins configured for a
@@ -244,7 +260,18 @@ pub fn receive() -> u8 {
 
 pub fn send(data: u8) {
     if is_rpi3() {
-        while (miniuart_read_lsr() & MINIUART_LSR_TX_EMPTY) == 0 {}
+        // In interrupt context the UART RX handler calls back into the console
+        // to echo input.  If the TX FIFO is full we must not spin waiting for
+        // the host to drain it, because that would block the interrupt handler
+        // and lose incoming bytes.  In process context local IRQs are enabled,
+        // so blocking until space is available remains safe.
+        if !crate::arch::irq::is_local_enabled() {
+            if (miniuart_read_stat() & MINIUART_STAT_TX_SPACE) != 0 {
+                miniuart_write(data);
+            }
+            return;
+        }
+        while (miniuart_read_stat() & MINIUART_STAT_TX_SPACE) == 0 {}
         miniuart_write(data);
     } else {
         while (read_fr() & FR_TXFF) != 0 {}
@@ -256,7 +283,11 @@ pub fn send(data: u8) {
 
 pub fn send_direct_pa(data: u8) {
     if is_rpi3() {
-        while (unsafe { core::ptr::read_volatile((MINIUART_BASE_PA + MINIUART_LSR_OFFSET) as *const u32) } & MINIUART_LSR_TX_EMPTY) == 0 {}
+        while (unsafe {
+            core::ptr::read_volatile((MINIUART_BASE_PA + MINIUART_STAT_OFFSET) as *const u32)
+        } & MINIUART_STAT_TX_SPACE)
+            == 0
+        {}
         unsafe {
             core::ptr::write_volatile((MINIUART_BASE_PA + MINIUART_IO_OFFSET) as *mut u32, data as u32);
         }

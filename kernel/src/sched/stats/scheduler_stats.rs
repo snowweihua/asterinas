@@ -16,10 +16,11 @@ static SCHEDULER_STATS: Once<&'static dyn SchedulerStats> = Once::new();
 pub fn set_stats_from_scheduler(scheduler: &'static dyn SchedulerStats) {
     SCHEDULER_STATS.call_once(|| scheduler);
 
-    // Disabled for RPi3 timer-callback debugging.
-    // timer::register_callback_on_cpu(|| {
-    //     loadavg::update_loadavg(|| nr_queued_and_running().0);
-    // });
+    // Re-enabled with a local try-lock in ClassScheduler to avoid deadlocking
+    // in the timer interrupt while the scheduler holds a runqueue lock.
+    timer::register_callback_on_cpu(|| {
+        loadavg::update_loadavg(|| nr_queued_and_running().0);
+    });
 }
 
 /// The trait for the scheduler statistics.

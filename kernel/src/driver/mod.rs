@@ -28,9 +28,8 @@ pub fn init() {
         aster_console::register_device("serial-uart".to_string(), Arc::new(SerialConsole));
         init_uart_irq();
         // The RPi3 VideoCore firmware can clobber the AUX enable bit in
-        // ENABLE_IRQS_1.  Poll the RX FIFO on the 1 ms timer tick so that
-        // serial input works even when the AUX IRQ is transiently disabled.
-        timer::register_callback_on_cpu(poll_uart_input);
+        // ENABLE_IRQS_1.  For this test we rely on the AUX IRQ only.
+        // timer::register_callback_on_cpu(poll_uart_input);
     }
 }
 
@@ -40,6 +39,10 @@ fn init_uart_irq() {
         let mut uart_irq = IrqLine::alloc_specific(serial::irq_num()).unwrap();
         uart_irq.on_active(uart_irq_handler);
         serial::init_rx_irq();
+        // Make sure the AUX mini-UART IRQ is routed to the CPU.  The
+        // VideoCore firmware may clear this bit, so poll_uart_input() also
+        // re-enables it on every timer tick as a fallback.
+        serial::reenable_rx_irq();
         uart_irq
     });
 }
