@@ -53,12 +53,9 @@ impl Driver for FallbackRtc {
 
 #[init_component]
 fn time_init() -> Result<(), ComponentInitError> {
-    ostd::arch::boot::pl011_puts_safe(b"[cmp.time] init\n");
     let rtc = rtc::init_rtc_driver().unwrap_or_else(|| Arc::new(FallbackRtc));
-    ostd::arch::boot::pl011_puts_safe(b"[cmp.time] rtc done\n");
     RTC_DRIVER.call_once(|| rtc);
     tsc::init();
-    ostd::arch::boot::pl011_puts_safe(b"[cmp.time] tsc init done\n");
     Ok(())
 }
 

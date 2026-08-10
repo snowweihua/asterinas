@@ -16,15 +16,11 @@ pub static START_TIME: Once<SystemTime> = Once::new();
 pub(super) static START_TIME_AS_DURATION: Once<Duration> = Once::new();
 
 pub(super) fn init() {
-    ostd::arch::boot::pl011_puts_safe(b"[systime] init start\n");
     let raw = read_start_time();
-    ostd::arch::boot::pl011_puts_safe(b"[systime] got raw start time\n");
     let start_time = convert_system_time(raw).unwrap();
-    ostd::arch::boot::pl011_puts_safe(b"[systime] converted\n");
     START_TIME_AS_DURATION
         .call_once(|| start_time.duration_since(&SystemTime::UNIX_EPOCH).unwrap());
     START_TIME.call_once(|| start_time);
-    ostd::arch::boot::pl011_puts_safe(b"[systime] done\n");
 }
 
 impl SystemTime {

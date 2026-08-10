@@ -28,13 +28,9 @@ const USEC_PER_SEC: i64 = 1_000_000;
 const NSEC_PER_SEC: i64 = 1_000_000_000;
 
 pub(super) fn init() {
-    ostd::arch::boot::pl011_puts_safe(b"[ktime] init start\n");
     system_time::init();
-    ostd::arch::boot::pl011_puts_safe(b"[ktime] system_time done\n");
     clocks::init();
-    ostd::arch::boot::pl011_puts_safe(b"[ktime] clocks done\n");
     softirq::init();
-    ostd::arch::boot::pl011_puts_safe(b"[ktime] softirq done\n");
 }
 
 #[repr(C)]
