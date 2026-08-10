@@ -49,7 +49,6 @@ static SINGLETON: Once<Arc<SysTree>> = Once::new();
 
 #[init_component]
 fn init() -> core::result::Result<(), ComponentInitError> {
-    ostd::arch::boot::pl011_puts_safe(b"[cmp.systree] init\n");
     SINGLETON.call_once(|| Arc::new(SysTree::new()));
     Ok(())
 }

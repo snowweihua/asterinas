@@ -122,7 +122,6 @@ static LINES: Once<[SoftIrqLine; SoftIrqLine::NR_LINES as usize]> = Once::new();
 
 #[init_component]
 fn init() -> Result<(), ComponentInitError> {
-    ostd::arch::boot::pl011_puts_safe(b"[cmp.softirq] init\n");
     let lines: [SoftIrqLine; SoftIrqLine::NR_LINES as usize] =
         core::array::from_fn(|i| SoftIrqLine::new(i as u8));
     LINES.call_once(|| lines);
