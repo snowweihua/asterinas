@@ -118,7 +118,6 @@ impl<T: ?Sized, G: SpinGuardian> SpinLock<T, G> {
 
     /// Acquires the spin lock, otherwise busy waiting
     fn acquire_lock(&self) {
-        let mut iterations = 0u32;
         while !self.try_acquire_lock() {
             core::hint::spin_loop();
         }
