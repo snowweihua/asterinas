@@ -16,7 +16,7 @@ This file records durable findings only. Temporary probe chronology and supersed
   - typed serial input is received correctly (short and long commands are echoed and executed);
   - all timer callbacks (`update_cpu_time`, `softirq`, `loadavg`) are re-enabled and the shell remains responsive over 30+ second waits.
 - The mini-UART RX path is now driven by the AUX IRQ alone; the timer-polling fallback was removed because it kept the RX path behind a long timer ISR (see `Confirmed Fix: RPi3 mini-UART RX Input` below).
-- `SA_RESTORER` warnings and user-space exceptions (`0x92000047`, `0x82000007`) are still emitted but do not hang the shell; root cause identified as missing AArch64 signal-return support (no vDSO `__kernel_rt_sigreturn` or kernel-provided trampoline).
+- `SA_RESTORER` warnings and user-space exceptions (`0x92000047`, `0x82000007`) are now eliminated by a kernel-provided AArch64 signal-return trampoline (see `Confirmed Fix: AArch64 Signal Return` below).
 
 ## Durable RPi3 Constraints
 
@@ -148,14 +148,33 @@ The project uses plain load/store or boot-safe single-core helpers only at runti
   `loadavg`) run together and the shell remains responsive over 30+ second
   waits.
 
+## Confirmed Fix: AArch64 Signal Return
+
+- The `SA_RESTORER fallback mechanism not implemented` warning and the
+  user-space `[exception]` faults were caused by missing AArch64 signal-return
+  support.  Glibc on AArch64 does not supply a `sa_restorer`; it relies on the
+  kernel to provide `__kernel_rt_sigreturn`.
+- The kernel now maps a per-process executable trampoline page at a fixed high
+  user address (`MAX_USERSPACE_VADDR - PAGE_SIZE`).  The trampoline contains:
+  `mov x8, #__NR_rt_sigreturn` followed by `svc #0`.
+- `kernel/src/process/process_vm/mod.rs` creates and maps the trampoline VMO
+  during process VM setup (`clear_and_map` and `renew_vm_and_map`).
+- `kernel/src/process/signal/mod.rs` sets the signal handler `x30`/`lr` to
+  the trampoline address (or to the user-supplied `sa_restorer` when
+  `SA_RESTORER` is set).
+- `ostd/src/arch/aarch64/cpu/context.rs` exposes `lr`/`set_lr`, and
+  `kernel/src/arch/aarch64/cpu.rs` saves and restores `x30` in `SigContext`.
+- `kernel/src/process/signal/sig_disposition.rs` now permits AArch64
+  `rt_sigaction` without `SA_RESTORER`.
+- Hardware evidence: the boot log no longer contains `SA_RESTORER` warnings or
+  `[exception]` entries, and the shell remains interactive.
+
 ## Latest Hardware Evidence
 
 - Boot reaches the `/bin/sh` prompt (`/ #`) on the current image and serial input is
   fully interactive (short and long commands are echoed and executed).
 - The init process executes `SYS_OPENAT`, `SYS_READ`, `SYS_MMAP`, `SYS_IOCTL`, and
-  other syscalls; some user-space exceptions (`0x92000047`, `0x82000007`) and
-  `SA_RESTORER fallback mechanism not implemented` warnings are still emitted but
-  the shell continues to run.
+  other syscalls without emitting user-space exceptions or `SA_RESTORER` warnings.
 - `dram_base()` caching was verified by toggling: restoring the uncached FDT walk
   causes the boot to hang at `MetaSlot::get_slot`; the cached version reaches the
   shell prompt.
@@ -244,14 +263,8 @@ The project uses plain load/store or boot-safe single-core helpers only at runti
 
 ## Next Investigation
 
-- Implement AArch64 signal-return support to eliminate the `SA_RESTORER`
-  warning and the associated user-space exceptions.  Options:
-  - Add an AArch64 prebuilt vDSO (`vdso_aarch64.so`) providing
-    `__kernel_rt_sigreturn` and wire it into `do_signal` / `check_sigaction`
-    like riscv64.
-  - Or provide a kernel-allocated per-process executable signal-trampoline page.
 - Remove remaining temporary `early_print` / `pl011_puts_safe` probes from the
-  boot and init paths once the signal-return work is verified.
+  boot and init paths now that the shell and signal return are verified stable.
 - Re-evaluate remaining 16-byte register returns in the heap/frame path if new
   hangs appear; keep changes scoped to runtime-confirmed RPi3 failures.
 - Keep changes scoped to runtime-confirmed RPi3 failures; do not globally replace
