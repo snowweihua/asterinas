@@ -422,6 +422,20 @@ cpu_context_impl_getter_setter!(
     [x29, set_x29]
 );
 
+impl UserContext {
+    /// Gets the link register (x30 / LR).
+    #[inline(always)]
+    pub fn lr(&self) -> usize {
+        self.user_context.lr
+    }
+
+    /// Sets the link register (x30 / LR).
+    #[inline(always)]
+    pub fn set_lr(&mut self, lr: usize) {
+        self.user_context.lr = lr;
+    }
+}
+
 /// The FPU context of user task.
 ///
 /// This could be used for saving both legacy and modern state format.

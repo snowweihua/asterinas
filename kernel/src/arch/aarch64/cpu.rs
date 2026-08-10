@@ -99,6 +99,7 @@ impl SigContext {
         gp.x29 = self.regs[29];
         dst.set_instruction_pointer(self.pc);
         dst.set_stack_pointer(self.sp);
+        dst.set_lr(self.regs_lr);
     }
 
     /// Save user registers into this context.
@@ -136,6 +137,7 @@ impl SigContext {
         self.regs[29] = gp.x29;
         self.pc = src.instruction_pointer();
         self.sp = src.stack_pointer();
+        self.regs_lr = src.lr();
     }
 }
 

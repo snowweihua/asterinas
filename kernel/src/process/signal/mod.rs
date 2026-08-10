@@ -297,18 +297,37 @@ pub fn handle_user_signal(
         .sig_context()
         .set(Some(ucontext_addr as Vaddr));
 
-    // 3. Write the address of the restorer code.
-    stack_pointer = ucontext_addr;
-    if flags.contains(SigActionFlags::SA_RESTORER) {
-        // If the SA_RESTORER flag is present, the restorer code address is provided by the user.
-        stack_pointer = write_u64_to_user_stack(stack_pointer, restorer_addr as u64)?;
-        trace!(
-            "After writing restorer addr: user_rsp = 0x{:x}",
-            stack_pointer
-        );
-    } else {
-        #[cfg(target_arch = "riscv64")]
-        user_ctx.set_ra(ctx.process.vm().vdso_base() + crate::vdso::__VDSO_RT_SIGRETURN_OFFSET);
+    // 3. Set the return path for the signal handler.
+    cfg_if::cfg_if! {
+        if #[cfg(target_arch = "x86_64")] {
+            stack_pointer = ucontext_addr;
+            if flags.contains(SigActionFlags::SA_RESTORER) {
+                // The x86-64 ABI pops the return address from the stack.
+                stack_pointer = write_u64_to_user_stack(stack_pointer, restorer_addr as u64)?;
+                trace!(
+                    "After writing restorer addr: user_rsp = 0x{:x}",
+                    stack_pointer
+                );
+            }
+        } else if #[cfg(target_arch = "riscv64")] {
+            let restorer_addr = if flags.contains(SigActionFlags::SA_RESTORER) {
+                restorer_addr
+            } else {
+                ctx.process.vm().vdso_base() + crate::vdso::__VDSO_RT_SIGRETURN_OFFSET
+            };
+            user_ctx.set_ra(restorer_addr);
+            stack_pointer = ucontext_addr;
+        } else if #[cfg(target_arch = "aarch64")] {
+            let restorer_addr = if flags.contains(SigActionFlags::SA_RESTORER) {
+                restorer_addr
+            } else {
+                ctx.process.vm().sigreturn_trampoline_base()
+            };
+            user_ctx.set_lr(restorer_addr);
+            stack_pointer = ucontext_addr;
+        } else {
+            compile_error!("unsupported target");
+        }
     }
 
     // 4. Set correct register values

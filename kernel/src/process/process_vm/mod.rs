@@ -19,6 +19,9 @@ use aster_rights::Full;
 pub use heap::Heap;
 use ostd::{sync::MutexGuard, task::disable_preempt};
 
+#[cfg(target_arch = "aarch64")]
+use ostd::mm::{VmIo, MAX_USERSPACE_VADDR, PAGE_SIZE};
+
 pub use self::{
     heap::USER_HEAP_SIZE_LIMIT,
     init_stack::{
@@ -27,6 +30,42 @@ pub use self::{
     },
 };
 use crate::{prelude::*, vm::vmar::Vmar};
+
+#[cfg(target_arch = "aarch64")]
+use crate::vm::{perms::VmPerms, vmo::{Vmo, VmoOptions}};
+#[cfg(target_arch = "aarch64")]
+use aster_rights::Rights;
+
+#[cfg(target_arch = "aarch64")]
+const SIGNAL_RETURN_TRAMPOLINE_VADDR: Vaddr = MAX_USERSPACE_VADDR - PAGE_SIZE;
+
+#[cfg(target_arch = "aarch64")]
+const SIGNAL_RETURN_TRAMPOLINE_CODE: &[u8] = &[
+    // mov x8, #__NR_rt_sigreturn (139)
+    0x68, 0x11, 0x80, 0xd2,
+    // svc #0
+    0x01, 0x00, 0x00, 0xd4,
+];
+
+#[cfg(target_arch = "aarch64")]
+fn create_signal_return_trampoline_vmo() -> Result<Vmo<Rights>> {
+    let vmo = VmoOptions::<Rights>::new(PAGE_SIZE).alloc()?;
+    vmo.write_bytes(0, SIGNAL_RETURN_TRAMPOLINE_CODE)?;
+    // The rest of the page is already zero-filled; on AArch64 0x00000000
+    // decodes to `udf #0` and will fault if execution reaches it.
+    Ok(vmo)
+}
+
+#[cfg(target_arch = "aarch64")]
+pub(super) fn map_signal_return_trampoline(root_vmar: &Vmar<Full>) -> Result<()> {
+    let vmo = create_signal_return_trampoline_vmo()?;
+    let vmar_map_options = root_vmar
+        .new_map(PAGE_SIZE, VmPerms::READ | VmPerms::EXEC)?
+        .offset(SIGNAL_RETURN_TRAMPOLINE_VADDR)
+        .vmo(vmo);
+    vmar_map_options.build()?;
+    Ok(())
+}
 
 /*
  * The user's virtual memory space layout looks like below.
@@ -204,6 +243,13 @@ impl ProcessVm {
         let root_vmar = self.lock_root_vmar();
         root_vmar.unwrap().clear().unwrap();
         self.heap.alloc_and_map_vm(root_vmar.unwrap()).unwrap();
+        #[cfg(target_arch = "aarch64")]
+        map_signal_return_trampoline(root_vmar.unwrap()).unwrap();
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    pub(super) fn sigreturn_trampoline_base(&self) -> Vaddr {
+        SIGNAL_RETURN_TRAMPOLINE_VADDR
     }
 }
 
@@ -223,4 +269,7 @@ pub fn renew_vm_and_map(ctx: &Context) {
         .heap
         .alloc_and_map_vm(root_vmar.unwrap())
         .unwrap();
+
+    #[cfg(target_arch = "aarch64")]
+    map_signal_return_trampoline(root_vmar.unwrap()).unwrap();
 }
