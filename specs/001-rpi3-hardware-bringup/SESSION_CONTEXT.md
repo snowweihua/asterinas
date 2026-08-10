@@ -5,20 +5,18 @@ This file records durable findings only. Temporary probe chronology and supersed
 ## Current Status
 
 - Target: Raspberry Pi 3 Model B, AArch64, single-core runtime.
-- Boot reaches the init process shell (`/ #`) on the physical board.
+- Boot reaches the init process shell (`/ #`) on the physical board and the shell is interactive.
 - Verified through the latest image:
   - metadata mapping completes;
   - kernel page-table activation completes;
   - all 12 static component records are discovered and sorted;
   - bootstrap components initialize;
   - `init_in_first_process` completes device-node creation and `ramfs.mknod`;
-  - the first process runs `/bin/sh` and prints a `/ #` prompt.
-- The mini-UART RX path is now driven by a combined interrupt + timer-polling
-  workaround (see `Confirmed Fix: RPi3 mini-UART RX Input` below).  A previous
-  image with this workaround showed an interactive shell prompt and echoed
-  serial input characters (e.g. `+x-` patterns in the serial log).
-- User-space exceptions and `SA_RESTORER` warnings remain; the `ctrl-o` path
-  still needs verification in a fresh session.
+  - the first process runs `/bin/sh` and prints a `/ #` prompt;
+  - typed serial input is received correctly (short and long commands are echoed and executed);
+  - all timer callbacks (`update_cpu_time`, `softirq`, `loadavg`) are re-enabled and the shell remains responsive over 30+ second waits.
+- The mini-UART RX path is now driven by the AUX IRQ alone; the timer-polling fallback was removed because it kept the RX path behind a long timer ISR (see `Confirmed Fix: RPi3 mini-UART RX Input` below).
+- `SA_RESTORER` warnings and user-space exceptions (`0x92000047`, `0x82000007`) are still emitted but do not hang the shell; root cause identified as missing AArch64 signal-return support (no vDSO `__kernel_rt_sigreturn` or kernel-provided trampoline).
 
 ## Durable RPi3 Constraints
 
@@ -124,30 +122,45 @@ The project uses plain load/store or boot-safe single-core helpers only at runti
   - `reenable_rx_irq()` exposes the periodic AUX enable re-write to the
     kernel driver.
 - `kernel/src/driver/mod.rs`:
-  - `poll_uart_input()` re-enables the AUX IRQ, then polls `serial::has_data()`
-    and drains the RX FIFO by calling the registered UART callback for each
-    received byte.
-  - `poll_uart_input()` is registered as a 1 ms timer callback and is also
-    invoked directly from the UART IRQ handler.
-  - This timer-driven path keeps RX input alive even when the VideoCore
-    firmware has transiently disabled the AUX interrupt.
-- The current image contains temporary `early_print` probes in `poll_uart_input`
-  and `register_callback_on_cpu` to trace RX bytes and callback registration;
-  these should be removed once the shell input path is fully verified.
+  - `poll_uart_input()` re-enables the AUX IRQ and drains the RX FIFO by
+    calling the registered UART callback for each received byte.
+  - It is invoked directly from the UART IRQ handler; the previous 1 ms
+    timer-polling registration was removed because the timer ISR latency caused
+    RX FIFO overflow.
+- `ostd/src/arch/aarch64/serial.rs`:
+  - `send()` uses `MINIUART_STAT_REG_TX_SPACE` to keep the TX FIFO busy.
+  - When `send()` is called with local IRQs disabled (the AUX IRQ echo path),
+    it writes only if the TX FIFO has space and drops the byte otherwise.
+    This prevents the interrupt handler from spinning on output while new RX
+    bytes are arriving.
+- The current image no longer uses timer-polling for RX; the AUX IRQ alone is
+  sufficient for an interactive shell.
+
+## Confirmed Fix: Scheduler loadavg in timer interrupt
+
+- Re-enabling the `loadavg` timer callback caused hangs because
+  `ClassScheduler::nr_queued_and_running()` locked every per-CPU runqueue.
+  If the interrupted context already held one of those locks, the timer ISR
+  deadlocked.
+- The fix in `kernel/src/sched/sched_class/mod.rs` reads only the local
+  runqueue and uses `try_lock()`, returning `(0, 0)` if it is contended.
+- With this change all timer callbacks (`update_cpu_time`, `softirq`,
+  `loadavg`) run together and the shell remains responsive over 30+ second
+  waits.
 
 ## Latest Hardware Evidence
 
-- Boot reaches the `/bin/sh` prompt (`/ #`) on the current image (`00001414`).
+- Boot reaches the `/bin/sh` prompt (`/ #`) on the current image and serial input is
+  fully interactive (short and long commands are echoed and executed).
 - The init process executes `SYS_OPENAT`, `SYS_READ`, `SYS_MMAP`, `SYS_IOCTL`, and
-  other syscalls; some user-space exceptions (`0x92000047`, `0x82000007`) are
-  reported and handled without halting the shell.
+  other syscalls; some user-space exceptions (`0x92000047`, `0x82000007`) and
+  `SA_RESTORER fallback mechanism not implemented` warnings are still emitted but
+  the shell continues to run.
 - `dram_base()` caching was verified by toggling: restoring the uncached FDT walk
   causes the boot to hang at `MetaSlot::get_slot`; the cached version reaches the
   shell prompt.
-- A prior image with the AUX re-enable/timer-polling workaround printed the
-  `/ #` prompt and reflected typed characters in the serial log (e.g. `+x-`
-  byte markers), indicating serial input reached the shell.  The `ctrl-o`
-  path has not been fully verified and should be retried in the next session.
+- All timer callbacks (`update_cpu_time`, `softirq`, `loadavg`) run together and the
+  shell remains responsive over waits of 30 seconds or more.
 
 ## Root Cause: 16-Byte Register Returns Corrupt x30
 
@@ -198,6 +211,23 @@ The project uses plain load/store or boot-safe single-core helpers only at runti
   - Heap-allocator crate's `SlabCache::alloc`/`ObjectCache::alloc`
     `Result<HeapSlot, AllocError>` paths.
 
+## Checkpoint (current session)
+
+- Removed the 1 ms `poll_uart_input` timer-polling fallback; serial RX is now
+  handled entirely by the AUX mini-UART IRQ.
+- Added a non-blocking `serial::send` path when local IRQs are disabled so the
+  AUX IRQ handler cannot spin on TX and miss RX bytes.
+- Re-enabled `update_cpu_time`, `softirq`, and `loadavg` timer callbacks.
+- Made `ClassScheduler::nr_queued_and_running` use a local `try_lock` to avoid
+  timer-ISR deadlock with scheduler runqueue locks.
+- Verified interactive shell on hardware: `ls`, `echo hello`, `echo long test`,
+  and 30+ second idle waits all work with all timer callbacks enabled.
+- Committed: `8ae006aa`.
+- Investigated `SA_RESTORER` warnings and user-space exceptions: the AArch64
+  signal-return path is not implemented (no `__kernel_rt_sigreturn` vDSO or
+  kernel trampoline), so glibc falls back to `EINVAL` on `rt_sigaction` and
+  later page faults in the vDSO region are tolerated without hanging the shell.
+
 ## Operational Notes
 
 - Required physical verification sequence:
@@ -214,13 +244,14 @@ The project uses plain load/store or boot-safe single-core helpers only at runti
 
 ## Next Investigation
 
-- Build, deploy, and power-cycle the current image; verify that serial input
-  (including `ctrl-o` and normal characters) reaches the `/bin/sh` prompt.
-- Remove temporary `early_print` probes in `poll_uart_input` and
-  `register_callback_on_cpu` once RX input is confirmed.
-- Investigate and resolve remaining user-space exceptions (`0x92000047`,
-  `0x82000007`) and the `SA_RESTORER fallback mechanism not implemented for this
-  architecture` warning.
+- Implement AArch64 signal-return support to eliminate the `SA_RESTORER`
+  warning and the associated user-space exceptions.  Options:
+  - Add an AArch64 prebuilt vDSO (`vdso_aarch64.so`) providing
+    `__kernel_rt_sigreturn` and wire it into `do_signal` / `check_sigaction`
+    like riscv64.
+  - Or provide a kernel-allocated per-process executable signal-trampoline page.
+- Remove remaining temporary `early_print` / `pl011_puts_safe` probes from the
+  boot and init paths once the signal-return work is verified.
 - Re-evaluate remaining 16-byte register returns in the heap/frame path if new
   hangs appear; keep changes scoped to runtime-confirmed RPi3 failures.
 - Keep changes scoped to runtime-confirmed RPi3 failures; do not globally replace
