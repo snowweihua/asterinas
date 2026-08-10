@@ -173,7 +173,6 @@ static COMPONENT: Once<Component> = Once::new();
 
 #[init_component]
 fn init() -> Result<(), ComponentInitError> {
-    ostd::arch::boot::pl011_puts_safe(b"[cmp.net] init\n");
     let a = Component::init()?;
     COMPONENT.call_once(|| a);
     SoftIrqLine::get(NETWORK_TX_SOFTIRQ_ID).enable(handle_tx_softirq);

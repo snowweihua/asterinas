@@ -25,7 +25,6 @@ pub use console::_print;
 
 #[init_component]
 fn init() -> Result<(), ComponentInitError> {
-    ostd::arch::boot::pl011_puts_safe(b"[cmp.logger] init\n");
     aster_logger::init();
     Ok(())
 }
