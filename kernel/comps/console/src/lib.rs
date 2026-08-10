@@ -67,7 +67,6 @@ static COMPONENT: Once<Component> = Once::new();
 
 #[init_component]
 fn component_init() -> Result<(), ComponentInitError> {
-    ostd::arch::boot::pl011_puts_safe(b"[cmp.cons] init\n");
     let component = Component::init()?;
     COMPONENT.call_once(|| component);
     Ok(())
