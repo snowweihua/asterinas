@@ -10,7 +10,7 @@ use core::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 pub(crate) static IS_HARDWARE: AtomicBool = AtomicBool::new(false);
 
 /// Cached board type: 0 = unknown, 1 = QemuVirt, 2 = RaspberryPi3.
-/// Used by early_puts before DEVICE_TREE is available.
+/// Used by the runtime console and serial driver before DEVICE_TREE is available.
 static BOARD_CACHE: AtomicU8 = AtomicU8::new(0);
 
 /// Magic bytes at offset 4 in a valid FDT blob (big-endian).
