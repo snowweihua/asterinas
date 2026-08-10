@@ -121,10 +121,6 @@ impl<T: ?Sized, G: SpinGuardian> SpinLock<T, G> {
         let mut iterations = 0u32;
         while !self.try_acquire_lock() {
             core::hint::spin_loop();
-            iterations += 1;
-            if iterations == 1 {
-                crate::arch::boot::pl011_puts_safe(b"[spin.L] spinning...\n");
-            }
         }
     }
 

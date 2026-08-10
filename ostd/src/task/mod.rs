@@ -180,7 +180,6 @@ impl TaskOptions {
             let task_func = task_func
                 .take()
                 .expect("task function is `None` when trying to run");
-            crate::console::early_print(format_args!("[kte] before task_func\n"));
             task_func();
 
             // Manually drop all the on-stack variables to prevent memory leakage!
