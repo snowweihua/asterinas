@@ -17,6 +17,7 @@ This file records durable findings only. Temporary probe chronology and supersed
   - all timer callbacks (`update_cpu_time`, `softirq`, `loadavg`) are re-enabled and the shell remains responsive over 30+ second waits.
 - The mini-UART RX path is now driven by the AUX IRQ alone; the timer-polling fallback was removed because it kept the RX path behind a long timer ISR (see `Confirmed Fix: RPi3 mini-UART RX Input` below).
 - `SA_RESTORER` warnings and user-space exceptions (`0x92000047`, `0x82000007`) are now eliminated by a kernel-provided AArch64 signal-return trampoline (see `Confirmed Fix: AArch64 Signal Return` below).
+- All temporary `pl011_puts` / `pl011_puts_hex` / `pl011_puts_safe` / `early_marker` / `mini_uart_puts` / `early_print` debug probes have been removed from compiled code; the kernel still boots to the interactive `/ #` prompt.
 
 ## Durable RPi3 Constraints
 
@@ -180,9 +181,9 @@ The project uses plain load/store or boot-safe single-core helpers only at runti
   shell prompt.
 - All timer callbacks (`update_cpu_time`, `softirq`, `loadavg`) run together and the
   shell remains responsive over waits of 30 seconds or more.
-- Bulk removal of the temporary `pl011_puts_safe` probes causes a layout-sensitive
-  hang during first-kthread / process-spawn (garbled serial after `[vmspace] done`,
-  no prompt); the change was reverted and the stable image boots again.
+- The temporary `pl011_puts` / `pl011_puts_safe` / `early_print` / `mini_uart_puts`
+  debug probes were removed in a bulk cleanup; the physical image still boots to the
+  `/ #` prompt and the shell remains interactive.
 
 ## Root Cause: 16-Byte Register Returns Corrupt x30
 
@@ -266,20 +267,25 @@ The project uses plain load/store or boot-safe single-core helpers only at runti
 
 ## Next Investigation
 
-- Removing the temporary `pl011_puts_safe` probes as a bulk change causes the
-  boot to hang in the first-kthread / process-spawn path (garbled serial output
-  after `[vmspace] done`, no `/ #` prompt).  The hang is layout-sensitive and
-  was reverted immediately.  This confirms the remaining 16-byte register
-  returns listed below still affect runtime and must be fixed before the probes
-  can be removed.
-- Target the remaining 16-byte register returns identified in the `Root Cause`
-  section:
-  - `Frame::from_unused` (`Result<Frame<M>, GetFrameError>`);
-  - `UniqueFrame::from_unused` (public `Result` wrapper);
-  - `alloc_frame_with` (`Result<Frame<M>>`);
-  - heap allocator `SlabCache::alloc` / `ObjectCache::alloc`
-    `Result<HeapSlot, AllocError>` paths.
-- Only remove temporary `early_print` / `pl011_puts_safe` probes after the
-  above 16-byte returns are fixed and verified stable.
-- Keep changes scoped to runtime-confirmed RPi3 failures; do not globally replace
-  remaining `spin::Once` uses without hardware evidence.
+- Temporary debug-probe cleanup is complete: all `pl011_puts` / `pl011_puts_safe`
+  / `pl011_puts_hex` / `early_marker` / `mini_uart_puts` / `early_print` probes
+  have been removed from compiled code and the physical image boots to the
+  interactive `/ #` prompt.
+- The serial output still contains raw ANSI color escape sequences from the
+  `log_color` logger feature, which the RPi3 serial terminal does not interpret;
+  this is cosmetic and does not affect boot or shell interactivity.
+- Further RPi3 bring-up work (e.g., SMP enablement, network/storage drivers, or
+  additional AArch64 hardening) can proceed from the current stable baseline.
+
+## Checkpoint (current session)
+
+- Removed remaining temporary debug probes from compiled code:
+  - `kernel/src/thread/exception.rs` (`early_print` exception/page-fault markers);
+  - `osdk/deps/heap-allocator/src/{allocator.rs,slab_cache.rs}` (`early_print` slot-cache markers);
+  - `kernel/libs/comp-sys/component/src/lib.rs` (`mini_uart_puts` and bracketed `info!` markers);
+  - `ostd/src/arch/aarch64/boot/{mod.rs,boot.S}` (`pl011_puts` / `pl011_puts_hex` / `pl011_puts_safe` / `early_marker` / A–F boot markers);
+  - `ostd/src/lib.rs` (unused `early_marker` helper).
+- Removed the now-unused `pl011_puts` / `pl011_puts_hex` / `pl011_puts_safe` / `early_marker` helper definitions.
+- Updated stale `BOARD_CACHE` comment in `ostd/src/arch/aarch64/board.rs`.
+- Verified on hardware: build, convert, deploy, power-cycle, and serial capture confirm the kernel boots to `/ #`.
+- Commits: `15a12319` and `383e1f46`.
