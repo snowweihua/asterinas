@@ -8,11 +8,56 @@ Run directly as a script (uses stdio protocol):
 import os
 import shutil
 import subprocess
+import sys
 import threading
 import time
 import traceback
 
 from fastmcp import FastMCP
+
+
+def _is_duplicate_instance():
+    """Avoid duplicate MCP servers when devin spawns both 'devin list' and 'devin acp'.
+
+    Only the 'devin acp' child should run the build MCP server.  If our parent is a
+    'devin list' wrapper that has also spawned 'devin acp', exit silently so only
+    one build server exists.
+    """
+    try:
+        ppid = os.getppid()
+        with open(f"/proc/{ppid}/cmdline", "rb") as f:
+            parent_cmd = f.read().replace(b"\0", b" ").decode("ascii", "replace")
+        if "devin" in parent_cmd and "acp" in parent_cmd:
+            return False
+        if "devin" in parent_cmd:
+            children_path = f"/proc/{ppid}/task/{ppid}/children"
+            if os.path.exists(children_path):
+                with open(children_path, "r") as f:
+                    for cpid in f.read().split():
+                        try:
+                            with open(f"/proc/{cpid}/cmdline", "rb") as cf:
+                                ccmd = cf.read().replace(b"\0", b" ").decode("ascii", "replace")
+                            if "devin" in ccmd and "acp" in ccmd:
+                                return True
+                        except FileNotFoundError:
+                            continue
+            for _ in range(20):
+                time.sleep(0.1)
+                try:
+                    with open(children_path, "r") as f:
+                        for cpid in f.read().split():
+                            try:
+                                with open(f"/proc/{cpid}/cmdline", "rb") as cf:
+                                    ccmd = cf.read().replace(b"\0", b" ").decode("ascii", "replace")
+                                if "devin" in ccmd and "acp" in ccmd:
+                                    return True
+                            except FileNotFoundError:
+                                continue
+                except FileNotFoundError:
+                    break
+    except Exception as e:
+        print(f"[build_mcp] process-tree check failed: {e}", file=sys.stderr)
+    return False
 
 WORKSPACE = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 DEFAULT_DEPLOY_PATH = "/mnt/d/pi_sd/asterina.img"
@@ -177,5 +222,8 @@ def build_and_deploy_tool(deploy_path: str = DEFAULT_DEPLOY_PATH) -> str:
 
 
 if __name__ == "__main__":
+    if _is_duplicate_instance():
+        log("Duplicate devin list build server instance detected; exiting.")
+        sys.exit(0)
     log("=== Build MCP server running ===")
     mcp.run()

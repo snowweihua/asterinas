@@ -10,10 +10,61 @@ Usage:
 Then OpenCode talks to this process via stdio.
 """
 
+import os
 import socket
 import sys
 import threading
 import time
+
+
+def _is_duplicate_instance():
+    """Avoid duplicate MCP clients when devin spawns both 'devin list' and 'devin acp'.
+
+    The active agent is the 'devin acp' child.  If our parent (or a sibling under the
+    same parent) is/contains a 'devin acp' process, any sibling 'devin list' instance
+    should exit so only one TCP client per port stays connected to the relay.
+    """
+    try:
+        ppid = os.getppid()
+        # Read the parent's command line.
+        with open(f"/proc/{ppid}/cmdline", "rb") as f:
+            parent_cmd = f.read().replace(b"\0", b" ").decode("ascii", "replace")
+        # If we are directly started by devin acp, keep running.
+        if "devin" in parent_cmd and "acp" in parent_cmd:
+            return False
+        # If the parent is devin list (or another devin wrapper) and it has a child
+        # named devin acp, we are the duplicate wrapper instance.
+        if "devin" in parent_cmd:
+            children_path = f"/proc/{ppid}/task/{ppid}/children"
+            if os.path.exists(children_path):
+                with open(children_path, "r") as f:
+                    for cpid in f.read().split():
+                        try:
+                            with open(f"/proc/{cpid}/cmdline", "rb") as cf:
+                                ccmd = cf.read().replace(b"\0", b" ").decode("ascii", "replace")
+                            if "devin" in ccmd and "acp" in ccmd:
+                                return True
+                        except FileNotFoundError:
+                            continue
+            # Also give devin acp a moment to appear before deciding.
+            for _ in range(20):
+                time.sleep(0.1)
+                try:
+                    with open(children_path, "r") as f:
+                        for cpid in f.read().split():
+                            try:
+                                with open(f"/proc/{cpid}/cmdline", "rb") as cf:
+                                    ccmd = cf.read().replace(b"\0", b" ").decode("ascii", "replace")
+                                if "devin" in ccmd and "acp" in ccmd:
+                                    return True
+                            except FileNotFoundError:
+                                continue
+                except FileNotFoundError:
+                    break
+    except Exception as e:
+        # If we cannot determine the process tree, run normally.
+        print(f"[{os.path.basename(__file__)}] process-tree check failed: {e}", file=sys.stderr)
+    return False
 
 
 def log(msg):
@@ -40,6 +91,10 @@ def forward_tcp_to_stdout():
 
 def main():
     global sock
+
+    if _is_duplicate_instance():
+        log("Detected duplicate devin list MCP client; exiting.")
+        sys.exit(0)
 
     if len(sys.argv) < 4:
         print(f"Usage: {sys.argv[0]} --host HOST --port PORT", file=sys.stderr)

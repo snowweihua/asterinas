@@ -15,10 +15,15 @@ PROJECT_NAME = "asterinas"
 
 def get_project_container_tag() -> str:
     try:
-        remote = subprocess.check_output(
-            ["git", "config", "--get", "remote.origin.url"], text=True, stderr=subprocess.DEVNULL
+        common_dir = subprocess.check_output(
+            ["git", "rev-parse", "--git-common-dir"],
+            text=True, cwd=PROJECT_PATH, stderr=subprocess.DEVNULL
         ).strip()
-        project_identity = f"remote:{remote}"
+        if not common_dir:
+            raise ValueError("Empty git-common-dir")
+        common_dir = common_dir if os.path.isabs(common_dir) else os.path.abspath(os.path.join(PROJECT_PATH, common_dir))
+        common_dir = os.path.realpath(common_dir)
+        project_identity = f"git-common:{common_dir}"
         hash_val = hashlib.sha256(project_identity.encode()).hexdigest()[:16]
         return f"opencode_project_{hash_val}"
     except Exception:

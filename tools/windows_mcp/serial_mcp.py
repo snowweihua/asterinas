@@ -287,17 +287,19 @@ def serial_wait(pattern: str, timeout_ms: int = 30000) -> str:
     log(f"serial_wait called: pattern={pattern}, timeout_ms={timeout_ms}")
     start = time.time()
     deadline = time.time() + timeout_ms / 1000
+    accumulated = ""
 
     while time.time() < deadline:
         data = backend.read()
         if data:
-            if re.search(pattern, data):
+            accumulated += data
+            if re.search(pattern, accumulated):
                 log(f"serial_wait: pattern '{pattern}' found")
-                return data
+                return accumulated
         time.sleep(0.1)
 
     log(f"serial_wait: timeout, pattern '{pattern}' not found")
-    return ""
+    return accumulated
 
 
 @mcp.tool
