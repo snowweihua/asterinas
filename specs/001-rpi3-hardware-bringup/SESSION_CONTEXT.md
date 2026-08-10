@@ -180,6 +180,9 @@ The project uses plain load/store or boot-safe single-core helpers only at runti
   shell prompt.
 - All timer callbacks (`update_cpu_time`, `softirq`, `loadavg`) run together and the
   shell remains responsive over waits of 30 seconds or more.
+- Bulk removal of the temporary `pl011_puts_safe` probes causes a layout-sensitive
+  hang during first-kthread / process-spawn (garbled serial after `[vmspace] done`,
+  no prompt); the change was reverted and the stable image boots again.
 
 ## Root Cause: 16-Byte Register Returns Corrupt x30
 
@@ -263,9 +266,20 @@ The project uses plain load/store or boot-safe single-core helpers only at runti
 
 ## Next Investigation
 
-- Remove remaining temporary `early_print` / `pl011_puts_safe` probes from the
-  boot and init paths now that the shell and signal return are verified stable.
-- Re-evaluate remaining 16-byte register returns in the heap/frame path if new
-  hangs appear; keep changes scoped to runtime-confirmed RPi3 failures.
+- Removing the temporary `pl011_puts_safe` probes as a bulk change causes the
+  boot to hang in the first-kthread / process-spawn path (garbled serial output
+  after `[vmspace] done`, no `/ #` prompt).  The hang is layout-sensitive and
+  was reverted immediately.  This confirms the remaining 16-byte register
+  returns listed below still affect runtime and must be fixed before the probes
+  can be removed.
+- Target the remaining 16-byte register returns identified in the `Root Cause`
+  section:
+  - `Frame::from_unused` (`Result<Frame<M>, GetFrameError>`);
+  - `UniqueFrame::from_unused` (public `Result` wrapper);
+  - `alloc_frame_with` (`Result<Frame<M>>`);
+  - heap allocator `SlabCache::alloc` / `ObjectCache::alloc`
+    `Result<HeapSlot, AllocError>` paths.
+- Only remove temporary `early_print` / `pl011_puts_safe` probes after the
+  above 16-byte returns are fixed and verified stable.
 - Keep changes scoped to runtime-confirmed RPi3 failures; do not globally replace
   remaining `spin::Once` uses without hardware evidence.
