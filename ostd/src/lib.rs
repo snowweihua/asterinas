@@ -64,25 +64,6 @@ mod coverage;
 
 use core::sync::atomic::{AtomicBool, Ordering};
 
-#[cfg(target_arch = "aarch64")]
-use crate::arch::boot::pl011_puts;
-
-/// Write a single character to the RPi3 mini-UART for debug markers.
-/// Only usable on real RPi3 hardware (the mini-UART is at a fixed PA).
-#[cfg(target_arch = "aarch64")]
-#[inline(always)]
-unsafe fn early_marker(ch: u8) {
-    unsafe {
-        core::arch::asm!(
-            "movz x28, #0x3F21, lsl #16",
-            "movk x28, #0x5040",
-            "str w27, [x28]",
-            in("w27") ch as u32,
-            out("x28") _,
-            options(nostack),
-        );
-    }
-}
 
 pub use ostd_macros::{
     global_frame_allocator, global_heap_allocator, global_heap_allocator_slot_map, main,
@@ -106,17 +87,12 @@ pub use self::{error::Error, prelude::Result};
 // boot stage only global variables.
 #[doc(hidden)]
 unsafe fn init() {
-    unsafe { crate::arch::boot::pl011_puts(b"[init.0] start\n"); }
     arch::enable_cpu_features();
-    unsafe { crate::arch::boot::pl011_puts(b"[init.1] enable_cpu_features done\n"); }
 
     // SAFETY: This function is called only once, before `allocator::init`
     // and after memory regions are initialized.
-    unsafe { crate::arch::boot::pl011_puts(b"[init.1b] before init_early_allocator\n"); }
     unsafe { mm::frame::allocator::init_early_allocator() };
-    unsafe { crate::arch::boot::pl011_puts(b"[init.2] init_early_allocator done\n"); }
 
-    unsafe { crate::arch::boot::pl011_puts(b"[init.3] before serial::init\n"); }
     #[cfg(target_arch = "x86_64")]
     arch::if_tdx_enabled!({
     } else {
@@ -124,54 +100,39 @@ unsafe fn init() {
     });
     #[cfg(not(target_arch = "x86_64"))]
     arch::serial::init();
-    unsafe { crate::arch::boot::pl011_puts(b"[init.4] after serial::init\n"); }
 
-    unsafe { crate::arch::boot::pl011_puts(b"[init.5] before logger::init\n"); }
     logger::init();
-    unsafe { crate::arch::boot::pl011_puts(b"[init.6] after logger::init\n"); }
 
     // SAFETY:
     // 1. They are only called once in the boot context of the BSP.
     // 2. The number of CPUs are available because ACPI has been initialized.
     // 3. No CPU-local objects have been accessed yet.
-    unsafe { crate::arch::boot::pl011_puts(b"[init.7] before cpu::init_on_bsp\n"); }
     unsafe { cpu::init_on_bsp() };
-    unsafe { crate::arch::boot::pl011_puts(b"[init.8] after cpu::init_on_bsp\n"); }
 
     let meta_pages = unsafe { mm::frame::meta::init() };
-    unsafe { crate::arch::boot::pl011_puts(b"[init.9] after meta::init\n"); }
 
     // On AArch64, reserve a page for the kernel page table root BEFORE the
     // early allocator is retired.  This avoids calling the broken
     // alloc_frame_with() later (which crashes at `ret` on RPi3 hardware).
     #[cfg(target_arch = "aarch64")]
     {
-        unsafe { crate::arch::boot::pl011_puts(b"[init.9b] before reserve_root_pt_page\n"); }
         mm::page_table::reserve_root_pt_page();
-        unsafe { crate::arch::boot::pl011_puts(b"[init.9c] after reserve_root_pt_page\n"); }
     }
 
     // The frame allocator should be initialized immediately after the metadata
     // is initialized. Otherwise the boot page table can't allocate frames.
     // SAFETY: This function is called only once.
     unsafe { mm::frame::allocator::init() };
-    unsafe { crate::arch::boot::pl011_puts(b"[init.A] after allocator::init\n"); }
 
     boot::init_after_heap();
-    unsafe { crate::arch::boot::pl011_puts(b"[init.B] after init_after_heap\n"); }
 
-    unsafe { crate::arch::boot::pl011_puts(b"[init.B1] before kspace::init\n"); }
     mm::kspace::init_kernel_page_table(meta_pages);
-    unsafe { crate::arch::boot::pl011_puts(b"[init.C] after kspace::init\n"); }
 
     sync::init();
-    unsafe { crate::arch::boot::pl011_puts(b"[init] after sync::init\n"); }
 
     mm::dma::init();
-    unsafe { crate::arch::boot::pl011_puts(b"[init.dma] after dma::init\n"); }
 
     unsafe { arch::late_init_on_bsp() };
-    unsafe { crate::arch::boot::pl011_puts(b"[init.4] after late_init_on_bsp\n"); }
 
     #[cfg(target_arch = "x86_64")]
     arch::if_tdx_enabled!({
@@ -179,28 +140,21 @@ unsafe fn init() {
     });
 
     if cfg!(target_arch = "aarch64") && crate::arch::board::BoardType::cached() == 2 {
-        unsafe { crate::arch::boot::pl011_puts(b"[init.5] smp::init skipped on RPi3\n"); }
     } else {
         smp::init();
     }
 
     {
-        unsafe { crate::arch::boot::pl011_puts(b"[init.5] before activate_kernel_page_table\n"); }
         unsafe {
             mm::kspace::activate_kernel_page_table();
         }
-        unsafe { crate::arch::boot::pl011_puts(b"[init.5a] after activate_kernel_page_table\n"); }
     }
 
-    unsafe { crate::arch::boot::pl011_puts(b"[init.6] before IN_BOOTSTRAP_CONTEXT store\n"); }
     IN_BOOTSTRAP_CONTEXT.store(false, Ordering::Relaxed);
-    unsafe { crate::arch::boot::pl011_puts(b"[init.7] before enable_local_irq\n"); }
 
     arch::irq::enable_local();
-    unsafe { crate::arch::boot::pl011_puts(b"[init.8] before invoke_ffi_init_funcs\n"); }
 
     invoke_ffi_init_funcs();
-    unsafe { crate::arch::boot::pl011_puts(b"[init.9] after invoke_ffi_init_funcs\n"); }
 }
 
 /// Indicates whether the kernel is in bootstrap context.
@@ -213,7 +167,6 @@ fn invoke_ffi_init_funcs() {
     unsafe extern "C" {
         fn __ostd_main();
     }
-    unsafe { crate::arch::boot::pl011_puts(b"[IFF] skip init_array, calling __ostd_main directly\n") };
     unsafe { __ostd_main() };
 }
 

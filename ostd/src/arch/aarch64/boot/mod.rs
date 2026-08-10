@@ -21,31 +21,6 @@ use crate::{
 global_asm!(include_str!("boot.S"));
 global_asm!(include_str!("ap_boot.S"));
 
-// Pure-assembly PL011 helpers that live entirely outside Rust's debug
-// machinery.  No volatile-wrapper calls, no ptr::add precondition checks,
-// no panic paths — just plain AArch64 instructions.
-//
-// pl011_puts_asm(ptr: *const u8, len: usize, uart_base: usize)
-//   x0 = pointer to first byte
-//   x1 = byte count
-//   x2 = UART base PA
-//   Clobbers x3-x5; preserves everything else (including lr via ret).
-global_asm!(
-    r#"
-    .text
-    .align 2
-    .globl pl011_puts_asm
-pl011_puts_asm:
-    cbz     x1, 2f
-1:
-    ldrb    w3, [x0], #1
-    str     w3, [x2]
-    subs    x1, x1, #1
-    bne     1b
-2:
-    ret
-"#
-);
 
 /// The Flattened Device Tree of the platform.
 pub static DEVICE_TREE: Once<Fdt> = Once::new();
@@ -247,92 +222,6 @@ fn discover_dtb_paddr(device_tree_paddr: usize) -> Option<usize> {
     None
 }
 
-// Declared here; defined in the global_asm! block above.
-unsafe extern "C" {
-    fn pl011_puts_asm(ptr: *const u8, len: usize, uart_base: usize);
-}
-
-fn early_uart_base() -> usize {
-    if crate::arch::board::BoardType::cached() == 2 {
-        0x3F20_1000
-    } else {
-        0x0900_0000
-    }
-}
-
-pub fn pl011_puts_safe(s: &[u8]) {
-    unsafe { pl011_puts(s) }
-}
-
-#[inline(never)]
-pub unsafe fn pl011_puts(s: &[u8]) {
-    let mut i = 0;
-    while i < s.len() {
-        let b = s[i];
-        unsafe {
-            core::arch::asm!(
-                "movz x4, #0x3F21, lsl #16",
-                "movk x4, #0x5054",
-                "1: ldrb w5, [x4]",
-                "tst w5, #0x20",
-                "beq 1b",
-                out("x4") _,
-                out("w5") _,
-                options(nostack),
-            );
-        }
-        unsafe {
-            core::arch::asm!(
-                "movz x4, #0x3F21, lsl #16",
-                "movk x4, #0x5040",
-                "strb w3, [x4]",
-                in("w3") b as u32,
-                out("x4") _,
-                options(nostack),
-            );
-        }
-        i += 1;
-    }
-}
-
-#[inline(always)]
-fn early_marker(ch: u8) {
-    unsafe {
-        core::arch::asm!(
-            "movz x28, #0x3F21, lsl #16",
-            "movk x28, #0x5040",
-            "strb w27, [x28]",
-            in("w27") ch as u32,
-            out("x28") _,
-            options(nostack),
-        );
-    }
-}
-
-/// Print a hex value to the mini-UART. Used for diagnostic markers.
-/// Pure-register implementation: no stack frame, no local allocations.
-/// Uses the same UART address as pl011_puts (RPi3 mini-UART DR at 0x3F215040).
-#[inline(never)]
-pub unsafe fn pl011_puts_hex(val: usize) {
-    // Write "0x" prefix
-    for &byte in b"0x" {
-        // Busy-wait for TX FIFO to have space (LSR bit 5)
-        unsafe { core::arch::asm!("movz x4, #0x3F21, lsl #16", "movk x4, #0x5054", "1: ldrb w5, [x4]", "tst w5, #0x20", "beq 1b", out("x4") _, out("w5") _, options(nostack)); }
-        unsafe { core::arch::asm!("movz x4, #0x3F21, lsl #16", "movk x4, #0x5040", "strb w3, [x4]", in("w3") byte as u32, out("x4") _, options(nostack)); }
-    }
-    // Write 16 hex nibbles
-    for nibble_pos in 0..16 {
-        let shift = (15 - nibble_pos) * 4;
-        let nibble = (val >> shift) & 0xf;
-        let c = if nibble < 10 { b'0' + nibble as u8 } else { b'a' + nibble as u8 - 10 };
-        unsafe { core::arch::asm!("movz x4, #0x3F21, lsl #16", "movk x4, #0x5054", "1: ldrb w5, [x4]", "tst w5, #0x20", "beq 1b", out("x4") _, out("w5") _, options(nostack)); }
-        unsafe { core::arch::asm!("movz x4, #0x3F21, lsl #16", "movk x4, #0x5040", "strb w3, [x4]", in("w3") c as u32, out("x4") _, options(nostack)); }
-    }
-    // newline
-    unsafe { core::arch::asm!("movz x4, #0x3F21, lsl #16", "movk x4, #0x5054", "1: ldrb w5, [x4]", "tst w5, #0x20", "beq 1b", out("x4") _, out("w5") _, options(nostack)); }
-    unsafe { core::arch::asm!("movz x4, #0x3F21, lsl #16", "movk x4, #0x5040", "mov w5, #10", "strb w5, [x4]", out("x4") _, out("w5") _, options(nostack)); }
-}
-
 /// The entry point of the Rust code portion of Asterinas.
 ///
 /// AArch64 Linux boot protocol: x0 = physical address of DTB, x1 = 0 (reserved).
@@ -340,49 +229,19 @@ pub unsafe fn pl011_puts_hex(val: usize) {
 pub unsafe extern "C" fn aarch64_boot(device_tree_paddr: usize, _reserved: usize) -> ! {
     use crate::boot::{call_ostd_main, EarlyBootInfo, EARLY_INFO};
 
-    // DEBUG MARKER 'F': first instruction reached in Rust.
-    // Writes 'F' unconditionally to RPi3 PL011, RPi3 mini-UART, and QEMU PL011
-    // so we see it regardless of board type, before board detection.
-    unsafe {
-        core::arch::asm!(
-            "movz x28, #0x3F20, lsl #16",
-            "movk x28, #0x1000",
-            "mov  w27, #70",           // 'F'
-            "str  w27, [x28]",
-            "movz x28, #0x3F21, lsl #16",
-            "movk x28, #0x5040",
-            "str  w27, [x28]",
-            out("x27") _,
-            out("x28") _,
-            options(nostack),
-        );
-    }
-
     // Install our own exception vectors ASAP so any EL1 fault goes to our
     // handler (prints ESR/ELR/SPSR and loops) instead of U-Boot's which resets.
     unsafe { crate::arch::trap::init() };
 
-    // MARKER G: trap::init() done.
-    unsafe { pl011_puts(b"G\n"); }
-
     // CRITICAL: detect the board type from the raw DTB pointer BEFORE any UART output.
-    // early_uart_base() uses BoardType::cached(), so we must populate the cache first.
-    // On RPi3, the PL011 is at 0x3F201000; on QEMU it is at 0x09000000.
+    // The runtime console uses BoardType::cached(), so we must populate the cache first.
     // discover_dtb_paddr() validates the DTB via the TTBR0 identity map (no MMU tricks needed).
     let discovered_dtb_paddr = discover_dtb_paddr(device_tree_paddr).unwrap_or(0);
 
-    // MARKER H: discover_dtb_paddr() done.
-    unsafe { pl011_puts(b"H\n"); }
-
     crate::arch::board::BoardType::detect_from_dtb_ptr(discovered_dtb_paddr);
 
-    // MARKER I: detect_from_dtb_ptr() done — board type is now in BOARD_CACHE.
-    unsafe { pl011_puts(b"I\n"); }
-
-    unsafe { pl011_puts(b"[a2-boot] entry\n") };
 
     if discovered_dtb_paddr != 0 {
-        unsafe { pl011_puts(b"[a2-boot] using loader dtb\n") };
         let device_tree_ptr = discovered_dtb_paddr as *const u8;
         let device_tree_size = parse_fdt_total_size(device_tree_ptr);
         // Use from_ptr with a fallback: RPi3 DTBs (FDT v16) may be rejected
@@ -391,24 +250,15 @@ pub unsafe extern "C" fn aarch64_boot(device_tree_paddr: usize, _reserved: usize
         let fdt = match unsafe { fdt::Fdt::from_ptr(device_tree_ptr) } {
             Ok(f) => f,
             Err(_e) => {
-                unsafe {
-                    pl011_puts(b"[a2-boot] FATAL: Fdt::from_ptr failed\n");
-                }
                 loop { core::hint::spin_loop(); }
             }
         };
         DEVICE_TREE.call_once(|| fdt);
         DEVICE_TREE_REGION.call_once(|| (discovered_dtb_paddr, device_tree_size));
-        unsafe { pl011_puts(b"[a2-boot] dtb discovery done\n") };
         let initramfs_info = parse_initramfs();
         if initramfs_info.is_some() {
-            unsafe { pl011_puts(b"[a2-boot] initramfs found\n") };
         } else {
-            unsafe { pl011_puts(b"[a2-boot] initramfs NOT found\n") };
         }
-        unsafe { pl011_puts(b"[a2-boot] cmdline: ") };
-        unsafe { pl011_puts(parse_kernel_commandline().as_bytes()) };
-        unsafe { pl011_puts(b"\n") };
         EARLY_INFO.call_once(|| EarlyBootInfo {
             bootloader_name: parse_bootloader_name(),
             kernel_cmdline: parse_kernel_commandline(),
@@ -418,12 +268,10 @@ pub unsafe extern "C" fn aarch64_boot(device_tree_paddr: usize, _reserved: usize
             memory_regions: parse_memory_regions(),
         });
     } else {
-        unsafe { pl011_puts(b"[3x] FATAL: no DTB source available\n") };
         loop {
             core::hint::spin_loop();
         }
     }
 
-    unsafe { pl011_puts(b"[a2-boot] calling ostd_main\n") };
     call_ostd_main();
 }

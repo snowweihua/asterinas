@@ -291,33 +291,6 @@ pub unsafe fn trigger_mailbox_irq(core_id: u32) {
     };
     let base_va = local_ic_base_va();
     let reg_addr = base_va + offset;
-    // SAFETY: early_puts writes directly to UART, safe during early boot
-    unsafe {
-        crate::arch::boot::pl011_puts(b"[a2-smp] rpi3: mailbox base=");
-        let mut buf = [0u8; 20];
-        let hex = b"0123456789abcdef";
-        buf[0] = b'0'; buf[1] = b'x';
-        for i in 0..16 {
-            let nibble = (base_va >> (60 - i * 4)) & 0xf;
-            buf[2 + i] = hex[nibble as usize];
-        }
-        buf[18] = b'\n'; buf[19] = 0;
-        crate::arch::boot::pl011_puts(&buf[..19]);
-    }
-    // Read and print core IRQ source to see what's pending
-    unsafe {
-        let irq_src = core::ptr::read_volatile((base_va + 0x60) as *const u32);
-        crate::arch::boot::pl011_puts(b"[a2-smp] rpi3: core-irq-source=");
-        let mut buf = [0u8; 20];
-        let hex = b"0123456789abcdef";
-        buf[0] = b'0'; buf[1] = b'x';
-        for i in 0..8 {
-            let nibble = (irq_src >> (28 - i * 4)) & 0xf;
-            buf[2 + i] = hex[nibble as usize];
-        }
-        buf[10] = b'\n'; buf[11] = 0;
-        crate::arch::boot::pl011_puts(&buf[..11]);
-    }
     unsafe {
         core::ptr::write_volatile((reg_addr) as *mut u32, 1);
         core::arch::asm!("dsb ish", "sev", "isb", options(nostack, preserves_flags));

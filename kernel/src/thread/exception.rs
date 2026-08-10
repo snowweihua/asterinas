@@ -35,12 +35,6 @@ pub struct PageFaultInfo {
 
 /// We can't handle most exceptions, just send self a fault signal before return to user space.
 pub fn handle_exception(ctx: &Context, context: &UserContext, exception: CpuException) {
-    ostd::console::early_print(format_args!(
-        "[exception] ip={:#x} code={:#x} far={:#x}\n",
-        context.instruction_pointer(),
-        exception.error_code,
-        exception.page_fault_addr
-    ));
     debug!("[User Trap] handle exception: {:#x?}", exception);
     warn!(
         "[exception] ip={:#x} code={:#x} far={:#x}",
@@ -67,10 +61,6 @@ fn handle_page_fault_from_vmar(
     page_fault_info: &PageFaultInfo,
 ) -> core::result::Result<(), ()> {
     if let Err(e) = root_vmar.handle_page_fault(page_fault_info) {
-        ostd::console::early_print(format_args!(
-            "[pf failed] addr=0x{:x} err={:?}\n",
-            page_fault_info.address, e
-        ));
         warn!(
             "page fault handler failed: addr: 0x{:x}, err: {:?}",
             page_fault_info.address, e

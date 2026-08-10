@@ -1,11 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
-
 //! The physical memory allocator.
-
 use core::{alloc::Layout, ops::Range, ptr::addr_of_mut};
-
 use align_ext::AlignExt;
-
 use super::{meta::AnyFrameMeta, segment::Segment, Frame};
 use crate::{
     boot::memory_region::MemoryRegionType,
@@ -15,7 +11,6 @@ use crate::{
     prelude::*,
     util::ops::range_difference,
 };
-
 /// The sentinel physical address returned by [`GlobalFrameAllocator::alloc`]
 /// when no memory is available.
 ///
@@ -23,24 +18,20 @@ use crate::{
 /// in a single register (a 16-byte `Option<Paddr>` return triggers a Cortex-A53
 /// epilogue bug on RPi3).
 pub const NO_PADDR: Paddr = usize::MAX;
-
 /// Options for allocating physical memory frames.
 pub struct FrameAllocOptions {
     zeroed: bool,
 }
-
 impl Default for FrameAllocOptions {
     fn default() -> Self {
         Self::new()
     }
 }
-
 impl FrameAllocOptions {
     /// Creates new options for allocating the specified number of frames.
     pub fn new() -> Self {
         Self { zeroed: true }
     }
-
     /// Sets whether the allocated frames should be initialized with zeros.
     ///
     /// If `zeroed` is `true`, the allocated frames are filled with zeros.
@@ -52,12 +43,10 @@ impl FrameAllocOptions {
         self.zeroed = zeroed;
         self
     }
-
     /// Allocates a single untyped frame without metadata.
     pub fn alloc_frame(&self) -> Result<Frame<()>> {
         self.alloc_frame_with(())
     }
-
     /// Allocates a single frame with additional metadata.
     #[inline(never)]
     pub fn alloc_frame_with<M: AnyFrameMeta>(&self, metadata: M) -> Result<Frame<M>> {
@@ -67,30 +56,23 @@ impl FrameAllocOptions {
         // Instead allocate the raw paddr, then use the single-register
         // `Frame::init_unused`/`from_init_ptr` helpers.
         let layout = Layout::from_size_align(PAGE_SIZE, PAGE_SIZE).unwrap();
-
         let pa = get_global_frame_allocator().alloc(layout);
-
         if pa == NO_PADDR {
             return Err(Error::NoMemory);
         }
-
         if self.zeroed {
             let addr = paddr_to_vaddr(pa) as *mut u8;
             // SAFETY: The newly allocated frame is guaranteed to be valid.
             unsafe { core::ptr::write_bytes(addr, 0, PAGE_SIZE) }
         }
-
         let slot_ptr = Frame::<M>::init_unused(pa, metadata);
-
         // SAFETY: `init_unused` returned a valid metadata slot pointer.
         Ok(unsafe { Frame::<M>::from_init_ptr(slot_ptr) })
     }
-
     /// Allocates a contiguous range of untyped frames without metadata.
     pub fn alloc_segment(&self, nframes: usize) -> Result<Segment<()>> {
         self.alloc_segment_with(nframes, |_| ())
     }
-
     /// Allocates a contiguous range of frames with additional metadata.
     ///
     /// The returned [`Segment`] contains at least one frame. The method returns
@@ -112,17 +94,14 @@ impl FrameAllocOptions {
             return Err(Error::NoMemory);
         }
         let segment = Segment::from_unused(start..start + nframes * PAGE_SIZE, metadata_fn).unwrap();
-
         if self.zeroed {
             let addr = paddr_to_vaddr(segment.paddr()) as *mut u8;
             // SAFETY: The newly allocated segment is guaranteed to be valid.
             unsafe { core::ptr::write_bytes(addr, 0, nframes * PAGE_SIZE) }
         }
-
         Ok(segment)
     }
 }
-
 #[cfg(ktest)]
 #[ktest]
 fn test_alloc_dealloc() {
@@ -144,7 +123,6 @@ fn test_alloc_dealloc() {
         remember_vec.pop();
     }
 }
-
 /// The trait for the global frame allocator.
 ///
 /// OSTD allows a customized frame allocator by the [`global_frame_allocator`]
@@ -175,7 +153,6 @@ pub trait GlobalFrameAllocator: Sync {
     /// calling [`GlobalFrameAllocator::dealloc`]. If multiple frames are
     /// allocated, they may be returned in any order with any number of calls.
     fn alloc(&self, layout: Layout) -> Paddr;
-
     /// Deallocates a contiguous range of frames.
     ///
     /// The caller guarantees that `addr` and `size` are both aligned to
@@ -188,7 +165,6 @@ pub trait GlobalFrameAllocator: Sync {
     ///
     /// The deallocated memory can be uninitialized.
     fn dealloc(&self, addr: Paddr, size: usize);
-
     /// Adds a contiguous range of frames to the allocator.
     ///
     /// The memory being added must never overlap with any memory that was
@@ -197,20 +173,17 @@ pub trait GlobalFrameAllocator: Sync {
     /// The added memory can be uninitialized.
     fn add_free_memory(&self, addr: Paddr, size: usize);
 }
-
 unsafe extern "Rust" {
     /// The global frame allocator's reference exported by
     /// [`crate::global_frame_allocator`].
     static __GLOBAL_FRAME_ALLOCATOR_REF: &'static dyn GlobalFrameAllocator;
 }
-
 pub(super) fn get_global_frame_allocator() -> &'static dyn GlobalFrameAllocator {
     // SAFETY: The global frame allocator is set up correctly with the
     // `global_frame_allocator` attribute. If they use safe code only, the
     // up-call is safe.
     unsafe { __GLOBAL_FRAME_ALLOCATOR_REF }
 }
-
 /// Initializes the global frame allocator.
 ///
 /// It just does adds the frames to the global frame allocator. Calling it
@@ -220,80 +193,41 @@ pub(super) fn get_global_frame_allocator() -> &'static dyn GlobalFrameAllocator 
 ///
 /// This function should be called only once.
 pub(crate) unsafe fn init() {
-    #[cfg(target_arch = "aarch64")]
-    unsafe { crate::arch::boot::pl011_puts(b"[alloc.init.0]\n"); }
     let regions = &crate::boot::EARLY_INFO.get().unwrap().memory_regions;
-    #[cfg(target_arch = "aarch64")]
-    unsafe { crate::arch::boot::pl011_puts(b"[alloc.init.1]\n"); }
-
     // Retire the early allocator.
     let early_allocator = unsafe { (*(addr_of_mut!(EARLY_ALLOCATOR))).take().unwrap() };
-    #[cfg(target_arch = "aarch64")]
-    unsafe { crate::arch::boot::pl011_puts(b"[alloc.init.2]\n"); }
     let (range_1, range_2) = early_allocator.allocated_regions();
-    #[cfg(target_arch = "aarch64")]
-    unsafe { crate::arch::boot::pl011_puts(b"[alloc.init.3]\n"); }
-
     let frame_paddr_base = crate::arch::mm::frame_paddr_base();
-    #[cfg(target_arch = "aarch64")]
-    unsafe { crate::arch::boot::pl011_puts(b"[alloc.init.4] got frame_paddr_base\n"); }
-
     for region in regions.iter() {
-        #[cfg(target_arch = "aarch64")]
-        unsafe { crate::arch::boot::pl011_puts(b"[alloc.init.5] iter region\n"); }
         if region.typ() == MemoryRegionType::Usable {
             debug_assert!(region.base() % PAGE_SIZE == 0);
             debug_assert!(region.len() % PAGE_SIZE == 0);
-            #[cfg(target_arch = "aarch64")]
-            unsafe {
-                crate::arch::boot::pl011_puts(b"[alloc.init.reg] base=");
-                crate::arch::boot::pl011_puts_hex(region.base());
-                crate::arch::boot::pl011_puts(b" len=");
-                crate::arch::boot::pl011_puts_hex(region.len());
-                crate::arch::boot::pl011_puts(b"\n");
-            }
-
             for r1 in range_difference(&(region.base()..region.end()), &range_1) {
-                #[cfg(target_arch = "aarch64")]
-                unsafe { crate::arch::boot::pl011_puts(b"[alloc.init.6] got r1\n"); }
                 for r2 in range_difference(&r1, &range_2) {
-                    #[cfg(target_arch = "aarch64")]
-                    unsafe { crate::arch::boot::pl011_puts(b"[alloc.init.7] got r2\n"); }
                     let r2_start = if r2.start < frame_paddr_base {
                         frame_paddr_base
                     } else {
                         r2.start
                     };
                     if r2_start < r2.end {
-                        #[cfg(target_arch = "aarch64")]
-                        {
-                            unsafe { crate::arch::boot::pl011_puts(b"[alloc.afm] "); }
-                        }
                         get_global_frame_allocator().add_free_memory(r2_start, r2.end - r2_start);
-                        #[cfg(target_arch = "aarch64")]
-                        unsafe { crate::arch::boot::pl011_puts(b"[alloc.afm-done]\n"); }
                     }
                 }
             }
         }
     }
-    #[cfg(target_arch = "aarch64")]
-    unsafe { crate::arch::boot::pl011_puts(b"[alloc.init.done]\n"); }
 }
-
 /// An allocator in the early boot phase when frame metadata is not available.
 pub(super) struct EarlyFrameAllocator {
     // We need to allocate from under 4G first since the linear mapping for
     // the higher region is not constructed yet.
     under_4g_range: Range<Paddr>,
     under_4g_end: Paddr,
-
     // And also sometimes 4G is not enough for early phase. This, if not `0..0`,
     // is the largest region above 4G.
     max_range: Range<Paddr>,
     max_end: Paddr,
 }
-
 /// The global frame allocator in the early boot phase.
 ///
 /// It is used to allocate frames before the frame metadata is initialized.
@@ -313,7 +247,6 @@ pub(super) struct EarlyFrameAllocator {
 /// We must make sure that no interrupts are enabled when using this allocator
 /// (it is only used during single-core boot, where IRQs are disabled).
 pub(super) static mut EARLY_ALLOCATOR: Option<EarlyFrameAllocator> = None;
-
 impl EarlyFrameAllocator {
     /// Creates a new early frame allocator.
     ///
@@ -322,7 +255,6 @@ impl EarlyFrameAllocator {
     /// usable when linear mapping is constructed.
     pub fn new() -> Self {
         let regions = &crate::boot::EARLY_INFO.get().unwrap().memory_regions;
-
         let mut under_4g_range = 0..0;
         let mut max_range = 0..0;
         for region in regions.iter() {
@@ -343,7 +275,6 @@ impl EarlyFrameAllocator {
                 }
             }
         }
-
         log::debug!(
             "Early frame allocator (below 4G) at: {:#x?}",
             under_4g_range
@@ -351,7 +282,6 @@ impl EarlyFrameAllocator {
         if !max_range.is_empty() {
             log::debug!("Early frame allocator (above 4G) at: {:#x?}", max_range);
         }
-
         Self {
             under_4g_range: under_4g_range.clone(),
             under_4g_end: under_4g_range.start,
@@ -359,12 +289,10 @@ impl EarlyFrameAllocator {
             max_end: max_range.start,
         }
     }
-
     /// Allocates a contiguous range of frames.
     pub fn alloc(&mut self, layout: Layout) -> Option<Paddr> {
         let size = layout.size().align_up(PAGE_SIZE);
         let align = layout.align().max(PAGE_SIZE);
-
         for (tail, end) in [
             (&mut self.under_4g_end, self.under_4g_range.end),
             (&mut self.max_end, self.max_range.end),
@@ -377,10 +305,8 @@ impl EarlyFrameAllocator {
                 return Some(allocated);
             }
         }
-
         None
     }
-
     pub(super) fn allocated_regions(&self) -> (Range<Paddr>, Range<Paddr>) {
         (
             self.under_4g_range.start..self.under_4g_end,
@@ -388,16 +314,13 @@ impl EarlyFrameAllocator {
         )
     }
 }
-
 /// Metadata for frames allocated in the early boot phase.
 ///
 /// Frames allocated with [`early_alloc`] are not immediately tracked with
 /// frame metadata. But [`super::meta::init`] will track them later.
 #[derive(Debug)]
 pub(crate) struct EarlyAllocatedFrameMeta;
-
 impl_frame_meta_for!(EarlyAllocatedFrameMeta);
-
 /// Allocates a contiguous range of frames in the early boot phase.
 ///
 /// The early allocated frames will not be reclaimable, until the metadata is
@@ -413,7 +336,6 @@ pub(crate) fn early_alloc(layout: Layout) -> Option<Paddr> {
     let early_allocator = unsafe { (*(addr_of_mut!(EARLY_ALLOCATOR))).as_mut().unwrap() };
     early_allocator.alloc(layout)
 }
-
 /// Initializes the early frame allocator.
 ///
 /// [`early_alloc`] should be used after this initialization. After [`init`], the

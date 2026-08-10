@@ -153,52 +153,24 @@ pub fn init_all(
 }
 
 fn parse_input(components: Vec<ComponentInfo>) -> BTreeMap<&'static str, ComponentInfo> {
-    mini_uart_puts(b"[par] start\n");
     let mut out = BTreeMap::new();
     for component in components {
         out.insert(component.path, component);
     }
-    mini_uart_puts(b"[par] done\n");
     out
 }
 
 /// Match the ComponentInfo with ComponentRegistry. The key is the relative path of one component
-fn mini_uart_puts(s: &[u8]) {
-    for &b in s {
-        unsafe {
-            core::arch::asm!(
-                "movz x4, #0x3F21, lsl #16",
-                "movk x4, #0x5054",
-                "1: ldrb w5, [x4]",
-                "tst w5, #0x20",
-                "beq 1b",
-                out("x4") _, out("w5") _,
-                options(nostack),
-            );
-            core::arch::asm!(
-                "movz x4, #0x3F21, lsl #16",
-                "movk x4, #0x5040",
-                "strb w3, [x4]",
-                in("w3") b as u32,
-                out("x4") _,
-                options(nostack),
-            );
-        }
-    }
-}
-
 fn match_and_call(
     stage: InitStage,
     mut components: BTreeMap<&'static str, ComponentInfo>,
 ) -> Result<(), ComponentSystemInitError> {
-    mini_uart_puts(b"[mac.M] enter\n");
     let mut infos = Vec::new();
     #[cfg(target_arch = "aarch64")]
     let registries = aarch64_component_registries().iter();
     #[cfg(not(target_arch = "aarch64"))]
     let registries = inventory::iter::<ComponentRegistry>.into_iter();
     for registry in registries {
-        mini_uart_puts(b"[mac.I] item\n");
         if registry.stage != stage {
             continue;
         }
@@ -233,35 +205,18 @@ fn match_and_call(
     if !components.is_empty() {
         info!("Exists components that are not initialized");
     }
-    info!(
-        "[mac-1] after for-loop, before sort, infos.len={}",
-        infos.len()
-    );
 
     infos.sort();
-    mini_uart_puts(b"[mac.S] sort done, len=");
-    // Write a crude length marker
-    for _ in 0..infos.len() { mini_uart_puts(b"."); }
-    mini_uart_puts(b"\n");
-    info!("[mac-2] after sort");
     debug!("component infos: {infos:?}");
-    info!(
-        "[mac-pre] match_and_call: {} components in stage {:?}",
-        infos.len(),
-        stage
-    );
     info!("Components initializing in {stage:?} stage...");
-    info!("[mac-post] info printed ok");
 
     for i in infos {
-        mini_uart_puts(b"[comp] before\n");
         info!("Component initializing:{:?}", i);
         if let Err(res) = i.function.unwrap().call(()) {
             error!("Component initialize error:{:?}", res);
         } else {
             info!("Component initialize complete");
         }
-        mini_uart_puts(b"[comp] after\n");
     }
     info!("All components initialization in {stage:?} stage completed");
     Ok(())

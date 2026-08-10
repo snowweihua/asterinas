@@ -85,28 +85,6 @@ PTE_NORMAL_2M  = ( MM_TYPE_BLOCK | PTE_AIDX_MEMORY | PTE_SH_INNER | PTE_AF )
  * Boot section
  * -------------------------------------------------------------------------- */
 
-/* Macro: write character to PL011 at 0x09000000 (QEMU, no MMU, polled).
- * For RPi3 early output, pl011_puts_asm in mod.rs is used after MMU is on. */
-.macro  early_uart_putchar char
-    mov     w0, #\char
-    ldr     x1, =0x09000000
-1:  ldr     w2, [x1, #0x18]         /* FR register */
-    tbnz    w2, #5, 1b              /* wait while TXFF=1 */
-    str     w0, [x1, #0x00]         /* write to DR */
-.endm
-
-/* Macro: write a single ASCII character to RPi3 mini-UART (0x3F215040).
- * Uses movz/movk to build addresses without any literal pool.
- * Only executes when x21 == 0 (RPi3). */
-.macro  rpi3_putch char
-    cbnz    x21, 9998f
-    movz    x26, #0x3F21, lsl #16
-    movk    x26, #0x5040
-    mov     w27, #\char
-    str     w27, [x26]
-9998:
-.endm
-
 .section ".boot", "awx", @progbits
 .globl _start
 _start:
@@ -156,14 +134,6 @@ _start_real:
     ldr     x22, =0x40000000               /* QEMU/RPi4 DRAM boundary */
     cmp     x21, x22
     csel    x21, xzr, x22, lo              /* RPi3: x21 = 0; QEMU: x21 = 0x40000000 */
-
-    /* DEBUG MARKER 'A': verify _start_real executes on RPi3.
-     * First re-enable the PL011 UART (U-Boot cleanup may have disabled it),
-     * then output 'A'.  Only runs when x21=0 (RPi3). */
-    /* No UART init needed — U-Boot left both UARTs enabled.
-     * rpi3_putch writes to both PL011 and mini-UART. */
-.Lno_rpi3_uart_init:
-    rpi3_putch 'A'
 
     /* Detect current exception level [3:2] of CurrentEL */
     mrs     x2, CurrentEL
@@ -241,9 +211,6 @@ switch_to_el1_from_el2:
  * EL1: configure paging, enable MMU, jump to virtual addresses
  * -------------------------------------------------------------------------- */
 jump_to_main:
-    /* DEBUG MARKER 'B': at EL1, before page-table patching or MMU enable. */
-    rpi3_putch 'B'
-
     /* -----------------------------------------------------------------------
      * Patch ALL page-table pointer entries with runtime physical addresses.
      *
@@ -383,9 +350,6 @@ jump_to_main:
     ldr     x5, =SCTLR_MMU_ENABLED
     msr     sctlr_el1, x5
     isb
-
-    /* DEBUG MARKER 'C': MMU enabled, still running in identity-mapped low VA. */
-    rpi3_putch 'C'
 
     /* Set SP to boot_stack_top (now in DRAM at ~0x400c5dd0 with KERNEL_LMA=0x40080000).
      * adr is PC-relative so it computes the correct physical/identity-mapped address. */
@@ -589,9 +553,6 @@ _start_virt:
     ldr     x8, =0xffff000000000000
     add     sp, x7, x8              /* SP_virt = SP_phys - DRAM_BASE + HIGH_HALF */
 
-    /* DEBUG MARKER 'D': _start_virt reached, SP now in high VA, MMU on. */
-    rpi3_putch 'D'
-
     /* Initialize TPIDR_EL1 to &__cpu_local_start so that CPU-local accesses
      * work before the full CPU-local initialisation in Rust.  This mirrors
      * what RISC-V does with `la gp, __cpu_local_start`. */
@@ -611,9 +572,6 @@ _start_virt:
     blt     1b
 2:
 
-    /* DEBUG MARKER 'E': _start_virt done — about to branch into Rust. */
-    rpi3_putch 'E'
-
     /* Install our own EL1 exception vectors NOW — before the Rust prologue runs —
      * so any fault in aarch64_boot's prologue goes to our handler (prints
      * ESR/ELR/FAR and loops) instead of U-Boot's handler (resets the CPU).
@@ -623,11 +581,6 @@ _start_virt:
     adr     x9, vector_table_el1
     msr     vbar_el1, x9
     isb
-
-    /* DEBUG MARKER 'F': VBAR_EL1 installed.  If we see 'F' on serial but not
-     * any [sec] output, the prologue DID NOT fault.
-     * If we see 'E' but not 'F', something between 'E' and here is wrong (impossible). */
-    rpi3_putch 'F'
 
     /* Restore x0 (DTB paddr, per AArch64 boot protocol) and x1 (reserved=0)
      * that were saved in x19/x20 at _start before debug macros clobbered them. */

@@ -1,10 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
-
 #![cfg_attr(
     any(target_arch = "riscv64", target_arch = "loongarch64"),
     expect(dead_code)
 )]
-
 use core::{
     alloc::Layout,
     fmt::Debug,
@@ -12,7 +10,6 @@ use core::{
     ops::{Range, RangeInclusive},
     sync::atomic::{AtomicUsize, Ordering},
 };
-
 use super::{
     kspace::KernelPtConfig, nr_subpage_per_huge, page_prop::PageProperty, page_size,
     vm_space::UserPtConfig, HasPaddr, Paddr, PagingConstsTrait, PagingLevel, PodOnce, Vaddr,
@@ -22,18 +19,14 @@ use crate::{
     task::{atomic_mode::AsAtomicModeGuard, disable_preempt},
     Pod,
 };
-
 mod node;
 use node::*;
 mod cursor;
-
 pub(crate) use cursor::{Cursor, CursorMut, PageTableFrag};
-
 #[cfg(target_arch = "aarch64")]
 use crate::mm::Frame;
 #[cfg(target_arch = "aarch64")]
 use node::PageTablePageMeta;
-
 /// Holds the pre-allocated root page table frame for AArch64.
 ///
 /// This is necessary because `alloc_frame_with()` crashes at `ret` on RPi3
@@ -44,17 +37,13 @@ use node::PageTablePageMeta;
 /// `PageTableNode::alloc()`.
 #[cfg(target_arch = "aarch64")]
 static mut AARCH64_ROOT_PT_FRAME: Option<Frame<PageTablePageMeta<KernelPtConfig>>> = None;
-
 #[cfg(target_arch = "aarch64")]
 const AARCH64_RESERVED_PT_PAGES: usize = 32;
-
 #[cfg(target_arch = "aarch64")]
 static mut AARCH64_PT_PAGE_POOL: [usize; AARCH64_RESERVED_PT_PAGES - 1] =
     [0; AARCH64_RESERVED_PT_PAGES - 1];
-
 #[cfg(target_arch = "aarch64")]
 static mut AARCH64_PT_PAGE_POOL_LEN: usize = 0;
-
 /// Reserves the root page table page for AArch64.
 ///
 /// Must be called after `meta::init()` and **before** `allocator::init()`
@@ -64,7 +53,6 @@ pub(crate) fn reserve_root_pt_page() {
     use core::alloc::Layout;
     use crate::mm::frame::allocator::early_alloc;
     use crate::mm::PAGE_SIZE;
-
     let paddr = early_alloc(
         Layout::from_size_align(AARCH64_RESERVED_PT_PAGES * PAGE_SIZE, PAGE_SIZE).unwrap(),
     )
@@ -89,7 +77,6 @@ pub(crate) fn reserve_root_pt_page() {
     }
     let meta = PageTablePageMeta::<KernelPtConfig>::new(crate::arch::mm::PagingConsts::NR_LEVELS);
     let frame = unsafe { Frame::from_init_ptr(Frame::init_unused(paddr, meta)) };
-
     unsafe {
         AARCH64_ROOT_PT_FRAME = Some(frame);
         for i in 1..AARCH64_RESERVED_PT_PAGES {
@@ -100,7 +87,6 @@ pub(crate) fn reserve_root_pt_page() {
         AARCH64_PT_PAGE_POOL_LEN = AARCH64_RESERVED_PT_PAGES - 1;
     }
 }
-
 #[cfg(target_arch = "aarch64")]
 fn take_reserved_pt_page<C: PageTableConfig>(level: PagingLevel) -> Option<Frame<PageTablePageMeta<C>>> {
     let paddr = unsafe {
@@ -113,12 +99,9 @@ fn take_reserved_pt_page<C: PageTableConfig>(level: PagingLevel) -> Option<Frame
     let meta = PageTablePageMeta::<C>::new(level);
     Some(unsafe { Frame::from_init_ptr(Frame::init_unused(paddr, meta)) })
 }
-
 #[cfg(ktest)]
 mod test;
-
 pub(crate) mod boot_pt;
-
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum PageTableError {
     /// The provided virtual address range is invalid.
@@ -128,7 +111,6 @@ pub enum PageTableError {
     /// Using virtual address not aligned.
     UnalignedVaddr,
 }
-
 /// The configurations of a page table.
 ///
 /// It abstracts away both the usage and the architecture specifics from the
@@ -156,20 +138,16 @@ pub(crate) unsafe trait PageTableConfig:
     /// this range. The range can be smaller than the actual allowed range
     /// specified by the hardware MMU (limited by `C::ADDRESS_WIDTH`).
     const TOP_LEVEL_INDEX_RANGE: Range<usize>;
-
     /// If we can remove the top-level page table entries.
     ///
     /// This is for the kernel page table, whose second-top-level page
     /// tables need `'static` lifetime to be shared with user page tables.
     /// Other page tables do not need to set this to `false`.
     const TOP_LEVEL_CAN_UNMAP: bool = true;
-
     /// The type of the page table entry.
     type E: PageTableEntryTrait;
-
     /// The paging constants.
     type C: PagingConstsTrait;
-
     /// The item that can be mapped into the virtual memory space using the
     /// page table.
     ///
@@ -183,14 +161,12 @@ pub(crate) unsafe trait PageTableConfig:
     /// [`item_from_raw`]: PageTableConfig::item_from_raw
     /// [`item_into_raw`]: PageTableConfig::item_into_raw
     type Item: Clone;
-
     /// Consumes the item and returns the physical address, the paging level,
     /// and the page property.
     ///
     /// The ownership of the item will be consumed, i.e., the item will be
     /// forgotten after this function is called.
     fn item_into_raw(item: Self::Item) -> (Paddr, PagingLevel, PageProperty);
-
     /// Restores the item from the physical address and the paging level.
     ///
     /// There could be transformations after [`PageTableConfig::item_into_raw`]
@@ -215,7 +191,6 @@ pub(crate) unsafe trait PageTableConfig:
     ///    the same as that returned from [`PageTableConfig::item_into_raw`].
     unsafe fn item_from_raw(paddr: Paddr, level: PagingLevel, prop: PageProperty) -> Self::Item;
 }
-
 // Implement it so that we can comfortably use low level functions
 // like `page_size::<C>` without typing `C::C` everywhere.
 impl<C: PageTableConfig> PagingConstsTrait for C {
@@ -226,7 +201,6 @@ impl<C: PageTableConfig> PagingConstsTrait for C {
     const ADDRESS_WIDTH: usize = C::C::ADDRESS_WIDTH;
     const VA_SIGN_EXT: bool = C::C::VA_SIGN_EXT;
 }
-
 /// Splits the address range into largest page table items.
 ///
 /// Each of the returned items is a tuple of the physical address and the
@@ -260,12 +234,10 @@ pub(crate) fn largest_pages<C: PageTableConfig>(
     assert_eq!(pa % C::BASE_PAGE_SIZE, 0);
     assert_eq!(len % C::BASE_PAGE_SIZE, 0);
     assert!(is_valid_range::<C>(&(va..(va + len))));
-
     core::iter::from_fn(move || {
         if len == 0 {
             return None;
         }
-
         let mut level = C::HIGHEST_TRANSLATION_LEVEL;
         while page_size::<C>(level) > len
             || va % page_size::<C>(level) != 0
@@ -273,16 +245,13 @@ pub(crate) fn largest_pages<C: PageTableConfig>(
         {
             level -= 1;
         }
-
         let item_start = pa;
         va += page_size::<C>(level);
         pa += page_size::<C>(level);
         len -= page_size::<C>(level);
-
         Some((item_start, level))
     })
 }
-
 /// Gets the managed virtual addresses range for the page table.
 ///
 /// It returns a [`RangeInclusive`] because the end address, if being
@@ -291,32 +260,26 @@ const fn vaddr_range<C: PageTableConfig>() -> RangeInclusive<Vaddr> {
     const fn top_level_index_width<C: PageTableConfig>() -> usize {
         C::ADDRESS_WIDTH - pte_index_bit_offset::<C>(C::NR_LEVELS)
     }
-
     const {
         assert!(C::TOP_LEVEL_INDEX_RANGE.start < C::TOP_LEVEL_INDEX_RANGE.end);
         assert!(top_level_index_width::<C>() <= nr_pte_index_bits::<C>(),);
         assert!(C::TOP_LEVEL_INDEX_RANGE.start < 1 << top_level_index_width::<C>());
         assert!(C::TOP_LEVEL_INDEX_RANGE.end <= 1 << top_level_index_width::<C>());
     };
-
     const fn pt_va_range_start<C: PageTableConfig>() -> Vaddr {
         C::TOP_LEVEL_INDEX_RANGE.start << pte_index_bit_offset::<C>(C::NR_LEVELS)
     }
-
     const fn pt_va_range_end<C: PageTableConfig>() -> Vaddr {
         C::TOP_LEVEL_INDEX_RANGE
             .end
             .unbounded_shl(pte_index_bit_offset::<C>(C::NR_LEVELS) as u32)
             .wrapping_sub(1) // Inclusive end.
     }
-
     const fn sign_bit_of_va<C: PageTableConfig>(va: Vaddr) -> bool {
         (va >> (C::ADDRESS_WIDTH - 1)) & 1 != 0
     }
-
     let mut start = pt_va_range_start::<C>();
     let mut end = pt_va_range_end::<C>();
-
     const {
         assert!(
             !C::VA_SIGN_EXT
@@ -325,33 +288,26 @@ const fn vaddr_range<C: PageTableConfig>() -> RangeInclusive<Vaddr> {
             "The sign bit of both range endpoints must be the same if sign extension is enabled"
         )
     }
-
     if C::VA_SIGN_EXT && sign_bit_of_va::<C>(pt_va_range_start::<C>()) {
         start |= !0 ^ ((1 << C::ADDRESS_WIDTH) - 1);
         end |= !0 ^ ((1 << C::ADDRESS_WIDTH) - 1);
     }
-
     start..=end
 }
-
 /// Checks if the given range is covered by the valid range of the page table.
 const fn is_valid_range<C: PageTableConfig>(r: &Range<Vaddr>) -> bool {
     let va_range = vaddr_range::<C>();
     (r.start == 0 && r.end == 0) || (*va_range.start() <= r.start && r.end - 1 <= *va_range.end())
 }
-
 // Here are some const values that are determined by the paging constants.
-
 /// The number of virtual address bits used to index a PTE in a page.
 const fn nr_pte_index_bits<C: PagingConstsTrait>() -> usize {
     nr_subpage_per_huge::<C>().ilog2() as usize
 }
-
 /// The index of a VA's PTE in a page table node at the given level.
 const fn pte_index<C: PagingConstsTrait>(va: Vaddr, level: PagingLevel) -> usize {
     (va >> pte_index_bit_offset::<C>(level)) & (nr_subpage_per_huge::<C>() - 1)
 }
-
 /// The bit offset of the entry offset part in a virtual address.
 ///
 /// This function returns the bit offset of the least significant bit. Take
@@ -360,14 +316,12 @@ const fn pte_index<C: PagingConstsTrait>(va: Vaddr, level: PagingLevel) -> usize
 const fn pte_index_bit_offset<C: PagingConstsTrait>(level: PagingLevel) -> usize {
     C::BASE_PAGE_SIZE.ilog2() as usize + nr_pte_index_bits::<C>() * (level as usize - 1)
 }
-
 /// A handle to a page table.
 /// A page table can track the lifetime of the mapped physical pages.
 #[derive(Debug)]
 pub struct PageTable<C: PageTableConfig> {
     root: PageTableNode<C>,
 }
-
 impl PageTable<UserPtConfig> {
     pub fn activate(&self) {
         // SAFETY: The user mode page table is safe to activate since the kernel
@@ -389,42 +343,21 @@ impl PageTable<UserPtConfig> {
         }
     }
 }
-
 impl PageTable<KernelPtConfig> {
     /// Create a new kernel page table.
     /// Creates an empty kernel page table (uses pre-allocated root on AArch64).
     pub(crate) fn empty_kernel() -> Self {
         #[cfg(target_arch = "aarch64")]
-        unsafe { crate::arch::boot::pl011_puts(b"[ek] empty_kernel start\n"); }
-        #[cfg(target_arch = "aarch64")]
         {
             let root = unsafe { (*core::ptr::addr_of_mut!(AARCH64_ROOT_PT_FRAME)).take() }
                 .expect("AArch64 root PT page not reserved");
-            #[cfg(target_arch = "aarch64")]
-            unsafe {
-                crate::arch::boot::pl011_puts(b"[ek] root_paddr=");
-                crate::arch::boot::pl011_puts_hex(root.paddr());
-                crate::arch::boot::pl011_puts(b"\n");
-                let ptr = root.paddr() as *const u64;
-                let val0 = ptr.read_volatile();
-                let val448 = ptr.add(448).read_volatile();
-                crate::arch::boot::pl011_puts(b"[ek] root[0]=");
-                crate::arch::boot::pl011_puts_hex(val0 as usize);
-                crate::arch::boot::pl011_puts(b" root[448]=");
-                crate::arch::boot::pl011_puts_hex(val448 as usize);
-                crate::arch::boot::pl011_puts(b"\n");
-            }
             return PageTable { root };
         }
         #[cfg(not(target_arch = "aarch64"))]
         Self::empty()
     }
-
     pub(crate) fn new_kernel_page_table() -> Self {
         let kpt = Self::empty_kernel();
-
-        #[cfg(target_arch = "aarch64")]
-        unsafe { crate::arch::boot::pl011_puts(b"[npt] after empty_kernel\n"); }
         // Make shared the page tables mapped by the root table in the kernel space.
         {
             let preempt_guard = disable_preempt();
@@ -439,7 +372,6 @@ impl PageTable<KernelPtConfig> {
                 unsafe { kpt.root.borrow().make_guard_unchecked(&preempt_guard) };
             #[cfg(not(target_arch = "aarch64"))]
             let mut root_node = kpt.root.borrow().lock(&preempt_guard);
-
             // On AArch64, copying boot page table entries is more reliable than
             // allocating new page table pages (which triggers a codegen crash in
             // the generic alloc_frame_with function).
@@ -465,67 +397,32 @@ impl PageTable<KernelPtConfig> {
                 let mut root_entry = root_node.entry(i);
                 let _ = root_entry.alloc_if_none(&preempt_guard).unwrap();
             }
-
             #[cfg(target_arch = "aarch64")]
             {
                 let boot_root_pa = crate::arch::mm::current_page_table_paddr();
-                unsafe { crate::arch::boot::pl011_puts(b"[slot0] boot_root_pa=") };
-                unsafe { crate::arch::boot::pl011_puts_hex(boot_root_pa) };
-                unsafe { crate::arch::boot::pl011_puts(b"\n") };
                 let boot_slot0_pte = unsafe {
-                    let ptr = boot_root_pa as *const PageTableEntry;
+                    let ptr = boot_root_pa as *const crate::arch::mm::PageTableEntry;
                     ptr.read_volatile()
                 };
-                unsafe { crate::arch::boot::pl011_puts(b"[slot0] pte=") };
-                unsafe { crate::arch::boot::pl011_puts_hex(boot_slot0_pte.as_usize()) };
-                unsafe { crate::arch::boot::pl011_puts(b"\n") };
-                let l3table_pa = boot_slot0_pte.as_usize() & 0x0000_FFFF_FFFF_F000;
-                unsafe { crate::arch::boot::pl011_puts(b"[slot0] l3table_pa=") };
-                unsafe { crate::arch::boot::pl011_puts_hex(l3table_pa) };
-                unsafe { crate::arch::boot::pl011_puts(b"\n") };
-                let l3table_va = l3table_pa;
-                let l3entry = unsafe {
-                    let ptr = l3table_va as *const crate::arch::mm::PageTableEntry;
-                    ptr.read_volatile()
-                };
-                unsafe { crate::arch::boot::pl011_puts(b"[slot0] l3table[0]=") };
-                unsafe { crate::arch::boot::pl011_puts_hex(l3entry.as_usize()) };
-                unsafe { crate::arch::boot::pl011_puts(b"\n") };
-
                 // The AArch64 kernel high half lives at TTBR1 slot 0
                 // (0xffff_0000_0000_0000). Copy the boot descriptor so that
                 // kernel code/data VAs remain valid after the page-table switch.
                 if boot_slot0_pte.as_usize() != 0 {
                     unsafe { root_node.write_pte(0, boot_slot0_pte) };
-                    unsafe { crate::arch::boot::pl011_puts(b"[slot0] copied boot slot 0 to new KPT\n") };
-                } else {
-                    unsafe { crate::arch::boot::pl011_puts(b"[slot0] ERROR: boot slot 0 is empty\n") };
                 }
             }
         }
-
         kpt
     }
-
     /// Create a new user page table.
     ///
     /// This should be the only way to create the user page table, that is to
     /// duplicate the kernel page table with all the kernel mappings shared.
     pub(in crate::mm) fn create_user_page_table(&'static self) -> PageTable<UserPtConfig> {
-        #[cfg(target_arch = "aarch64")]
-        unsafe { crate::arch::boot::pl011_puts(b"[cupt] alloc new_root\n"); }
         let new_root = PageTableNode::alloc(PagingConsts::NR_LEVELS);
-        #[cfg(target_arch = "aarch64")]
-        unsafe { crate::arch::boot::pl011_puts(b"[cupt] lock root\n"); }
-
         let preempt_guard = disable_preempt();
         let mut root_node = self.root.borrow().lock(&preempt_guard);
-        #[cfg(target_arch = "aarch64")]
-        unsafe { crate::arch::boot::pl011_puts(b"[cupt] lock new\n"); }
         let mut new_node = new_root.borrow().lock(&preempt_guard);
-        #[cfg(target_arch = "aarch64")]
-        unsafe { crate::arch::boot::pl011_puts(b"[cupt] copy entries\n"); }
-
         const {
             assert!(!KernelPtConfig::TOP_LEVEL_CAN_UNMAP);
             assert!(
@@ -533,7 +430,6 @@ impl PageTable<KernelPtConfig> {
                     <= KernelPtConfig::TOP_LEVEL_INDEX_RANGE.start
             );
         }
-
         for i in KernelPtConfig::TOP_LEVEL_INDEX_RANGE {
             // SAFETY: The index is within the top-level range, so it is inside
             // the page table node bound.
@@ -541,7 +437,6 @@ impl PageTable<KernelPtConfig> {
             if !pte.is_present() {
                 continue;
             }
-
             // We do not add additional reference count specifically for the
             // shared kernel page tables. It requires user page tables to
             // outlive the kernel page table, which is trivially true.
@@ -554,13 +449,9 @@ impl PageTable<KernelPtConfig> {
             // page table drop won't iterate over these entries.
             unsafe { new_node.write_pte(i, pte) };
         }
-        #[cfg(target_arch = "aarch64")]
-        unsafe { crate::arch::boot::pl011_puts(b"[cupt] copy done\n"); }
         drop(new_node);
-
         PageTable::<UserPtConfig> { root: new_root }
     }
-
     /// Protect the given virtual address range in the kernel page table.
     ///
     /// This method flushes the TLB entries when doing protection.
@@ -585,7 +476,6 @@ impl PageTable<KernelPtConfig> {
         Ok(())
     }
 }
-
 impl<C: PageTableConfig> PageTable<C> {
     /// Creates an empty page table.
     pub fn empty() -> Self {
@@ -593,12 +483,10 @@ impl<C: PageTableConfig> PageTable<C> {
             root: PageTableNode::<C>::alloc(C::NR_LEVELS),
         }
     }
-
     pub(in crate::mm) unsafe fn first_activate_unchecked(&self) {
         // SAFETY: The safety is upheld by the caller.
         unsafe { self.root.first_activate() };
     }
-
     /// The physical address of the root page table.
     ///
     /// Obtaining the physical address of the root page table is safe, however, using it or
@@ -607,7 +495,6 @@ impl<C: PageTableConfig> PageTable<C> {
     pub fn root_paddr(&self) -> Paddr {
         self.root.paddr()
     }
-
     /// Query about the mapping of a single byte at the given virtual address.
     ///
     /// Note that this function may fail reflect an accurate result if there are
@@ -618,7 +505,6 @@ impl<C: PageTableConfig> PageTable<C> {
         // SAFETY: The root node is a valid page table node so the address is valid.
         unsafe { page_walk::<C>(self.root_paddr(), vaddr) }
     }
-
     /// Create a new cursor exclusively accessing the virtual address range for mapping.
     ///
     /// If another cursor is already accessing the range, the new cursor may wait until the
@@ -630,7 +516,6 @@ impl<C: PageTableConfig> PageTable<C> {
     ) -> Result<CursorMut<'rcu, C>, PageTableError> {
         CursorMut::new(self, guard.as_atomic_mode_guard(), va)
     }
-
     /// Create a new cursor exclusively accessing the virtual address range for querying.
     ///
     /// If another cursor is already accessing the range, the new cursor may wait until the
@@ -643,7 +528,6 @@ impl<C: PageTableConfig> PageTable<C> {
     ) -> Result<Cursor<'rcu, C>, PageTableError> {
         Cursor::new(self, guard.as_atomic_mode_guard(), va)
     }
-
     /// Create a new reference to the same page table.
     /// The caller must ensure that the kernel page table is not copied.
     /// This is only useful for IOMMU page tables. Think twice before using it in other cases.
@@ -653,7 +537,6 @@ impl<C: PageTableConfig> PageTable<C> {
         }
     }
 }
-
 /// A software emulation of the MMU address translation process.
 ///
 /// This method returns the physical address of the given virtual address and
@@ -682,9 +565,7 @@ pub(super) unsafe fn page_walk<C: PageTableConfig>(
     vaddr: Vaddr,
 ) -> Option<(Paddr, PageProperty)> {
     use super::paddr_to_vaddr;
-
     let _rcu_guard = disable_preempt();
-
     let mut pt_addr = paddr_to_vaddr(root_paddr);
     for cur_level in (1..=C::NR_LEVELS).rev() {
         let offset = pte_index::<C>(vaddr, cur_level);
@@ -694,11 +575,9 @@ pub(super) unsafe fn page_walk<C: PageTableConfig>(
         //  - The index is inside the bound, so the page table entry is valid.
         //  - All page table entries are aligned and accessed with atomic operations only.
         let cur_pte = unsafe { load_pte((pt_addr as *mut C::E).add(offset), Ordering::Acquire) };
-
         if !cur_pte.is_present() {
             return None;
         }
-
         if cur_pte.is_last(cur_level) {
             debug_assert!(cur_level <= C::HIGHEST_TRANSLATION_LEVEL);
             return Some((
@@ -706,13 +585,10 @@ pub(super) unsafe fn page_walk<C: PageTableConfig>(
                 cur_pte.prop(),
             ));
         }
-
         pt_addr = paddr_to_vaddr(cur_pte.paddr());
     }
-
     unreachable!("All present PTEs at the level 1 must be last-level PTEs");
 }
-
 /// A trait that abstracts architecture-specific page table entries (PTEs).
 ///
 /// Note that a default PTE should be a PTE that points to nothing.
@@ -725,59 +601,47 @@ pub trait PageTableEntryTrait:
     fn new_absent() -> Self {
         Self::default()
     }
-
     /// Returns if the PTE points to something.
     ///
     /// For PTEs created by [`Self::new_absent`], this method should return
     /// false. For PTEs created by [`Self::new_page`] or [`Self::new_pt`]
     /// and modified with [`Self::set_prop`], this method should return true.
     fn is_present(&self) -> bool;
-
     /// Creates a new PTE that maps to a page.
     fn new_page(paddr: Paddr, level: PagingLevel, prop: PageProperty) -> Self;
-
     /// Creates a new PTE that maps to a child page table.
     fn new_pt(paddr: Paddr) -> Self;
-
     /// Returns the physical address from the PTE.
     ///
     /// The physical address recorded in the PTE is either:
     /// - the physical address of the next-level page table, or
     /// - the physical address of the page that the PTE maps to.
     fn paddr(&self) -> Paddr;
-
     /// Returns the page property of the PTE.
     fn prop(&self) -> PageProperty;
-
     /// Sets the page property of the PTE.
     ///
     /// This methold has an impact only if the PTE is present. If not, this
     /// method will do nothing.
     fn set_prop(&mut self, prop: PageProperty);
-
     /// Returns if the PTE maps a page rather than a child page table.
     ///
     /// The method needs to know the level of the page table where the PTE resides,
     /// since architectures like x86-64 have a huge bit only in intermediate levels.
     fn is_last(&self, level: PagingLevel) -> bool;
-
     /// Converts the PTE into a raw `usize` value.
     fn as_usize(self) -> usize {
         const { assert!(size_of::<Self>() == size_of::<usize>()) };
-
         // SAFETY: `Self` is `Pod` and has the same memory representation as `usize`.
         unsafe { transmute_unchecked(self) }
     }
-
     /// Converts the raw `usize` value into a PTE.
     fn from_usize(pte_raw: usize) -> Self {
         const { assert!(size_of::<Self>() == size_of::<usize>()) };
-
         // SAFETY: `Self` is `Pod` and has the same memory representation as `usize`.
         unsafe { transmute_unchecked(pte_raw) }
     }
 }
-
 /// Loads a page table entry with an atomic instruction.
 ///
 /// # Safety
@@ -789,7 +653,6 @@ pub unsafe fn load_pte<E: PageTableEntryTrait>(ptr: *mut E, ordering: Ordering) 
     let pte_raw = atomic.load(ordering);
     E::from_usize(pte_raw)
 }
-
 /// Stores a page table entry with an atomic instruction.
 ///
 /// # Safety
