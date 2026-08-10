@@ -12,9 +12,10 @@ pub(super) fn init() {
     ostd::arch::boot::pl011_puts_safe(b"[softirq] init start\n");
     SoftIrqLine::get(TIMER_SOFTIRQ_ID).enable(timer_softirq_handler);
 
-    timer::register_callback_on_cpu(|| {
-        SoftIrqLine::get(TIMER_SOFTIRQ_ID).raise();
-    });
+    // Disabled for RPi3 timer-callback debugging.
+    // timer::register_callback_on_cpu(|| {
+    //     SoftIrqLine::get(TIMER_SOFTIRQ_ID).raise();
+    // });
     ostd::arch::boot::pl011_puts_safe(b"[softirq] init done\n");
 }
 

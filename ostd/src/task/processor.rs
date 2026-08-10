@@ -98,15 +98,17 @@ fn before_switching_to(next_task: &Task, irq_guard: &DisabledLocalIrqGuard) {
     // Ensure that the mapping to the kernel stack is valid.
     next_task.kstack.flush_tlb(irq_guard);
 
-    let mut spin_count = 0u32;
     // Ensure that we are not switching to a task that is already running.
-    // WORKAROUND: QEMU 6.2 AArch64 compare_exchange fails spuriously. Use swap instead.
-    while next_task.switched_to_cpu.swap(true, Ordering::AcqRel) {
-        spin_count += 1;
-        if spin_count == 1 {}
+    //
+    // WORKAROUND: RPi3 AXI bridge causes LDXR/STXR atomics (swap) to fail and
+    // spin forever.  On UP we are called with local IRQs disabled by
+    // `switch_to_task`, so a plain load+store+fence is sufficient.
+    let was_running = next_task.switched_to_cpu.load(Ordering::Relaxed);
+    if was_running {
         log::warn!("Switching to a task already running in the foreground");
-        core::hint::spin_loop();
     }
+    next_task.switched_to_cpu.store(true, Ordering::Relaxed);
+    core::sync::atomic::fence(Ordering::Acquire);
 }
 
 /// Does cleanups after switching to a task.

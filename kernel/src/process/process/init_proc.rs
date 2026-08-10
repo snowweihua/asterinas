@@ -29,16 +29,13 @@ pub fn spawn_init_process(
     argv: Vec<CString>,
     envp: Vec<CString>,
 ) -> Result<Arc<Process>> {
-    ostd::arch::boot::pl011_puts_safe(b"[spawn] start\n");
     debug_assert!(executable_path.starts_with('/'));
     let process = create_init_process(executable_path, argv, envp)?;
-    ostd::arch::boot::pl011_puts_safe(b"[spawn] created\n");
     set_session_and_group(&process);
-    ostd::arch::boot::pl011_puts_safe(b"[spawn] session set\n");
     process.run();
-    ostd::arch::boot::pl011_puts_safe(b"[spawn] run done\n");
     Ok(process)
 }
+
 
 fn create_init_process(
     executable_path: &str,

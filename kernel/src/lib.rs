@@ -226,7 +226,6 @@ fn first_kthread() {
         envp,
     )
     .expect("Run init process failed.");
-    ostd::arch::boot::pl011_puts_safe(b"[fk] spawn_init_process done\n");
 
     // Wait till initproc become zombie.
     while !initproc.status().is_zombie() {

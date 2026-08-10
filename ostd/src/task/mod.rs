@@ -97,7 +97,6 @@ impl Task {
     /// BUG: This method highly depends on the current scheduling policy.
     #[track_caller]
     pub fn run(self: &Arc<Self>) {
-        crate::arch::boot::pl011_puts_safe(b"[task] run start\n");
         scheduler::run_new_task(self.clone());
     }
 

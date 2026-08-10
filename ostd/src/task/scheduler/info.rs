@@ -4,7 +4,7 @@
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use crate::{cpu::CpuId, task::Task};
+use crate::{cpu::CpuId, irq, task::Task};
 
 /// Fields of a task that OSTD will never touch.
 ///
@@ -37,15 +37,18 @@ impl AtomicCpuId {
     /// `Ok(())`. Otherwise, it returns `Err(previous_value)` which the previous
     /// value is a valid CPU ID.
     pub fn set_if_is_none(&self, cpu_id: CpuId) -> core::result::Result<(), CpuId> {
-        self.0
-            .compare_exchange(
-                Self::NONE,
-                cpu_id.as_usize() as u32,
-                Ordering::Relaxed,
-                Ordering::Relaxed,
-            )
-            .map(|_| ())
-            .map_err(|prev| (prev as usize).try_into().unwrap())
+        // WORKAROUND: RPi3 AXI bridge causes LDXR/STXR atomics (compare_exchange)
+        // to fail.  We disable local IRQs and use plain load+store+fence for UP
+        // correctness instead.
+        let _irq_guard = irq::disable_local();
+        let prev = self.0.load(Ordering::Relaxed);
+        if prev == Self::NONE {
+            self.0.store(cpu_id.as_usize() as u32, Ordering::Relaxed);
+            core::sync::atomic::fence(Ordering::Acquire);
+            Ok(())
+        } else {
+            Err((prev as usize).try_into().unwrap())
+        }
     }
 
     /// Sets the inner value of an `AtomicCpuId` anyway.

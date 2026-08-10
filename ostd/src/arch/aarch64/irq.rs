@@ -42,6 +42,7 @@ pub(crate) fn enable_local() {
         core::arch::asm!(
             "mov x9, x30",
             "msr DAIFClr, #0b0011",
+            "isb",
             "mov x30, x9",
             out("x9") _,
             options(nostack, nomem),
@@ -63,7 +64,11 @@ pub(crate) fn enable_local_and_halt() {
     // `0b0011` corresponds to clearing the I (IRQ) and F (FIQ) bits.
     // The `nomem` option tells the compiler this instruction has no memory side effects.
     unsafe {
-        asm!("msr DAIFClr, #0b0011", options(nomem, nostack));
+        asm!(
+            "msr DAIFClr, #0b0011",
+            "isb",
+            options(nomem, nostack)
+        );
     }
 
     // Enter a low-power, idle state and wait for an interrupt.

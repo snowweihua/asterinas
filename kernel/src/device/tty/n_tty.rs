@@ -85,9 +85,18 @@ fn create_n_tty(index: u32, device: Arc<dyn AnyConsoleDevice>) -> Arc<Tty<Consol
 
     device.register_callback(Box::leak(Box::new(
         move |mut reader: VmReader<Infallible>| {
-            let mut chs = vec![0u8; reader.remain()];
-            reader.read(&mut VmWriter::from(chs.as_mut_slice()));
-            let _ = tty.push_input(chs.as_slice());
+            // Use a stack buffer so the interrupt-time console callback never
+            // touches the heap allocator.
+            let mut buf = [0u8; 16];
+            while reader.remain() > 0 {
+                let n = reader.remain().min(buf.len());
+                let mut writer = VmWriter::from(&mut buf[..n]);
+                let read = reader.read(&mut writer);
+                if read == 0 {
+                    break;
+                }
+                let _ = tty.push_input(&buf[..read]);
+            }
         },
     )));
 
