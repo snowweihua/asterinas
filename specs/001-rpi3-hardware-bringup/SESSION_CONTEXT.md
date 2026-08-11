@@ -1,322 +1,94 @@
 # RPi3 Hardware Bring-Up Context
 
-This file records durable findings only. Temporary probe chronology and superseded hypotheses are intentionally omitted.
+This file records durable findings and the current active investigation. Probe chronology, superseded hypotheses, and reverted experiments are intentionally omitted.
 
 ## Current Status
 
 - Target: Raspberry Pi 3 Model B, AArch64, single-core runtime.
-- Boot reaches the init process shell (`/ #`) on the physical board and the shell is interactive.
-- Verified through the latest image:
-  - metadata mapping completes;
-  - kernel page-table activation completes;
-  - all 12 static component records are discovered and sorted;
-  - bootstrap components initialize;
-  - `init_in_first_process` completes device-node creation and `ramfs.mknod`;
-  - the first process runs `/bin/sh` and prints a `/ #` prompt;
-  - typed serial input is received correctly (short and long commands are echoed and executed);
-  - all timer callbacks (`update_cpu_time`, `softirq`, `loadavg`) are re-enabled and the shell remains responsive over 30+ second waits.
-- The mini-UART RX path is now driven by the AUX IRQ alone; the timer-polling fallback was removed because it kept the RX path behind a long timer ISR (see `Confirmed Fix: RPi3 mini-UART RX Input` below).
-- `SA_RESTORER` warnings and user-space exceptions (`0x92000047`, `0x82000007`) are now eliminated by a kernel-provided AArch64 signal-return trampoline (see `Confirmed Fix: AArch64 Signal Return` below).
-- All temporary `pl011_puts` / `pl011_puts_hex` / `pl011_puts_safe` / `early_marker` / `mini_uart_puts` / `early_print` debug probes have been removed from compiled code; the kernel still boots to the interactive `/ #` prompt.
+- The physical board boots the init process to an interactive `/ #` prompt.
+- The verified boot baseline completes:
+  - metadata mapping and kernel page-table activation;
+  - discovery and sorting of all 12 static component records;
+  - bootstrap component initialization;
+  - `init_in_first_process`, device-node creation, and `ramfs.mknod`;
+  - startup of `/bin/sh`;
+  - short and long serial commands, including `ls` and `echo`;
+  - `update_cpu_time`, `softirq`, and `loadavg` timer callbacks without hangs during 30+ second idle waits.
+- The latest diagnostic image also boots to `/ #`, but `exec /bin/busybox echo hi` still hangs after the execve diagnostic path. Therefore normal shell interactivity is the baseline, not a confirmed successful execve result.
+- The last physical test left the board powered on. The latest verified image was built, converted, deployed, power-cycled, and captured over serial.
 
 ## Durable RPi3 Constraints
 
-### Exclusive Atomics Are Unsafe During Bring-Up
+### Single-Core and Exclusive-Atomic Constraint
 
-The RPi3 setup faults on Cortex-A53 exclusive operations (`ldxr`, `ldaxr`, `stxr`, `ldaxrb`, and related CAS loops) even when the target memory is otherwise readable and writable. The board is deliberately treated as single-core during this bring-up.
+The RPi3 bring-up environment faults on Cortex-A53 exclusive operations (`ldxr`, `ldaxr`, `stxr`, `ldaxrb`, and related CAS loops), even when the target memory is otherwise readable and writable. The board is deliberately treated as single-core during bring-up.
 
-Confirmed affected areas include:
+Confirmed affected areas include page-table node locks, frame reference-count transitions, allocator free-size updates, heap-slab reference-count initialization, runtime `Once`, Arc weak-count updates, component inventory registration, and softirq enabled-mask updates.
 
-- page-table node locks;
-- frame reference-count transitions;
-- allocator free-size updates;
-- heap slab reference-count initialization;
-- runtime `Once` initialization;
-- Arc weak-count updates;
-- component inventory registration;
-- softirq enabled-mask updates.
+RPi3-specific paths use plain load/store or boot-safe single-core helpers at runtime-confirmed boundaries. Generic atomic behavior remains unchanged for other targets.
 
-The project uses plain load/store or boot-safe single-core helpers only at runtime-confirmed RPi3 boundaries. Generic atomic behavior remains unchanged for other targets.
+### Cortex-A53 16-Byte Return Hazard
+
+The RPi3 Cortex-A53 can corrupt x30 when a function returns a 16-byte aggregate in registers, including `Result<Frame<M>>`, `Result<UniqueFrame<M>>`, `Option<Paddr>`, and `(FreeChunk, FreeChunk)`. The failure is alignment/layout-sensitive, so adding or removing instrumentation can move the apparent hang.
+
+The allocator mitigations use single-register pointer/physical-address returns with null or `NO_PADDR` sentinels. They include the free-chunk split path, frame-cache and pool allocation, global frame allocation, `MetaSlot::get_from_unused`, and the `Frame::init_unused`/`UniqueFrame::init_unused` helpers. New RPi3 debugging should preserve this constraint and avoid treating a moved boundary as a new root cause without a hardware toggle.
 
 ## Confirmed Fixes
 
-### Page-Table Metadata Subtree
+### Page Tables, Frames, and DRAM
 
-- The new kernel page table must not copy the boot slot-0 descriptor into metadata root index `0x1c0`.
-- That copied descriptor caused the metadata cursor to borrow static boot page tables whose metadata had the wrong type or poison level.
-- The metadata root is now left empty so the cursor allocates a managed subtree from the reserved bootstrap page-table pool.
-- Hardware evidence:
-  - managed cursor subtree reached successfully;
-  - `[kspace.m4] metadata mapped`;
-  - `[init.C] after kspace::init`;
-  - `[init.5a] after activate_kernel_page_table`.
-
-### Bootstrap Page-Table Pool
-
-- Boot page-table frames are reserved from a managed pool and initialized with the correct `PageTablePageMeta` level.
-- The pool uses plain mutable state during single-core bootstrap.
-- The former bootstrap lock fault was confirmed at `PageTableNodeRef::lock()` and bypassed only in bootstrap context.
-
-### Frame Allocator and Metadata Pointers
-
-- Intrusive buddy-list links created before managed page-table activation can retain physical metadata pointers.
-- `LinkedList::take_current()` restores the frame from its live metadata pointer.
-- `MetaSlot::frame_paddr()` distinguishes retained low physical pointers from mapped high virtual metadata pointers.
+- The new kernel page table must not copy the boot slot-0 descriptor into metadata root index `0x1c0`. Leaving that root entry empty lets the cursor allocate a managed subtree from the reserved bootstrap page-table pool.
+- Boot page-table frames are reserved from a managed pool and initialized with the correct `PageTablePageMeta` level. The bootstrap pool uses plain mutable state while the system is single-core.
+- Intrusive buddy-list links created before managed page-table activation can retain physical metadata pointers. `LinkedList::take_current()` restores the frame from its live metadata pointer, and `MetaSlot::frame_paddr()` distinguishes retained low physical pointers from mapped high-virtual metadata pointers.
 - Hardware confirmed local buddy allocation, balancing, frame-cache refills, buddy splitting, right-child insertion, and `pools::alloc()` completion.
-- Several apparent allocator boundaries were UART observability artifacts; no allocator workaround was added for them.
+- `board::dram_base()` is read once and cached. Re-parsing the early-boot FDT after the init process activates its own `TTBR0` page table used to access an invalid low VA and hang in `Frame::init_unused`; the cached base reaches the shell prompt.
 
-### RPi3-Safe Initialization
+### RPi3-Safe Initialization and Components
 
-- `ostd::sync::Once` dispatches to `SimpleOnce` on RPi3 and retains `spin::Once` elsewhere.
-- Confirmed migrations include task handlers, scheduler state, user page-fault handling, RNG, bootstrap component singletons, and bottom-half handlers.
-- `arc_new_cyclic()` and `weak_clone()` provide the corresponding single-core Arc path for systree construction.
-
-### Static Component Registration
-
-- AArch64 does not execute the normal `.init_array` registration path.
-- Component records are emitted into a retained `.component_registry` linker section and enumerated directly on AArch64.
-- The OSDK run-base cache includes generated linker scripts so linker changes invalidate stale generated bases.
-- Hardware confirms 12 records are discovered and sorted.
-
-### Component Metadata Allocation
-
-- Generated component names and paths are static literals, but the old implementation copied them into owned `String` values during bootstrap.
-- `ComponentInfo` now stores `&'static str` and registry matching uses borrowed path slices.
-- Hardware subsequently completed metadata parsing, registry matching, sorting, and component calls through block, console, input, PCI, softirq, and systree.
-
-### DRAM Base Address
-
-- `board::dram_base()` originally re-parsed the device tree on every call via
-  `fdt.memory().regions().next()`.
-- The `Fdt` object holds the DTB pointer from early boot, which is a low
-  identity-mapped virtual address. After the init process activates its own
-  user page table (`TTBR0`), that low VA is no longer valid.
-- Accessing the cached `Fdt` from a later kernel path (e.g. `MetaSlot::get_slot`
-  during heap allocation) then produced a silent synchronous abort and hung the
-  init process inside `Frame::init_unused`.
-- The DRAM base is now read once and cached in an `AtomicUsize`; subsequent
-  callers avoid the FDT walk. Hardware confirms the boot proceeds through
-  `init_in_first_process`, `ramfs.mknod`, and reaches the `/bin/sh` prompt.
+- `ostd::sync::Once` dispatches to `SimpleOnce` on RPi3. Confirmed migrations cover task handlers, scheduler state, user page-fault handling, RNG, bootstrap component singletons, and bottom-half handlers.
+- `arc_new_cyclic()` and `weak_clone()` provide the corresponding single-core Arc paths for systree construction.
+- AArch64 component records are emitted into a retained `.component_registry` linker section and enumerated directly because the normal `.init_array` path is not executed. The OSDK run-base cache includes generated linker scripts so linker changes invalidate stale generated bases.
+- Generated component names and paths remain borrowed static strings instead of being copied into owned `String` values during bootstrap. Hardware confirms metadata parsing, registry matching, sorting, and component dispatch through block, console, input, PCI, softirq, and systree.
 
 ### Logger Backend
 
-- The original logger failure was captured as an EL1 synchronous abort in `spin::once::Once::try_call_once_slow`.
-- The faulting operation was the `spin::Once` exclusive state transition in the OSTD logger injection path.
-- `ostd/src/logger.rs` now uses boot `SimpleOnce`.
-- This is the minimal mechanism-matched fix, but the clean post-fix image has not yet reached `[cmp.logger] init`; do not claim full logger toggle verification yet.
+The original logger failure was an EL1 synchronous abort in `spin::once::Once::try_call_once_slow`; the OSTD logger injection path now uses boot `SimpleOnce`. The mechanism-matched fix is in place, but a clean post-fix image has not reached `[cmp.logger] init`, so full logger-toggle verification is still unconfirmed.
 
-### RPi3 mini-UART RX Input
+### Mini-UART RX and Console
 
-- The VideoCore firmware can overwrite the ARM peripheral interrupt controller
-  `ENABLE_IRQS_1` register, which clears the AUX mini-UART RX enable bit (bit
-  29) and makes the shell prompt non-interactive even though TX output works.
-- Workaround implemented in `ostd/src/arch/aarch64/bcm2836_irq.rs`:
-  - `reenable_miniuart_irq()` re-sets the `AUX_PERI_IRQ_BIT` in `ENABLE_IRQS_1`
-    each time it is called.
-  - `acknowledge_interrupt()` also disables and clears a spurious
-    `SYSTEM_TIMER1` (GPU IRQ 1) pending interrupt to prevent an IRQ storm.
-- `ostd/src/arch/aarch64/serial.rs`:
-  - `init_rx_irq()` re-initialises the mini-UART from a known-good sequence
-    while preserving the U-Boot baud rate.
-  - It clears the RX/TX FIFOs, resets `MCR` and `LCR`, and re-routes GPIO 14/15
-    to mini-UART (alt5) with pull-up/down disabled.
-  - `reenable_rx_irq()` exposes the periodic AUX enable re-write to the
-    kernel driver.
-- `kernel/src/driver/mod.rs`:
-  - `poll_uart_input()` re-enables the AUX IRQ and drains the RX FIFO by
-    calling the registered UART callback for each received byte.
-  - It is invoked directly from the UART IRQ handler; the previous 1 ms
-    timer-polling registration was removed because the timer ISR latency caused
-    RX FIFO overflow.
-- `ostd/src/arch/aarch64/serial.rs`:
-  - `send()` uses `MINIUART_STAT_REG_TX_SPACE` to keep the TX FIFO busy.
-  - When `send()` is called with local IRQs disabled (the AUX IRQ echo path),
-    it writes only if the TX FIFO has space and drops the byte otherwise.
-    This prevents the interrupt handler from spinning on output while new RX
-    bytes are arriving.
-- The current image no longer uses timer-polling for RX; the AUX IRQ alone is
-  sufficient for an interactive shell.
+- VideoCore firmware can overwrite the ARM peripheral interrupt controller's `ENABLE_IRQS_1`, clearing the AUX mini-UART RX enable bit and making the shell non-interactive while TX still works.
+- `reenable_miniuart_irq()` restores the AUX bit. Interrupt acknowledgement also disables and clears the spurious `SYSTEM_TIMER1` pending interrupt that otherwise causes an IRQ storm.
+- `init_rx_irq()` reinitializes the mini-UART while preserving the U-Boot baud rate, clears FIFOs, resets `MCR`/`LCR`, and routes GPIO 14/15 to mini-UART alt5 with pull-up/down disabled.
+- The timer-polling RX fallback was removed; the AUX IRQ drains the RX FIFO directly. `serial::send()` uses the mini-UART TX-space status and avoids blocking in the IRQ echo path when local IRQs are disabled.
+- User-side follow-up edits simplified the UART IRQ handler to call `poll_uart_input()` directly and changed console writers to send one byte at a time through `serial::send()`. Those edits have not yet received a post-change physical verification.
 
-## Confirmed Fix: Scheduler loadavg in timer interrupt
+### Scheduler Timer Callbacks
 
-- Re-enabling the `loadavg` timer callback caused hangs because
-  `ClassScheduler::nr_queued_and_running()` locked every per-CPU runqueue.
-  If the interrupted context already held one of those locks, the timer ISR
-  deadlocked.
-- The fix in `kernel/src/sched/sched_class/mod.rs` reads only the local
-  runqueue and uses `try_lock()`, returning `(0, 0)` if it is contended.
-- With this change all timer callbacks (`update_cpu_time`, `softirq`,
-  `loadavg`) run together and the shell remains responsive over 30+ second
-  waits.
+`loadavg` originally deadlocked in the timer interrupt because `ClassScheduler::nr_queued_and_running()` locked every per-CPU runqueue, including a runqueue possibly held by the interrupted context. The fix reads only the local runqueue with `try_lock()` and returns `(0, 0)` when it is contended. All timer callbacks now run together while the shell remains responsive.
 
-## Confirmed Fix: AArch64 Signal Return
+### AArch64 Signal Return
 
-- The `SA_RESTORER fallback mechanism not implemented` warning and the
-  user-space `[exception]` faults were caused by missing AArch64 signal-return
-  support.  Glibc on AArch64 does not supply a `sa_restorer`; it relies on the
-  kernel to provide `__kernel_rt_sigreturn`.
-- The kernel now maps a per-process executable trampoline page at a fixed high
-  user address (`MAX_USERSPACE_VADDR - PAGE_SIZE`).  The trampoline contains:
-  `mov x8, #__NR_rt_sigreturn` followed by `svc #0`.
-- `kernel/src/process/process_vm/mod.rs` creates and maps the trampoline VMO
-  during process VM setup (`clear_and_map` and `renew_vm_and_map`).
-- `kernel/src/process/signal/mod.rs` sets the signal handler `x30`/`lr` to
-  the trampoline address (or to the user-supplied `sa_restorer` when
-  `SA_RESTORER` is set).
-- `ostd/src/arch/aarch64/cpu/context.rs` exposes `lr`/`set_lr`, and
-  `kernel/src/arch/aarch64/cpu.rs` saves and restores `x30` in `SigContext`.
-- `kernel/src/process/signal/sig_disposition.rs` now permits AArch64
-  `rt_sigaction` without `SA_RESTORER`.
-- Hardware evidence: the boot log no longer contains `SA_RESTORER` warnings or
-  `[exception]` entries, and the shell remains interactive.
+- AArch64 glibc relies on the kernel's `__kernel_rt_sigreturn` support instead of supplying `sa_restorer`. The kernel now maps an executable per-process trampoline at `MAX_USERSPACE_VADDR - PAGE_SIZE` containing `mov x8, #__NR_rt_sigreturn` followed by `svc #0`.
+- Signal setup uses that trampoline as `x30`/`lr`, unless a user `sa_restorer` is provided. AArch64 context support saves and restores `x30`, and `rt_sigaction` without `SA_RESTORER` is accepted.
+- Hardware no longer shows `SA_RESTORER` warnings or the earlier user-space exceptions (`0x92000047`, `0x82000007`).
 
-## Latest Hardware Evidence
+## Active Investigation: execve Return Boundary
 
-- Boot reaches the `/bin/sh` prompt (`/ #`) on the current image and serial input is
-  fully interactive (short and long commands are echoed and executed).
-- The init process executes `SYS_OPENAT`, `SYS_READ`, `SYS_MMAP`, `SYS_IOCTL`, and
-  other syscalls without emitting user-space exceptions or `SA_RESTORER` warnings.
-- `dram_base()` caching was verified by toggling: restoring the uncached FDT walk
-  causes the boot to hang at `MetaSlot::get_slot`; the cached version reaches the
-  shell prompt.
-- All timer callbacks (`update_cpu_time`, `softirq`, `loadavg`) run together and the
-  shell remains responsive over waits of 30 seconds or more.
-- The temporary `pl011_puts` / `pl011_puts_safe` / `early_print` / `mini_uart_puts`
-  debug probes were removed in a bulk cleanup; the physical image still boots to the
-  `/ #` prompt and the shell remains interactive.
-
-## Root Cause: 16-Byte Register Returns Corrupt x30
-
-- The RPi3's Cortex-A53 corrupts the link register (x30) when a function returns a
-  16-byte aggregate in registers (`Result<Frame<M>>`, `Result<UniqueFrame<M>>`,
-  `Option<Paddr>`, `(FreeChunk, FreeChunk)`), depending on instruction alignment.
-- The codebase already documented this at `unique.rs:44-50` and
-  `page_table/mod.rs:37-44` ("16-byte generic `Result<UniqueFrame<M>>` return
-  that triggers a Cortex-A53 epilogue bug (x30 corruption)").
-- The frame-allocator hot path returned 16-byte aggregates everywhere, so the
-  hang location moved with instrumentation and code layout.
-- Fixes eliminate those returns by using a single-register `*const ()`/`Paddr`
-  sentinel pattern:
-  - `split_free` returns a single `FreeChunk` instead of `(FreeChunk, FreeChunk)`.
-  - `alloc_chunk`, `pools::alloc`, `CacheArray::alloc`, `cache::alloc`, `pop_front`
-    return `Paddr` with `NO_PADDR` sentinel instead of `Option<Paddr>`.
-  - `GlobalFrameAllocator::alloc` returns `Paddr` with `NO_PADDR` sentinel.
-  - `MetaSlot::get_from_unused` returns `*const Self` with a null sentinel.
-  - `Frame::init_unused`/`UniqueFrame::init_unused` route through the
-    single-register `get_from_unused`.
-- Commits: `59081c80`, `f47a99af`, `b014a696`, `69641977`, `1698c702`.
-
-## Checkpoint (latest session)
-
-- The frame initialization sentinel experiment `0a0d3122` was reverted as `8c602480` after the physical image regressed to the managed cursor boundary.
-- The configured Docker AArch64 build, ELF conversion, and deployment to `/mnt/d/pi_sd/asterina.img` are working.
-- The Windows relay now supports isolated MCP subprocesses per client, and the WSL TCP client forwards the full MCP handshake; live power/serial calls work from this session.
-- Commit `e137f8c1` routes the network DMA pool through RPi3-safe `arc_clone`, `weak_clone`, and `arc_new_cyclic` paths, with a target-specific layout compensation. Hardware reached component dispatch after the allocator path; full network/logger completion remains unverified.
-- A prior image without the `arc_new_cyclic` change reached `DmaPool::new` and faulted at `ldxr` in the `Arc::new_cyclic` strong-count path (`ELR=ffff00000011a8b0`).
-- The latest image with `arc_new_cyclic` no longer reproduced that abort but stopped later during a frame-cache refill inside `pools::alloc` (last marker `[CA.c] pop_front miss, calling pools::alloc`).
-- The failure is after `match_and_call` dispatches the first bootstrap component and the allocator begins refilling the CPU-local cache.
-- Unrelated `knowledge/` working-tree edits remain untouched.
-- Tried and REVERTED (each regressed the boundary earlier, back to first heap allocation in `[mac.3]`):
-  - `#[inline(always)]` on `get_global_frame_allocator`/`get_global_heap_allocator`
-    (they return 16-byte `&'static dyn Trait` fat pointers).
-  - `Slab::init_new`/`init` single-register constructors + `SlabCache::alloc`
-    using `Slab::<SLOT_SIZE>::init()` (bypassing the 16-byte `alloc_frame_with`
-    `Result<Frame<M>>` return).
-  - Combined getter-inline + slab bypass.
-- These regressions confirm the bug is alignment/layout sensitive: removing one
-  16-byte return shifts code layout and exposes a different latent 16-byte return.
-- Remaining 16-byte register returns to target:
-  - `Frame::from_unused` (`Result<Frame<M>, GetFrameError>`) — called from
-    `Segment::from_unused` (segment.rs:104) in the meta-init / marking path.
-  - `UniqueFrame::from_unused` (public `Result` wrapper).
-  - `alloc_frame_with` (`Result<Frame<M>>`) — documented crash-at-ret; still
-    called by page-table node alloc and boot_pt.
-  - Heap-allocator crate's `SlabCache::alloc`/`ObjectCache::alloc`
-    `Result<HeapSlot, AllocError>` paths.
-
-## Checkpoint (current session)
-
-- Removed the 1 ms `poll_uart_input` timer-polling fallback; serial RX is now
-  handled entirely by the AUX mini-UART IRQ.
-- Added a non-blocking `serial::send` path when local IRQs are disabled so the
-  AUX IRQ handler cannot spin on TX and miss RX bytes.
-- Re-enabled `update_cpu_time`, `softirq`, and `loadavg` timer callbacks.
-- Made `ClassScheduler::nr_queued_and_running` use a local `try_lock` to avoid
-  timer-ISR deadlock with scheduler runqueue locks.
-- Verified interactive shell on hardware: `ls`, `echo hello`, `echo long test`,
-  and 30+ second idle waits all work with all timer callbacks enabled.
-- Committed: `8ae006aa`.
-- Investigated `SA_RESTORER` warnings and user-space exceptions: the AArch64
-  signal-return path is not implemented (no `__kernel_rt_sigreturn` vDSO or
-  kernel trampoline), so glibc falls back to `EINVAL` on `rt_sigaction` and
-  later page faults in the vDSO region are tolerated without hanging the shell.
+- In `kernel/src/syscall/execve.rs`, `renew_vm_and_map(ctx)` was replaced with `ctx.process.vm().clear_and_map()` to avoid the old VM replacement/drop path.
+- The physical command `exec /bin/busybox echo hi` reaches `[A]` through `[K]`, then `[1]`, `[E]`, `[2]`, `[3]`, `[X]`, `[4]`, and `[7]`.
+- The caller-side `[5]` marker in `sys_execve` is not observed (`sys_execveat` has an analogous `[6]` marker). Current evidence places the failure after the `[7]` marker and before observable caller completion. The remaining boundary includes the IRQ-guard drop, cleanup/destructor paths, the returned `Result<()>`, and the caller-side marker; ELF loading and `clear_and_map()` are not the current suspects.
+- `force_marker()` uses direct RPi3 mini-UART high-half MMIO and is temporary diagnostic code. The current probe also disables local IRQs and intentionally forgets several locals. These experiments are not a fix and must be removed or isolated before a final implementation is committed.
+- No durable execve fix has been established. The next test should isolate one post-`[7]` boundary at a time, then follow the required build/deploy/power-cycle/serial verification sequence before claiming progress.
 
 ## Operational Notes
 
-- Required physical verification sequence:
-  - build with the AArch64 OSDK image;
-  - convert ELF to `/tmp/asterina.img`;
-  - deploy to `/mnt/d/pi_sd/asterina.img`;
-  - power off;
-  - clear serial buffer;
-  - power on;
-  - wait approximately 60 seconds;
-  - read serial repeatedly until empty.
-- Runtime evidence is authoritative; do not promote a suspected boundary to a root cause without a reproducible observation and a toggle or equivalent causal proof.
-- Temporary UART probes and `.debug-journal.md` must not be retained in the working tree.
-
-## Next Investigation
-
-- Temporary debug-probe cleanup is complete: all `pl011_puts` / `pl011_puts_safe`
-  / `pl011_puts_hex` / `early_marker` / `mini_uart_puts` / `early_print` probes
-  have been removed from compiled code and the physical image boots to the
-  interactive `/ #` prompt.
-- The serial output still contains raw ANSI color escape sequences from the
-  `log_color` logger feature, which the RPi3 serial terminal does not interpret;
-  this is cosmetic and does not affect boot or shell interactivity.
-- Further RPi3 bring-up work (e.g., SMP enablement, network/storage drivers, or
-  additional AArch64 hardening) can proceed from the current stable baseline.
-
-## Checkpoint (current session)
-
-- Removed remaining temporary debug probes from compiled code:
-  - `kernel/src/thread/exception.rs` (`early_print` exception/page-fault markers);
-  - `osdk/deps/heap-allocator/src/{allocator.rs,slab_cache.rs}` (`early_print` slot-cache markers);
-  - `kernel/libs/comp-sys/component/src/lib.rs` (`mini_uart_puts` and bracketed `info!` markers);
-  - `ostd/src/arch/aarch64/boot/{mod.rs,boot.S}` (`pl011_puts` / `pl011_puts_hex` / `pl011_puts_safe` / `early_marker` / A–F boot markers);
-  - `ostd/src/lib.rs` (unused `early_marker` helper).
-- Removed the now-unused `pl011_puts` / `pl011_puts_hex` / `pl011_puts_safe` / `early_marker` helper definitions.
-- Updated stale `BOARD_CACHE` comment in `ostd/src/arch/aarch64/board.rs`.
-- Verified on hardware: build, convert, deploy, power-cycle, and serial capture confirm the kernel boots to `/ #`.
-- Commits: `15a12319` and `383e1f46`.
-
-## Checkpoint (execve investigation, current session)
-
-- The stable RPi3 image still boots to the interactive `/ #` shell, and the
-  hardware command `exec /bin/busybox echo hi` reaches the end of `do_execve`.
-- In `kernel/src/syscall/execve.rs`, `renew_vm_and_map(ctx)` was replaced with
-  `ctx.process.vm().clear_and_map()` to avoid the old VM replacement/drop path.
-  The physical test reaches `[A]` through `[K]`, then `[1]`, `[E]`, `[2]`, `[3]`,
-  `[X]`, `[4]`, and `[7]`.
-- The added `force_marker` probe uses the RPi3 mini-UART high-half MMIO address
-  and remains only a temporary diagnostic. It demonstrated that the hang is
-  after `do_execve` returns to `sys_execve`, before the post-call `[5]` marker;
-  `sys_execveat` has an analogous `[6]` marker. This narrows the failure to the
-  `Result<()>`/error-propagation or cleanup/return boundary around the
-  `do_execve(...) ?` call, not ELF loading or `clear_and_map()` itself.
-- Disassembly confirms `do_execve` reaches its normal cleanup epilogue after the
-  `[7]` marker, while the caller branches on the returned `Result` immediately
-  after the `bl`. The current probe also temporarily disables local IRQs and
-  intentionally leaks several locals; those are diagnostic experiments, not a
-  fix and must be removed before committing a final implementation.
-- The last hardware image was built, converted, deployed, power-cycled, and
-  verified to boot to `/ #`; the command produced `[7]` but no `[5]` and the
-  shell did not return. The current board is powered on.
-- User-side serial changes made after the last test simplify the AUX IRQ
-  handler to call `poll_uart_input()` directly and make console writes send
-  bytes through `serial::send`; `do_exit_group` warning probes were removed.
-  These changes are not yet included in a post-change hardware verification.
-- No durable fix has been established yet. Next investigation should remove or
-  isolate the temporary probes, determine whether the post-`do_execve` failure
-  is a bad `Result` return/branch or a destructor/borrow cleanup issue, and then
-  rebuild/deploy/power-cycle before claiming progress.
+- Physical verification sequence:
+  1. Build the AArch64 OSDK image.
+  2. Convert the ELF to `/tmp/asterina.img`.
+  3. Deploy it to `/mnt/d/pi_sd/asterina.img`.
+  4. Power off the board.
+  5. Clear the serial buffer.
+  6. Power on the board.
+  7. Wait about 60 seconds, then read serial repeatedly until empty.
+- Runtime evidence is authoritative. Do not promote a suspected boundary to a root cause without a reproducible observation and a toggle or equivalent causal proof.
+- Temporary UART probes, `early_print`/`pl011_puts`-style probes, and `.debug-journal.md` must not remain in the working tree after an investigation is complete.
