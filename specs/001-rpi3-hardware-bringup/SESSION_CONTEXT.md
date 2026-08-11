@@ -289,3 +289,34 @@ The project uses plain load/store or boot-safe single-core helpers only at runti
 - Updated stale `BOARD_CACHE` comment in `ostd/src/arch/aarch64/board.rs`.
 - Verified on hardware: build, convert, deploy, power-cycle, and serial capture confirm the kernel boots to `/ #`.
 - Commits: `15a12319` and `383e1f46`.
+
+## Checkpoint (execve investigation, current session)
+
+- The stable RPi3 image still boots to the interactive `/ #` shell, and the
+  hardware command `exec /bin/busybox echo hi` reaches the end of `do_execve`.
+- In `kernel/src/syscall/execve.rs`, `renew_vm_and_map(ctx)` was replaced with
+  `ctx.process.vm().clear_and_map()` to avoid the old VM replacement/drop path.
+  The physical test reaches `[A]` through `[K]`, then `[1]`, `[E]`, `[2]`, `[3]`,
+  `[X]`, `[4]`, and `[7]`.
+- The added `force_marker` probe uses the RPi3 mini-UART high-half MMIO address
+  and remains only a temporary diagnostic. It demonstrated that the hang is
+  after `do_execve` returns to `sys_execve`, before the post-call `[5]` marker;
+  `sys_execveat` has an analogous `[6]` marker. This narrows the failure to the
+  `Result<()>`/error-propagation or cleanup/return boundary around the
+  `do_execve(...) ?` call, not ELF loading or `clear_and_map()` itself.
+- Disassembly confirms `do_execve` reaches its normal cleanup epilogue after the
+  `[7]` marker, while the caller branches on the returned `Result` immediately
+  after the `bl`. The current probe also temporarily disables local IRQs and
+  intentionally leaks several locals; those are diagnostic experiments, not a
+  fix and must be removed before committing a final implementation.
+- The last hardware image was built, converted, deployed, power-cycled, and
+  verified to boot to `/ #`; the command produced `[7]` but no `[5]` and the
+  shell did not return. The current board is powered on.
+- User-side serial changes made after the last test simplify the AUX IRQ
+  handler to call `poll_uart_input()` directly and make console writes send
+  bytes through `serial::send`; `do_exit_group` warning probes were removed.
+  These changes are not yet included in a post-change hardware verification.
+- No durable fix has been established yet. Next investigation should remove or
+  isolate the temporary probes, determine whether the post-`do_execve` failure
+  is a bad `Result` return/branch or a destructor/borrow cleanup issue, and then
+  rebuild/deploy/power-cycle before claiming progress.
