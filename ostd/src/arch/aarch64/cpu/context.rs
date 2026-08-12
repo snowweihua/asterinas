@@ -4,7 +4,7 @@
 
 use core::fmt::Debug;
 
-use aarch64_cpu::registers::{Readable, Writeable, FAR_EL1, TPIDR_EL1};
+use aarch64_cpu::registers::{Readable, Writeable, FAR_EL1, TPIDR_EL0};
 
 use crate::{
     arch::trap::{RawUserContext, TrapFrame},
@@ -202,12 +202,12 @@ impl UserContext {
 
     /// Sets the thread-local storage pointer.
     pub fn set_tls_pointer(&mut self, tls: usize) {
-        TPIDR_EL1.set(tls as u64)
+        TPIDR_EL0.set(tls as u64)
     }
 
     /// Gets the thread-local storage pointer.
     pub fn tls_pointer(&self) -> usize {
-        TPIDR_EL1.get() as usize
+        TPIDR_EL0.get() as usize
     }
 
     /// Activates the thread-local storage pointer for the current task.

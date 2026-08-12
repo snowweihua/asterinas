@@ -14,9 +14,10 @@ This file records durable findings and the current active investigation. Probe c
   - startup of `/bin/sh`;
   - short and long serial commands, including `ls` and `echo`;
   - `update_cpu_time`, `softirq`, and `loadavg` timer callbacks without hangs during 30+ second idle waits.
-- `exec /bin/busybox echo hi` now makes it through `do_execve` and begins the next `UserMode::execute` cycle, but hangs before the post-`^` preempt-count marker can be emitted. The last observed trace from a fresh boot is `A0A!E0E#^` followed by silence.
-- `do_execve` no longer contains the deliberate serial loop; it returns a 16-byte `Result<()>` with local IRQs disabled (forgotten guard), and `handle_syscall` re-enables them before `UserMode::execute` resumes.
-- Normal shell interactivity is still the baseline; a successful `execve` replacement is not yet confirmed.
+- `exec /bin/busybox echo hi` now completes successfully on hardware and prints `hi`. The trace is `A0A!E0E#^0$%^0`, confirming that the post-`^` `preempt_count()` path, scheduler preemption point, `eret`, and the new user image all execute.
+- The root cause was identified: AArch64 `UserContext::set_tls_pointer()` and `tls_pointer()` used `TPIDR_EL1`, which is also the OSTD CPU-local base register. `execve` reset the user TLS to zero and thereby destroyed CPU-local addressing; the following `preempt_count()` accessed CPU-local storage through address zero. The methods now use `TPIDR_EL0`, which is also preserved by the AArch64 task switch assembly.
+- `do_execve` still returns a 16-byte `Result<()>` with local IRQs disabled (forgotten guard), and `handle_syscall` re-enables them before `UserMode::execute` resumes. This workaround remains under review after the TLS fix.
+- A successful `execve` replacement is confirmed for `/bin/busybox echo hi`; the next hardware check should verify replacement by `/bin/busybox sh` and then clean up temporary trace/workaround code.
 
 ## Durable RPi3 Constraints
 
@@ -77,10 +78,10 @@ The original logger failure was an EL1 synchronous abort in `spin::once::Once::t
 
 - `do_execve` in `kernel/src/syscall/execve.rs` now completes without the diagnostic loop, emits `A0A` (preempt-count `0` on entry) and `E0E` (preempt-count `0` just before returning), then disables local IRQs and forgets the guard before returning `Ok(())`. This protects the 16-byte `Result<()>` return from a pending timer interrupt.
 - `handle_syscall` in `kernel/src/syscall/mod.rs` no longer loops on `SYS_EXECVE`; for `Ok(SyscallReturn::NoReturn)` it calls `ostd::irq::enable_local()` before the next `UserMode::execute` cycle.
-- The physical trace `A0A!E0E#^` shows that `do_execve` succeeded, `UserMode::execute` started (`#`), and the local-IRQ-probe (`^`) reported IRQs enabled. The next token, which should be the result of `crate::task::atomic_mode::preempt_count()`, is never emitted, so the hang is either inside `preempt_count()` or in the immediately following `send`/`might_sleep` step.
-- `preempt_count()` works elsewhere (including inside `do_execve`), so the failure is specific to calling it from `UserMode::execute` after the execve return. A pending test will bracket `preempt_count()` with `[`/`]` markers to decide whether the read itself or the code that follows it is the last observable point.
-- The current probe code intentionally disables/forwards local IRQs and adds temporary `A`/`E`/`#`/`^` markers. These are diagnostic only and must be removed or isolated before a final implementation is committed.
-- No durable execve fix has been established. The next step is to isolate the post-`^` boundary in `ostd/src/user.rs` and confirm with the required build/deploy/power-cycle/serial verification sequence.
+- The earlier physical trace `A0A!E0E#^` localized the hang to the post-`^` `preempt_count()` path. Changing AArch64 user TLS access from `TPIDR_EL1` to `TPIDR_EL0` fixed it: the fresh physical trace is `A0A!E0E#^0$%^0`, followed by the expected `hi` output.
+- Root cause: `TPIDR_EL1` is the OSTD CPU-local base register, initialized by boot assembly and required by `CpuLocalCell`. `execve` called `set_tls_pointer(0)`, overwriting that base; the next generic CPU-local load in `preempt_count()` then accessed an invalid address. AArch64 task switching already saves/restores `TPIDR_EL0`, confirming it is the appropriate user TLS register.
+- The current probe code intentionally adds temporary `A`/`E`/`#`/`^` markers. The IRQ workaround around the 16-byte `Result<()>` return is also still diagnostic and must be tested for removal now that the TLS corruption is fixed.
+- The root-cause fix is hardware-confirmed for `/bin/busybox echo hi`. The next step is to verify `/bin/busybox sh`, then remove temporary diagnostics/workarounds and run a clean regression build.
 
 ## Operational Notes
 
