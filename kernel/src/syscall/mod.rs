@@ -388,15 +388,6 @@ pub fn handle_syscall(ctx: &Context, user_ctx: &mut UserContext) {
             user_ctx.set_syscall_ret((-errno) as usize)
         }
     }
-
-    // On AArch64 do_execve deliberately keeps local IRQs disabled while
-    // sys_execve returns its 16-byte Result to avoid a Cortex-A53 x30/epilogue
-    // corruption. Re-enable them here, after the Result has been consumed and
-    // before the next user-mode entry (which asserts IRQs are enabled).
-    #[cfg(target_arch = "aarch64")]
-    if matches!(syscall_return, Ok(SyscallReturn::NoReturn)) {
-        ostd::irq::enable_local();
-    }
 }
 
 #[macro_export]

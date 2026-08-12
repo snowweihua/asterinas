@@ -178,15 +178,6 @@ fn do_execve(
     drop(elf_file);
     drop(fs_ref);
 
-    #[cfg(target_arch = "aarch64")]
-    {
-        // Keep local IRQs disabled while sys_execve constructs and returns its
-        // 16-byte Result. A pending timer interrupt during that window can
-        // corrupt the epilogue (x30) on Cortex-A53. The handler in
-        // syscall/mod.rs will re-enable IRQs before the next user-mode entry.
-        let _irq_guard = ostd::irq::disable_local();
-        core::mem::forget(_irq_guard);
-    }
     ret
 }
 
