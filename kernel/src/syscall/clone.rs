@@ -21,10 +21,10 @@ pub fn sys_clone(
     ctx: &Context,
     parent_context: &UserContext,
 ) -> Result<SyscallReturn> {
-    println!("+C");
+    warn!("+C");
     let args = CloneArgs::for_clone(clone_flags, parent_tidptr, child_tidptr, tls, new_sp)?;
     let child_pid = clone_child(ctx, parent_context, args).unwrap();
-    println!("-C: pid={}", child_pid);
+    warn!("-C");
     Ok(SyscallReturn::Return(child_pid as _))
 }
 

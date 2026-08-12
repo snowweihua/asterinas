@@ -154,9 +154,9 @@ impl<'a, C: PageTableConfig> PageTableNodeRef<'a, C> {
             || crate::arch::is_rpi3()
         {
             // RPi3 single-core: the LDXR/STXR (or LDADDB) loop used by the
-            // atomic swap below can fail/abort on this board, causing an
-            // infinite spin.  With only one CPU and the preempt guard ensuring
-            // we will not be interrupted, the lock is not required.
+            // atomic swap below can fail/abort on this board. With only one CPU
+            // and the preempt guard ensuring no interruption, the lock is not
+            // needed. Same pattern already used for bootstrap.
             return unsafe { self.make_guard_unchecked(_guard) };
         }
 

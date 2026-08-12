@@ -86,13 +86,15 @@ impl<T: ?Sized> Mutex<T> {
     fn acquire_lock(&self) -> bool {
         #[cfg(target_arch = "aarch64")]
         if crate::arch::is_rpi3() {
-            // RPi3 single-core: the exclusive instructions used by
-            // `AtomicBool::swap` can fail/abort, causing an infinite loop or
-            // uncontrolled reacquisition. With only one CPU and no actual
-            // contention for a freshly-created mutex, a plain load+store is
-            // enough to record that the lock is taken.
+            // RPi3 single-core: the exclusive instructions used by `swap` can
+            // abort on this board. Disable local IRQs so that the load/store
+            // sequence cannot be interrupted by another task on the one CPU.
+            let _irq = crate::irq::disable_local();
             let was = self.lock.load(Ordering::Relaxed);
-            self.lock.store(true, Ordering::Relaxed);
+            if !was {
+                self.lock.store(true, Ordering::Relaxed);
+            }
+            core::sync::atomic::fence(Ordering::Acquire);
             return !was;
         }
 

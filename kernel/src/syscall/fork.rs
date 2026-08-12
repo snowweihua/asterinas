@@ -9,10 +9,10 @@ use crate::{
 };
 
 pub fn sys_fork(ctx: &Context, parent_context: &UserContext) -> Result<SyscallReturn> {
-    println!("+F");
+    warn!("+F");
     let clone_args = CloneArgs::for_fork();
     let child_pid = clone_child(ctx, parent_context, clone_args).unwrap();
-    println!("-F: pid={}", child_pid);
+    warn!("-F");
     Ok(SyscallReturn::Return(child_pid as _))
 }
 

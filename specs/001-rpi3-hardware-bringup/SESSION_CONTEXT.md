@@ -88,8 +88,10 @@ The original logger failure was an EL1 synchronous abort in `spin::once::Once::t
 - `exec /bin/busybox ls` lists the current directory, confirming `getdents64` and `execve` are functional.
 - `/bin/busybox ls` from the shell still hangs after the command is echoed; `true` from the shell also hangs, so the failure is in the fork/clone path rather than `ls` or `getdents64`.
 - RPi3 single-core workarounds were added to `ostd::mm::page_table::PageTableNodeRef::lock()` and `ostd::sync::Mutex::acquire_lock()` to bypass failing Cortex-A53 exclusive instructions during `ProcessVm::fork_from` and `Mutex::lock`.
-- Short `println!` markers are being used to locate the next hang in `sys_clone` / `clone_child` / `child_process.run()` / `sys_wait4`.
-- The OSKD Docker image was rebuilt and `cargo-osdk` was fixed to build from the current `osdk` source (`Arch::as_str` -> `Arch::to_str`).
+- Re-applied RPi3 single-core workarounds with `Mutex::acquire_lock` now disabling local IRQs around the plain load+store (safer than the previous non-atomic attempt) and `PageTableNodeRef::lock` using `make_guard_unchecked` under the preempt guard.
+- After these changes the kernel boots and reaches `busybox` startup, but `sh` now fails with `/bin/busybox: symbol lookup error: /bin/busybox: undefined symbol: setxattr, version GLIBC_2.17`. This is an initramfs `busybox`/`libc.so.6` version mismatch (also `if_nametoindex` was seen earlier), not a kernel fork/clone hang.
+- Short `warn!` markers confirmed `clone_child` creates the child process and `child_process.run()` returns; the remaining shell issue is therefore in the initramfs user-space environment.
+- The OSDK Docker image was rebuilt and `cargo-osdk` was fixed to build from the current `osdk` source (`Arch::as_str` -> `Arch::to_str`).
 
 ## Operational Notes
 

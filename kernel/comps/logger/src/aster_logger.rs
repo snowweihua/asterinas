@@ -51,16 +51,11 @@ fn print_logs(record: &Record, timestamp: &Duration) {
 }
 
 #[cfg(not(feature = "log_color"))]
-fn print_logs(record: &Record, timestamp: &Duration) {
-    let secs = timestamp.as_secs();
-    let millis = timestamp.subsec_millis();
-
-    super::_print(format_args!(
-        "{} {:<5}: {}\n",
-        format_args!("[{:>6}.{:03}]", secs, millis),
-        record.level(),
-        record.args()
-    ));
+fn print_logs(record: &Record, _timestamp: &Duration) {
+    // During RPi3 bring-up we only keep Warn/Error enabled and use them as
+    // short serial markers. Emit just the message so it survives the
+    // mini-UART TX path without truncation.
+    super::_print(format_args!("{}\n", record.args()));
 }
 
 pub(super) fn init() {

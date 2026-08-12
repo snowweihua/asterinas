@@ -206,7 +206,7 @@ pub fn clone_child(
     parent_context: &UserContext,
     clone_args: CloneArgs,
 ) -> Result<Tid> {
-    println!("+c");
+    warn!("+c");
     clone_args.flags.check_unsupported_flags()?;
     if clone_args.flags.contains(CloneFlags::CLONE_THREAD) {
         let child_task = clone_child_task(ctx, parent_context, clone_args)?;
@@ -221,9 +221,9 @@ pub fn clone_child(
             child_process.status().set_vfork_child(true);
         }
 
-        println!("+R");
+        warn!("+R");
         child_process.run();
-        println!("-R");
+        warn!("-R");
 
         if child_process.status().is_vfork_child() {
             let cond = || (!child_process.status().is_vfork_child()).then_some(());
@@ -232,7 +232,7 @@ pub fn clone_child(
         }
 
         let child_pid = child_process.pid();
-        println!("-c: pid={}", child_pid);
+        warn!("-c: pid={}", child_pid);
         Ok(child_pid)
     }
 }
@@ -348,7 +348,7 @@ fn clone_child_process(
     parent_context: &UserContext,
     clone_args: CloneArgs,
 ) -> Result<Arc<Process>> {
-    println!("+p");
+    warn!("+p");
     let Context {
         process,
         thread_local,
@@ -468,7 +468,7 @@ fn clone_child_process(
         child.has_child_subreaper.store(true, Ordering::Relaxed);
     }
 
-    println!("-p");
+    warn!("-p");
     Ok(child)
 }
 

@@ -15,7 +15,7 @@ pub fn sys_wait4(
 ) -> Result<SyscallReturn> {
     let wait_options = WaitOptions::from_bits(wait_options)
         .ok_or_else(|| Error::with_message(Errno::EINVAL, "unknown wait option"))?;
-    println!("+W");
+    warn!("+W");
     let process_filter = ProcessFilter::from_id(wait_pid as _);
 
     let wait_status =
@@ -23,7 +23,7 @@ pub fn sys_wait4(
             Errno::EINTR => Error::new(Errno::ERESTARTSYS),
             _ => err,
         })?;
-    println!("-W");
+    warn!("-W");
     let Some(wait_status) = wait_status else {
         return Ok(SyscallReturn::Return(0 as _));
     };
