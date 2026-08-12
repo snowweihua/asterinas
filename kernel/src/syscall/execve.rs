@@ -29,10 +29,12 @@ pub fn sys_execve(
 ) -> Result<SyscallReturn> {
     let elf_file = {
         let executable_path = read_filename(filename_ptr, ctx)?;
+        println!("+X: {}", executable_path);
         lookup_executable_file(AT_FDCWD, executable_path, OpenFlags::empty(), ctx)?
     };
 
     do_execve(elf_file, argv_ptr_ptr, envp_ptr_ptr, ctx, user_context)?;
+    println!("-X");
     Ok(SyscallReturn::NoReturn)
 }
 

@@ -84,6 +84,18 @@ impl<T: ?Sized> Mutex<T> {
     }
 
     fn acquire_lock(&self) -> bool {
+        #[cfg(target_arch = "aarch64")]
+        if crate::arch::is_rpi3() {
+            // RPi3 single-core: the exclusive instructions used by
+            // `AtomicBool::swap` can fail/abort, causing an infinite loop or
+            // uncontrolled reacquisition. With only one CPU and no actual
+            // contention for a freshly-created mutex, a plain load+store is
+            // enough to record that the lock is taken.
+            let was = self.lock.load(Ordering::Relaxed);
+            self.lock.store(true, Ordering::Relaxed);
+            return !was;
+        }
+
         // WORKAROUND: QEMU 6.2 AArch64 compare_exchange (LDAXR/STXR exclusive monitor)
         // fails spuriously. Use swap + check pattern instead.
         !self.lock.swap(true, Ordering::Acquire)

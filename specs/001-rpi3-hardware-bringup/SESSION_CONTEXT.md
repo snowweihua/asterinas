@@ -83,6 +83,14 @@ The original logger failure was an EL1 synchronous abort in `spin::once::Once::t
 - Root cause: `TPIDR_EL1` is the OSTD CPU-local base register, initialized by boot assembly and required by `CpuLocalCell`. `execve` called `set_tls_pointer(0)`, overwriting that base; the next generic CPU-local load in `preempt_count()` then accessed an invalid address. AArch64 task switching already saves/restores `TPIDR_EL0`, confirming it is the appropriate user TLS register.
 - Temporary tracing and unused UART/IRQ probes have been removed. The IRQ workaround has also been removed and physically re-tested with `exec /bin/busybox echo irqfree` producing `irqfree`. The remaining shell-specific follow-up is likely in job-control/TTY initialization.
 
+## Active Investigation: shell command hang (fork/clone)
+
+- `exec /bin/busybox ls` lists the current directory, confirming `getdents64` and `execve` are functional.
+- `/bin/busybox ls` from the shell still hangs after the command is echoed; `true` from the shell also hangs, so the failure is in the fork/clone path rather than `ls` or `getdents64`.
+- RPi3 single-core workarounds were added to `ostd::mm::page_table::PageTableNodeRef::lock()` and `ostd::sync::Mutex::acquire_lock()` to bypass failing Cortex-A53 exclusive instructions during `ProcessVm::fork_from` and `Mutex::lock`.
+- Short `println!` markers are being used to locate the next hang in `sys_clone` / `clone_child` / `child_process.run()` / `sys_wait4`.
+- The OSKD Docker image was rebuilt and `cargo-osdk` was fixed to build from the current `osdk` source (`Arch::as_str` -> `Arch::to_str`).
+
 ## Operational Notes
 
 - Physical verification sequence:

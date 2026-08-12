@@ -35,12 +35,17 @@ pub fn sys_waitid(
             "at least one of WSTOPPED, WCONTINUED, or WEXITED should be specified"
         );
     }
+    info!(
+        "sys_waitid: which = {}, upid = {}, options = {:?}",
+        which, upid, wait_options
+    );
 
     let wait_status =
         do_wait(process_filter, wait_options, ctx).map_err(|err| match err.error() {
             Errno::EINTR => Error::new(Errno::ERESTARTSYS),
             _ => err,
         })?;
+    info!("sys_waitid: returned pid = {:?}", wait_status.as_ref().map(|s| s.pid()));
 
     let Some(wait_status) = wait_status else {
         return Ok(SyscallReturn::Return(0));

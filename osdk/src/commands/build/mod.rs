@@ -207,7 +207,7 @@ fn build_kernel_elf(
     let target_os_string = OsString::from(&arch.triple());
     let linker_script_name = match scheme_name {
         Some("aarch64-rpi3") => "aarch64-rpi3",
-        _ => arch.as_str(),
+        _ => arch.to_str(),
     };
     let rustc_linker_script_arg = format!("-C link-arg=-T{}.ld", linker_script_name);
 

@@ -11,8 +11,10 @@ struct AsterLogger;
 static LOGGER: AsterLogger = AsterLogger;
 
 impl log::Log for AsterLogger {
-    fn enabled(&self, _metadata: &Metadata) -> bool {
-        true
+    fn enabled(&self, metadata: &Metadata) -> bool {
+        // Suppress noisy Info/Debug/Trace logs while bringing up RPi3.
+        // Use println!/print! for deliberate debug markers instead.
+        metadata.level() <= log::Level::Warn
     }
 
     fn log(&self, record: &Record) {

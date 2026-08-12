@@ -126,14 +126,18 @@ fn load_ldso(
     ldso_file: &Path,
     ldso_elf: &ElfHeaders,
 ) -> Result<LdsoLoadInfo> {
+    info!("load_ldso: starting");
     let range = map_segment_vmos(ldso_elf, root_vmar, ldso_file)?;
+    info!("load_ldso: mapped segments, entry_point offset=0x{:x}", ldso_elf.entry_point());
+    let entry_point = range
+        .relocated_addr_of(ldso_elf.entry_point())
+        .ok_or(Error::with_message(
+            Errno::ENOEXEC,
+            "The entry point is not in the mapped range",
+        ))?;
+    info!("load_ldso: entry_point = 0x{:x}", entry_point);
     Ok(LdsoLoadInfo {
-        entry_point: range
-            .relocated_addr_of(ldso_elf.entry_point())
-            .ok_or(Error::with_message(
-                Errno::ENOEXEC,
-                "The entry point is not in the mapped range",
-            ))?,
+        entry_point,
         range,
         _private: (),
     })
@@ -168,7 +172,11 @@ fn init_and_map_vmos(
     };
 
     let entry_point = if let Some(ldso_load_info) = ldso_load_info {
-        // Normal shared object
+        info!(
+            "init_and_map_vmos: ld.so entry_point: 0x{:x}, range start: 0x{:x}",
+            ldso_load_info.entry_point,
+            ldso_load_info.range.relocated_start
+        );
         ldso_load_info.entry_point
     } else {
         elf_map_range
@@ -329,13 +337,13 @@ fn map_segment_vmo(
     root_vmar: &Vmar<Full>,
     map_at: Vaddr,
 ) -> Result<()> {
-    trace!(
+    info!(
         "mem range = 0x{:x} - 0x{:x}, mem_size = 0x{:x}",
         program_header.virtual_addr,
         program_header.virtual_addr + program_header.mem_size,
         program_header.mem_size
     );
-    trace!(
+    info!(
         "file range = 0x{:x} - 0x{:x}, file_size = 0x{:x}",
         program_header.offset,
         program_header.offset + program_header.file_size,
@@ -500,7 +508,15 @@ pub fn init_aux_vec(
     aux_vec.set(AuxKey::AT_PHENT, elf.ph_ent() as u64)?;
     let elf_entry = if elf.is_shared_object() {
         let base_load_offset = elf.base_load_address_offset();
-        elf.entry_point() + elf_map_addr - base_load_offset as usize
+        let entry = elf.entry_point() + elf_map_addr - base_load_offset as usize;
+        info!(
+            "AT_ENTRY for shared object: entry=0x{:x}, map_addr=0x{:x}, base_offset=0x{:x}, result=0x{:x}",
+            elf.entry_point(),
+            elf_map_addr,
+            base_load_offset,
+            entry
+        );
+        entry
     } else {
         elf.entry_point()
     };

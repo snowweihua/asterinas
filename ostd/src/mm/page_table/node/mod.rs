@@ -150,8 +150,14 @@ impl<'a, C: PageTableConfig> PageTableNodeRef<'a, C> {
         'a: 'rcu,
     {
         #[cfg(target_arch = "aarch64")]
-        if crate::IN_BOOTSTRAP_CONTEXT.load(Ordering::Relaxed) {
-            return PageTableGuard::<'rcu, C> { inner: self };
+        if crate::IN_BOOTSTRAP_CONTEXT.load(Ordering::Relaxed)
+            || crate::arch::is_rpi3()
+        {
+            // RPi3 single-core: the LDXR/STXR (or LDADDB) loop used by the
+            // atomic swap below can fail/abort on this board, causing an
+            // infinite spin.  With only one CPU and the preempt guard ensuring
+            // we will not be interrupted, the lock is not required.
+            return unsafe { self.make_guard_unchecked(_guard) };
         }
 
         // WORKAROUND: QEMU 6.2 AArch64 compare_exchange fails spuriously (broken STXR).
