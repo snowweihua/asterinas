@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
 
-// TEST EDIT
 //! Handling of Interrupt ReQuests (IRQs).
 //!
 //! # Top vs bottom half

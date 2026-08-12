@@ -88,20 +88,6 @@ fn do_execve(
     ctx: &Context,
     user_context: &mut UserContext,
 ) -> Result<()> {
-    #[cfg(target_arch = "aarch64")]
-    let trace_pc = |prefix: u8| {
-        let c = ostd::task::atomic_mode::preempt_count();
-        ostd::arch::serial::send(prefix);
-        if c < 10 {
-            ostd::arch::serial::send(b'0' + c as u8);
-        } else if c < 16 {
-            ostd::arch::serial::send(b'A' + (c - 10) as u8);
-        } else {
-            ostd::arch::serial::send(b'?');
-        }
-        ostd::arch::serial::send(prefix);
-    };
-
     let Context {
         process,
         thread_local,
@@ -109,8 +95,6 @@ fn do_execve(
         ..
     } = ctx;
 
-    #[cfg(target_arch = "aarch64")]
-    trace_pc(b'A');
 
     // FIXME: A malicious user could cause a kernel panic by exhausting available memory.
     // Currently, the implementation reads up to `MAX_NR_STRING_ARGS` arguments, each up to
@@ -186,11 +170,6 @@ fn do_execve(
     #[cfg(target_arch = "aarch64")]
     {
         user_context.set_spsr(0);
-        ostd::arch::serial::set_exec_trace(true);
-        ostd::arch::serial::exec_trace(b'!');
-        ostd::arch::serial::send(b'E');
-        ostd::arch::serial::send(b'0');
-        ostd::arch::serial::send(b'E');
     }
 
     let ret = Ok(());

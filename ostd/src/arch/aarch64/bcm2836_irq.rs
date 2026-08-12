@@ -214,10 +214,6 @@ pub fn enable_uart_irq() {
     }
 }
 
-pub fn read_irq_source() -> u32 {
-    unsafe { read_reg(CORE0_IRQ_SOURCE) }
-}
-
 pub fn acknowledge_interrupt() -> usize {
     let core = core_id();
     let offset = CORE0_IRQ_SOURCE + (core * CORE_REG_STRIDE);

@@ -11,8 +11,6 @@
 //! (crate::mm::kspace::KERNEL_BASE_VADDR) so that the peripheral pages are
 //! accessed with Device memory attributes and values are not cached.
 
-use core::sync::atomic::{AtomicBool, Ordering};
-
 use crate::mm::kspace::KERNEL_BASE_VADDR;
 
 const PL011_BASE_PA_QEMU: usize = 0x0900_0000;
@@ -282,23 +280,4 @@ pub fn send(data: u8) {
         }
     }
 }
-
-static EXEC_TRACE: AtomicBool = AtomicBool::new(false);
-
-pub fn set_exec_trace(enabled: bool) {
-    EXEC_TRACE.store(enabled, Ordering::Relaxed);
-}
-
-/// Returns whether exec tracing is currently enabled.
-pub fn exec_trace_enabled() -> bool {
-    EXEC_TRACE.load(Ordering::Relaxed)
-}
-
-/// Sends one byte to the serial port only while exec tracing is enabled.
-pub fn exec_trace(data: u8) {
-    if EXEC_TRACE.load(Ordering::Relaxed) {
-        send(data);
-    }
-}
-
 

@@ -26,30 +26,6 @@ pub fn is_rpi3() -> bool {
     board::BoardType::cached() == 2
 }
 
-/// Reads the ARM local IRQ source register (CORE0_IRQ_SOURCE).
-///
-/// Only meaningful on BCM2836/BCM2837 (Raspberry Pi 3). Exposed for
-/// temporary kernel-side probing during the execve return-path hang.
-pub fn read_irq_source() -> u32 {
-    bcm2836_irq::read_irq_source()
-}
-
-/// Write a single byte to the PL011 UART via linear map (for low-level probing).
-/// Safe to call with IRQs disabled. Does NOT use any locks.
-/// The address is the known, pre-validated PL011 UART MMIO address.
-#[inline(always)]
-pub fn uart_probe(c: u8) {
-    let uart_va: usize = 0xffff_8000_0900_0000;
-    unsafe {
-        core::arch::asm!(
-            "str {w}, [{addr}]",
-            w = in(reg) c as u32,
-            addr = in(reg) uart_va,
-            options(nostack, nomem)
-        );
-    }
-}
-
 #[cfg(feature = "cvm_guest")]
 pub(crate) fn init_cvm_guest() {
     // Unimplemented, no-op
