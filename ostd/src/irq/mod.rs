@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
+// TEST EDIT
 //! Handling of Interrupt ReQuests (IRQs).
 //!
 //! # Top vs bottom half
@@ -80,6 +81,16 @@ pub use bottom_half::{register_bottom_half_handler_l1, register_bottom_half_hand
 pub use guard::{disable_local, DisabledLocalIrqGuard};
 pub use level::InterruptLevel;
 pub use top_half::{IrqCallbackFunction, IrqLine};
+
+/// Manually re-enable local IRQs.
+///
+/// # Safety
+/// This should only be used when the caller is compensating for a deliberately
+/// leaked [`DisabledLocalIrqGuard`]. Prefer the guard-based API for normal use.
+pub fn enable_local() {
+    crate::arch::irq::enable_local();
+}
+
 
 use crate::{arch::trap::TrapFrame, cpu::PrivilegeLevel};
 

@@ -15,8 +15,8 @@ use crate::{
     },
     prelude::*,
     process::{
-        check_executable_file, posix_thread::ThreadName, renew_vm_and_map, Credentials, Process,
-        ProgramToLoad, MAX_LEN_STRING_ARG, MAX_NR_STRING_ARGS,
+        check_executable_file, posix_thread::ThreadName, Credentials, Process, ProgramToLoad,
+        MAX_LEN_STRING_ARG, MAX_NR_STRING_ARGS,
     },
 };
 
@@ -88,6 +88,20 @@ fn do_execve(
     ctx: &Context,
     user_context: &mut UserContext,
 ) -> Result<()> {
+    #[cfg(target_arch = "aarch64")]
+    let trace_pc = |prefix: u8| {
+        let c = ostd::task::atomic_mode::preempt_count();
+        ostd::arch::serial::send(prefix);
+        if c < 10 {
+            ostd::arch::serial::send(b'0' + c as u8);
+        } else if c < 16 {
+            ostd::arch::serial::send(b'A' + (c - 10) as u8);
+        } else {
+            ostd::arch::serial::send(b'?');
+        }
+        ostd::arch::serial::send(prefix);
+    };
+
     let Context {
         process,
         thread_local,
@@ -95,7 +109,9 @@ fn do_execve(
         ..
     } = ctx;
 
-    let executable_path = elf_file.abs_path();
+    #[cfg(target_arch = "aarch64")]
+    trace_pc(b'A');
+
     // FIXME: A malicious user could cause a kernel panic by exhausting available memory.
     // Currently, the implementation reads up to `MAX_NR_STRING_ARGS` arguments, each up to
     // `MAX_LEN_STRING_ARG` in length, without first verifying the total combined size.
@@ -103,13 +119,7 @@ fn do_execve(
     // of all strings to enforce a sensible overall limit.
     let argv = read_cstring_vec(argv_ptr_ptr, MAX_NR_STRING_ARGS, MAX_LEN_STRING_ARG, ctx)?;
     let envp = read_cstring_vec(envp_ptr_ptr, MAX_NR_STRING_ARGS, MAX_LEN_STRING_ARG, ctx)?;
-    debug!(
-        "filename: {:?}, argv = {:?}, envp = {:?}",
-        executable_path, argv, envp
-    );
-    // FIXME: should we set thread name in execve?
-    *posix_thread.thread_name().lock() =
-        Some(ThreadName::new_from_executable_path(&executable_path)?);
+    debug!("filename: {:?}, argv = {:?}, envp = {:?}", elf_file, argv, envp);
     // clear ctid
     // FIXME: should we clear ctid when execve?
     thread_local.clear_child_tid().set(0);
@@ -129,7 +139,7 @@ fn do_execve(
     let program_to_load =
         ProgramToLoad::build_from_file(elf_file.clone(), &fs_resolver, argv, envp, 1)?;
 
-    renew_vm_and_map(ctx);
+    ctx.process.vm().clear_and_map();
 
     if process.status().is_vfork_child() {
         // Resumes the parent process.
@@ -153,7 +163,10 @@ fn do_execve(
     set_uid_from_elf(process, &credentials, &elf_file)?;
     set_gid_from_elf(process, &credentials, &elf_file)?;
     credentials.set_keep_capabilities(false);
+    drop(credentials);
 
+    *posix_thread.thread_name().lock() =
+        Some(ThreadName::new_from_executable_path(&new_executable_path)?);
     // set executable path
     process.set_executable_path(new_executable_path);
     // set signal disposition to default
@@ -167,7 +180,35 @@ fn do_execve(
     // set new user stack top
     user_context.set_stack_pointer(elf_load_info.user_stack_top as _);
     debug!("user stack top: 0x{:x}", elf_load_info.user_stack_top);
-    Ok(())
+    // Reset PSTATE to EL0t with IRQs unmasked. The execve syscall does not
+    // return to the interrupted context, so the saved SPSR must be a clean
+    // user-mode value.
+    #[cfg(target_arch = "aarch64")]
+    {
+        user_context.set_spsr(0);
+        ostd::arch::serial::set_exec_trace(true);
+        ostd::arch::serial::exec_trace(b'!');
+        ostd::arch::serial::send(b'E');
+        ostd::arch::serial::send(b'0');
+        ostd::arch::serial::send(b'E');
+    }
+
+    let ret = Ok(());
+    drop(elf_load_info);
+    drop(fs_resolver);
+    drop(elf_file);
+    drop(fs_ref);
+
+    #[cfg(target_arch = "aarch64")]
+    {
+        // Keep local IRQs disabled while sys_execve constructs and returns its
+        // 16-byte Result. A pending timer interrupt during that window can
+        // corrupt the epilogue (x30) on Cortex-A53. The handler in
+        // syscall/mod.rs will re-enable IRQs before the next user-mode entry.
+        let _irq_guard = ostd::irq::disable_local();
+        core::mem::forget(_irq_guard);
+    }
+    ret
 }
 
 bitflags::bitflags! {

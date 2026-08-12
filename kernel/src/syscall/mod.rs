@@ -368,11 +368,6 @@ impl SyscallArgument {
 }
 
 pub fn handle_syscall(ctx: &Context, user_ctx: &mut UserContext) {
-    static CNT: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
-    let n = CNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-    if n < 5 {
-        let num = user_ctx.syscall_num();
-    }
     let syscall_frame = SyscallArgument::new_from_context(user_ctx);
     let syscall_return = arch::syscall_dispatch(
         syscall_frame.syscall_number,
@@ -392,6 +387,15 @@ pub fn handle_syscall(ctx: &Context, user_ctx: &mut UserContext) {
             debug!("syscall return error: {:?}", err);
             user_ctx.set_syscall_ret((-errno) as usize)
         }
+    }
+
+    // On AArch64 do_execve deliberately keeps local IRQs disabled while
+    // sys_execve returns its 16-byte Result to avoid a Cortex-A53 x30/epilogue
+    // corruption. Re-enable them here, after the Result has been consumed and
+    // before the next user-mode entry (which asserts IRQs are enabled).
+    #[cfg(target_arch = "aarch64")]
+    if matches!(syscall_return, Ok(SyscallReturn::NoReturn)) {
+        ostd::irq::enable_local();
     }
 }
 

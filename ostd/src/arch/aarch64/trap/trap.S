@@ -339,6 +339,12 @@ run_user:
     ldr  x1, [x0, #8 * 31]
     msr  elr_el1, x1           /* user PC */
     ldr  x1, [x0, #8 * 32]
+    /* RPi3: ensure user mode re-enters with IRQs unmasked.
+     * do_execve keeps local IRQs disabled until eret to protect the
+     * sys_execve 16-byte Result return; the saved spsr may still have the
+     * I bit set, which would leave the new process dead in the water.
+     */
+    bic  x1, x1, #0x80
     msr  spsr_el1, x1          /* user PSTATE */
     ldr  x1, [x0, #8 * 34]
     msr  sp_el0, x1            /* user stack pointer */

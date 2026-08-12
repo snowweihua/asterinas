@@ -29,6 +29,11 @@
 
 use core::sync::atomic::Ordering;
 
+/// Returns the current preemption guard count.
+pub fn preempt_count() -> usize {
+    super::preempt::cpu_local::get_guard_count() as usize
+}
+
 /// Marks a function as one that might sleep.
 ///
 /// This function will panic if it is executed in atomic mode.

@@ -9,6 +9,7 @@ use crate::cpu::PinCurrentCpu;
 pub(crate) const IRQ_NUM_MIN: u8 = 0;
 pub(crate) const IRQ_NUM_MAX: u8 = 255;
 
+
 pub(crate) struct IrqRemapping {
     _private: (),
 }
@@ -35,9 +36,10 @@ impl IrqRemapping {
     }
 }
 
+
 // FIXME: Mark this as unsafe. See
 // <https://github.com/asterinas/asterinas/issues/1120#issuecomment-2748696592>.
-pub(crate) fn enable_local() {
+pub fn enable_local() {
     unsafe {
         core::arch::asm!(
             "mov x9, x30",

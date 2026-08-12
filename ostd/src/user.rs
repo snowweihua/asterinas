@@ -91,7 +91,28 @@ impl UserMode {
     where
         F: FnMut() -> bool,
     {
+        #[cfg(target_arch = "aarch64")]
+        {
+            crate::arch::serial::exec_trace(b'#');
+            if crate::arch::serial::exec_trace_enabled() {
+                if crate::arch::irq::is_local_enabled() {
+                    crate::arch::serial::send(b'^');
+                } else {
+                    crate::arch::serial::send(b'v');
+                }
+                let c = crate::task::atomic_mode::preempt_count();
+                if c < 15 {
+                    crate::arch::serial::send(b'0' + c as u8);
+                } else {
+                    crate::arch::serial::send(b'?');
+                }
+            }
+        }
         crate::task::atomic_mode::might_sleep();
+        #[cfg(target_arch = "aarch64")]
+        {
+            crate::arch::serial::exec_trace(b'$');
+        }
         self.context.execute(has_kernel_event)
     }
 

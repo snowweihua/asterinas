@@ -221,8 +221,12 @@ impl UserContextApiInternal for UserContext {
     {
         // Return when it is syscall or cpu exception type is Fault or Trap.
         let ret = loop {
+            crate::arch::serial::exec_trace(b'%');
             scheduler::might_preempt();
+            crate::arch::serial::exec_trace(b'^');
             self.user_context.run();
+            crate::arch::serial::exec_trace(b'&');
+            crate::arch::serial::set_exec_trace(false);
 
             let cpu_exception = CpuException::from_esr(self.user_context.esr_el1);
             match cpu_exception {
@@ -433,6 +437,18 @@ impl UserContext {
     #[inline(always)]
     pub fn set_lr(&mut self, lr: usize) {
         self.user_context.lr = lr;
+    }
+
+    /// Gets the saved PSTATE (SPSR_EL1).
+    #[inline(always)]
+    pub fn spsr(&self) -> usize {
+        self.user_context.spsr_el1
+    }
+
+    /// Sets the saved PSTATE (SPSR_EL1).
+    #[inline(always)]
+    pub fn set_spsr(&mut self, spsr: usize) {
+        self.user_context.spsr_el1 = spsr;
     }
 }
 

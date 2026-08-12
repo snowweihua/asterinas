@@ -14,8 +14,9 @@ This file records durable findings and the current active investigation. Probe c
   - startup of `/bin/sh`;
   - short and long serial commands, including `ls` and `echo`;
   - `update_cpu_time`, `softirq`, and `loadavg` timer callbacks without hangs during 30+ second idle waits.
-- The latest diagnostic image also boots to `/ #`, but `exec /bin/busybox echo hi` still hangs after the execve diagnostic path. Therefore normal shell interactivity is the baseline, not a confirmed successful execve result.
-- The last physical test left the board powered on. The latest verified image was built, converted, deployed, power-cycled, and captured over serial.
+- `exec /bin/busybox echo hi` now makes it through `do_execve` and begins the next `UserMode::execute` cycle, but hangs before the post-`^` preempt-count marker can be emitted. The last observed trace from a fresh boot is `A0A!E0E#^` followed by silence.
+- `do_execve` no longer contains the deliberate serial loop; it returns a 16-byte `Result<()>` with local IRQs disabled (forgotten guard), and `handle_syscall` re-enables them before `UserMode::execute` resumes.
+- Normal shell interactivity is still the baseline; a successful `execve` replacement is not yet confirmed.
 
 ## Durable RPi3 Constraints
 
@@ -74,11 +75,12 @@ The original logger failure was an EL1 synchronous abort in `spin::once::Once::t
 
 ## Active Investigation: execve Return Boundary
 
-- In `kernel/src/syscall/execve.rs`, `renew_vm_and_map(ctx)` was replaced with `ctx.process.vm().clear_and_map()` to avoid the old VM replacement/drop path.
-- The physical command `exec /bin/busybox echo hi` reaches `[A]` through `[K]`, then `[1]`, `[E]`, `[2]`, `[3]`, `[X]`, `[4]`, and `[7]`.
-- The caller-side `[5]` marker in `sys_execve` is not observed (`sys_execveat` has an analogous `[6]` marker). Current evidence places the failure after the `[7]` marker and before observable caller completion. The remaining boundary includes the IRQ-guard drop, cleanup/destructor paths, the returned `Result<()>`, and the caller-side marker; ELF loading and `clear_and_map()` are not the current suspects.
-- `force_marker()` uses direct RPi3 mini-UART high-half MMIO and is temporary diagnostic code. The current probe also disables local IRQs and intentionally forgets several locals. These experiments are not a fix and must be removed or isolated before a final implementation is committed.
-- No durable execve fix has been established. The next test should isolate one post-`[7]` boundary at a time, then follow the required build/deploy/power-cycle/serial verification sequence before claiming progress.
+- `do_execve` in `kernel/src/syscall/execve.rs` now completes without the diagnostic loop, emits `A0A` (preempt-count `0` on entry) and `E0E` (preempt-count `0` just before returning), then disables local IRQs and forgets the guard before returning `Ok(())`. This protects the 16-byte `Result<()>` return from a pending timer interrupt.
+- `handle_syscall` in `kernel/src/syscall/mod.rs` no longer loops on `SYS_EXECVE`; for `Ok(SyscallReturn::NoReturn)` it calls `ostd::irq::enable_local()` before the next `UserMode::execute` cycle.
+- The physical trace `A0A!E0E#^` shows that `do_execve` succeeded, `UserMode::execute` started (`#`), and the local-IRQ-probe (`^`) reported IRQs enabled. The next token, which should be the result of `crate::task::atomic_mode::preempt_count()`, is never emitted, so the hang is either inside `preempt_count()` or in the immediately following `send`/`might_sleep` step.
+- `preempt_count()` works elsewhere (including inside `do_execve`), so the failure is specific to calling it from `UserMode::execute` after the execve return. A pending test will bracket `preempt_count()` with `[`/`]` markers to decide whether the read itself or the code that follows it is the last observable point.
+- The current probe code intentionally disables/forwards local IRQs and adds temporary `A`/`E`/`#`/`^` markers. These are diagnostic only and must be removed or isolated before a final implementation is committed.
+- No durable execve fix has been established. The next step is to isolate the post-`^` boundary in `ostd/src/user.rs` and confirm with the required build/deploy/power-cycle/serial verification sequence.
 
 ## Operational Notes
 
