@@ -18,7 +18,7 @@ This file records durable findings and the current active investigation. Probe c
 - The root cause was identified: AArch64 `UserContext::set_tls_pointer()` and `tls_pointer()` used `TPIDR_EL1`, which is also the OSTD CPU-local base register. `execve` reset the user TLS to zero and thereby destroyed CPU-local addressing; the following `preempt_count()` accessed CPU-local storage through address zero. The methods now use `TPIDR_EL0`, which is also preserved by the AArch64 task switch assembly.
 - Temporary exec tracing, the public diagnostic `preempt_count()` accessor, and unused UART/IRQ probes have been removed.
 - The IRQ workaround around the 16-byte `Result<()>` return was removed: `do_execve` now returns normally and `handle_syscall` no longer performs a manual IRQ enable. A fresh physical run of `exec /bin/busybox echo irqfree` printed `irqfree`, confirming that the TPIDR_EL0 TLS fix alone resolves the hang.
-- Clean diagnostic-free hardware output is confirmed. The next check should verify replacement by `/bin/busybox sh` and then perform a final regression/cleanup review.
+- Clean diagnostic-free hardware output is confirmed. `/bin/busybox sh` replacement has been tested separately but produces no observable `sh -c 'echo ...'` output; this appears to be a distinct shell/job-control/TTY follow-up, not the original execve return hang. The root-cause fix and `echo` regression are complete; investigate the shell-specific path separately.
 
 ## Durable RPi3 Constraints
 
@@ -80,7 +80,7 @@ The original logger failure was an EL1 synchronous abort in `spin::once::Once::t
 - `do_execve` now returns normally after the new user context is prepared; no exec-specific IRQ guard is leaked and no syscall-side manual IRQ re-enable is performed.
 - The earlier physical trace `A0A!E0E#^` localized the hang to the post-`^` `preempt_count()` path. Changing AArch64 user TLS access from `TPIDR_EL1` to `TPIDR_EL0` fixed it: the physical trace became `A0A!E0E#^0$%^0`, followed by the expected `hi` output. A later diagnostic-free run also printed `clean`.
 - Root cause: `TPIDR_EL1` is the OSTD CPU-local base register, initialized by boot assembly and required by `CpuLocalCell`. `execve` called `set_tls_pointer(0)`, overwriting that base; the next generic CPU-local load in `preempt_count()` then accessed an invalid address. AArch64 task switching already saves/restores `TPIDR_EL0`, confirming it is the appropriate user TLS register.
-- Temporary tracing and unused UART/IRQ probes have been removed. The root-cause fix is hardware-confirmed; the remaining work is to test whether the IRQ workaround is still required and then perform a clean regression.
+- Temporary tracing and unused UART/IRQ probes have been removed. The IRQ workaround has also been removed and physically re-tested with `exec /bin/busybox echo irqfree` producing `irqfree`. The remaining shell-specific follow-up is likely in job-control/TTY initialization.
 
 ## Operational Notes
 
