@@ -689,6 +689,7 @@ pub(crate) struct UserPtConfig {}
 // SAFETY: `item_into_raw` and `item_from_raw` are implemented correctly,
 unsafe impl PageTableConfig for UserPtConfig {
     const TOP_LEVEL_INDEX_RANGE: Range<usize> = 0..256;
+    const TOP_LEVEL_CAN_UNMAP: bool = true;
 
     type E = PageTableEntry;
     type C = PagingConsts;
