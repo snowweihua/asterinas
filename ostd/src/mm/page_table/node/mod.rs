@@ -156,17 +156,13 @@ impl<'a, C: PageTableConfig> PageTableNodeRef<'a, C> {
             // RPi3 single-core: LDXR/STXR (or LDADDB) loops used by the atomic
             // CAS/swap below can fail/abort on this board. With only one CPU,
             // disable local IRQs and use a plain load/store sequence instead.
-            // The DisabledLocalIrqGuard is stored in the PageTableGuard so the
-            // critical section is protected until the guard is dropped.
             let irq_guard = crate::irq::disable_local();
             while self.meta().lock.load(Ordering::Relaxed) != 0 {
                 core::hint::spin_loop();
             }
             self.meta().lock.store(1, Ordering::Relaxed);
-            return PageTableGuard::<'rcu, C> {
-                inner: self,
-                irq_guard: Some(irq_guard),
-            };
+            drop(irq_guard);
+            return PageTableGuard::<'rcu, C> { inner: self };
         }
 
         // WORKAROUND: QEMU 6.2 AArch64 compare_exchange fails spuriously (broken STXR).
@@ -177,10 +173,7 @@ impl<'a, C: PageTableConfig> PageTableNodeRef<'a, C> {
             }
         }
 
-        PageTableGuard::<'rcu, C> {
-            inner: self,
-            irq_guard: None,
-        }
+        PageTableGuard::<'rcu, C> { inner: self }
     }
 
     /// Creates a new [`PageTableGuard`] without checking if the page table lock is held.
@@ -198,10 +191,7 @@ impl<'a, C: PageTableConfig> PageTableNodeRef<'a, C> {
     where
         'a: 'rcu,
     {
-        PageTableGuard {
-            inner: self,
-            irq_guard: None,
-        }
+        PageTableGuard { inner: self }
     }
 }
 
@@ -209,9 +199,6 @@ impl<'a, C: PageTableConfig> PageTableNodeRef<'a, C> {
 #[derive(Debug)]
 pub(super) struct PageTableGuard<'rcu, C: PageTableConfig> {
     inner: PageTableNodeRef<'rcu, C>,
-    /// On RPi3 we keep local IRQs disabled for the duration of the guard so
-    /// the plain load/store lock sequence is safe on the single-core board.
-    irq_guard: Option<crate::irq::DisabledLocalIrqGuard>,
 }
 
 impl<'rcu, C: PageTableConfig> PageTableGuard<'rcu, C> {

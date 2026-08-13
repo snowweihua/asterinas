@@ -18,6 +18,7 @@ use crate::{
 pub struct UserContext {
     user_context: RawUserContext,
     exception: Option<CpuExceptionInfo>,
+    tls: usize,
 }
 
 /// General registers.
@@ -178,6 +179,7 @@ impl Default for UserContext {
         UserContext {
             user_context: RawUserContext::default(),
             exception: None,
+            tls: 0,
         }
     }
 }
@@ -200,16 +202,18 @@ impl UserContext {
 
     /// Sets the thread-local storage pointer.
     pub fn set_tls_pointer(&mut self, tls: usize) {
-        TPIDR_EL0.set(tls as u64)
+        self.tls = tls;
     }
 
     /// Gets the thread-local storage pointer.
     pub fn tls_pointer(&self) -> usize {
-        TPIDR_EL0.get() as usize
+        self.tls
     }
 
     /// Activates the thread-local storage pointer for the current task.
-    pub fn activate_tls_pointer(&self) {}
+    pub fn activate_tls_pointer(&self) {
+        TPIDR_EL0.set(self.tls as u64);
+    }
 }
 
 impl UserContextApiInternal for UserContext {
@@ -220,7 +224,9 @@ impl UserContextApiInternal for UserContext {
         // Return when it is syscall or cpu exception type is Fault or Trap.
         let ret = loop {
             scheduler::might_preempt();
+            self.activate_tls_pointer();
             self.user_context.run();
+            self.tls = TPIDR_EL0.get() as usize;
 
             let cpu_exception = CpuException::from_esr(self.user_context.esr_el1);
             match cpu_exception {

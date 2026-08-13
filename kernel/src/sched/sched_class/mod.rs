@@ -232,13 +232,14 @@ impl Scheduler for ClassScheduler {
             return None;
         }
 
-        // Preempt if the new task has a higher priority.
-        let should_preempt = rq
-            .current
-            .as_ref()
-            .is_none_or(|((_, rq_current_thread), _)| {
-                thread.sched_attr().policy() < rq_current_thread.sched_attr().policy()
-            });
+        // Preempt newly spawned tasks and higher-priority tasks.
+        let should_preempt = matches!(flags, EnqueueFlags::Spawn)
+            || rq
+                .current
+                .as_ref()
+                .is_none_or(|((_, rq_current_thread), _)| {
+                    thread.sched_attr().policy() < rq_current_thread.sched_attr().policy()
+                });
 
         thread.sched_attr().set_last_cpu(cpu);
         rq.enqueue_entity((task, thread), Some(flags));
@@ -277,6 +278,11 @@ impl ClassScheduler {
 
     // TODO: Implement a better algorithm and replace the current naive implementation.
     fn select_cpu(&self, thread: &Thread, flags: EnqueueFlags) -> CpuId {
+        #[cfg(target_arch = "aarch64")]
+        if ostd::arch::is_rpi3() {
+            return CpuId::bsp();
+        }
+
         if let Some(last_cpu) = thread.sched_attr().last_cpu() {
             return last_cpu;
         }

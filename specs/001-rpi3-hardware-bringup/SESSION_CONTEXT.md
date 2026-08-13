@@ -85,13 +85,11 @@ The original logger failure was an EL1 synchronous abort in `spin::once::Once::t
 
 ## Active Investigation: shell command hang (fork/clone)
 
-- `exec /bin/busybox ls` lists the current directory, confirming `getdents64` and `execve` are functional.
-- `/bin/busybox ls` from the shell still hangs after the command is echoed; `true` from the shell also hangs, so the failure is in the fork/clone path rather than `ls` or `getdents64`.
-- RPi3 single-core workarounds were added to `ostd::mm::page_table::PageTableNodeRef::lock()` and `ostd::sync::Mutex::acquire_lock()` to bypass failing Cortex-A53 exclusive instructions during `ProcessVm::fork_from` and `Mutex::lock`.
-- Rebuilt the aarch64 initramfs from the Nix sources using the `asterinas/nix:0.16.1-20250922` Docker image (`make -C test OSDK_TARGET_ARCH=aarch64 BENCHMARK=none INITRAMFS_SKIP_GZIP=1`). The generated `initramfs.cpio` was deployed to `/mnt/d/pi_sd/initramfs.cpio`.
-- The Nix-built initramfs omitted `/init`, so a small `/init` script was added to the cpio before deployment. A minimal variant with only `busybox`, `glibc` shared libraries and required symlinks was also produced for faster transfer.
-- `PageTableNodeRef::lock` now takes and stores a `DisabledLocalIrqGuard` for RPi3, using plain load/store to set the node lock. This replaces `make_guard_unchecked` and protects the entire PTE modification critical section on the single-core board.
-- With these changes `ld.so` is able to resolve `setxattr`/`stderr` from `libc.so.6` (no more symbol-lookup errors), but executing any dynamic binary now triggers a kernel exception (`m[...Un`) immediately after `ld.so` finishes relocation. This points to a remaining kernel `exec`/page-table/TLB or syscall issue, not the initramfs itself.
+- The RPi3 page-table lock workaround disables local IRQs only while performing the plain load/store acquisition. The IRQ guard is not stored in `PageTableGuard`; storing it there leaked IRQ-disabled state through cursor aliases and caused `sync_tlb_flush()` to stall or panic.
+- The scheduler now keeps all RPi3 tasks on the BSP because the board path reports multiple DTB CPUs but intentionally does not bring up APs. Newly spawned tasks preempt the current task even at equal priority, so fork/vfork children actually run before the parent waits.
+- AArch64 `UserContext` now stores TLS per context, activates `TPIDR_EL0` before each user entry, and captures it after returning from user mode. This prevents a forked child’s dynamic linker from using the parent’s stale TLS pointer; the observed `ld.so` fault at `__tls_pre_init_tp` with `FAR=-0x32e` is gone.
+- Rebuilt the full aarch64 initramfs from the Nix sources using `asterinas/nix:0.16.1-20250922` (`make -C test OSDK_TARGET_ARCH=aarch64 BENCHMARK=none INITRAMFS_SKIP_GZIP=1`). The 44,041,728-byte cpio was repacked with `/init` and deployed to `/mnt/d/pi_sd/initramfs.cpio`; the full rootfs avoids the minimal busybox/glibc symbol mismatch.
+- On the physical RPi3 with the clean kernel and full rootfs, `true`, `ls`, and `/bin/busybox ls` execute successfully and `ls` lists the root directory. Dynamic `execve` also works (`/bin/busybox echo` prints its argument).
 - `Mutex::acquire_lock` for RPi3 already disables local IRQs around its plain load+store sequence and has been committed previously.
 - The OSDK Docker image was rebuilt earlier and `cargo-osdk` was fixed to build from the current `osdk` source (`Arch::as_str` -> `Arch::to_str`).
 
