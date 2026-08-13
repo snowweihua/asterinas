@@ -12,6 +12,8 @@ static LOGGER: AsterLogger = AsterLogger;
 
 impl log::Log for AsterLogger {
     fn enabled(&self, metadata: &Metadata) -> bool {
+        // Suppress noisy Info/Debug/Trace logs while bringing up RPi3.
+        // Use println!/print! for deliberate debug markers instead.
         metadata.level() <= log::Level::Warn
     }
 
@@ -50,6 +52,9 @@ fn print_logs(record: &Record, timestamp: &Duration) {
 
 #[cfg(not(feature = "log_color"))]
 fn print_logs(record: &Record, _timestamp: &Duration) {
+    // During RPi3 bring-up we only keep Warn/Error enabled and use them as
+    // short serial markers. Emit just the message so it survives the
+    // mini-UART TX path without truncation.
     super::_print(format_args!("{}\n", record.args()));
 }
 

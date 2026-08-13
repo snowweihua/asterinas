@@ -29,10 +29,12 @@ pub fn sys_execve(
 ) -> Result<SyscallReturn> {
     let elf_file = {
         let executable_path = read_filename(filename_ptr, ctx)?;
+        warn!("X");
         lookup_executable_file(AT_FDCWD, executable_path, OpenFlags::empty(), ctx)?
     };
 
     do_execve(elf_file, argv_ptr_ptr, envp_ptr_ptr, ctx, user_context)?;
+    warn!("-X");
     Ok(SyscallReturn::NoReturn)
 }
 
@@ -103,6 +105,7 @@ fn do_execve(
     // of all strings to enforce a sensible overall limit.
     let argv = read_cstring_vec(argv_ptr_ptr, MAX_NR_STRING_ARGS, MAX_LEN_STRING_ARG, ctx)?;
     let envp = read_cstring_vec(envp_ptr_ptr, MAX_NR_STRING_ARGS, MAX_LEN_STRING_ARG, ctx)?;
+    debug!("filename: {:?}, argv = {:?}, envp = {:?}", elf_file, argv, envp);
     // clear ctid
     // FIXME: should we clear ctid when execve?
     thread_local.clear_child_tid().set(0);
@@ -116,6 +119,7 @@ fn do_execve(
         .close_files_on_exec();
     drop(closed_files);
 
+    debug!("load program to root vmar");
     let fs_ref = thread_local.borrow_fs();
     let fs_resolver = fs_ref.resolver().read();
     let program_to_load =
@@ -136,6 +140,7 @@ fn do_execve(
     // After the program has been successfully loaded, the virtual memory of the current process
     // is initialized. Hence, it is necessary to clear the previously recorded robust list.
     *thread_local.robust_list().borrow_mut() = None;
+    debug!("load elf in execve succeeds");
 
     // Reset FPU context
     thread_local.fpu().set_context(FpuContext::new());
@@ -157,8 +162,10 @@ fn do_execve(
     user_context.set_tls_pointer(0);
     // set new entry point
     user_context.set_instruction_pointer(elf_load_info.entry_point as _);
+    debug!("entry_point: 0x{:x}", elf_load_info.entry_point);
     // set new user stack top
     user_context.set_stack_pointer(elf_load_info.user_stack_top as _);
+    debug!("user stack top: 0x{:x}", elf_load_info.user_stack_top);
     // Reset PSTATE to EL0t with IRQs unmasked. The execve syscall does not
     // return to the interrupted context, so the saved SPSR must be a clean
     // user-mode value.
