@@ -88,10 +88,12 @@ The original logger failure was an EL1 synchronous abort in `spin::once::Once::t
 - `exec /bin/busybox ls` lists the current directory, confirming `getdents64` and `execve` are functional.
 - `/bin/busybox ls` from the shell still hangs after the command is echoed; `true` from the shell also hangs, so the failure is in the fork/clone path rather than `ls` or `getdents64`.
 - RPi3 single-core workarounds were added to `ostd::mm::page_table::PageTableNodeRef::lock()` and `ostd::sync::Mutex::acquire_lock()` to bypass failing Cortex-A53 exclusive instructions during `ProcessVm::fork_from` and `Mutex::lock`.
-- Re-applied RPi3 single-core workarounds with `Mutex::acquire_lock` now disabling local IRQs around the plain load+store (safer than the previous non-atomic attempt) and `PageTableNodeRef::lock` using `make_guard_unchecked` under the preempt guard.
-- After these changes the kernel boots and reaches `busybox` startup, but `sh` now fails with `/bin/busybox: symbol lookup error: /bin/busybox: undefined symbol: setxattr, version GLIBC_2.17`. This is an initramfs `busybox`/`libc.so.6` version mismatch (also `if_nametoindex` was seen earlier), not a kernel fork/clone hang.
-- Short `warn!` markers confirmed `clone_child` creates the child process and `child_process.run()` returns; the remaining shell issue is therefore in the initramfs user-space environment.
-- The OSDK Docker image was rebuilt and `cargo-osdk` was fixed to build from the current `osdk` source (`Arch::as_str` -> `Arch::to_str`).
+- Rebuilt the aarch64 initramfs from the Nix sources using the `asterinas/nix:0.16.1-20250922` Docker image (`make -C test OSDK_TARGET_ARCH=aarch64 BENCHMARK=none INITRAMFS_SKIP_GZIP=1`). The generated `initramfs.cpio` was deployed to `/mnt/d/pi_sd/initramfs.cpio`.
+- The Nix-built initramfs omitted `/init`, so a small `/init` script was added to the cpio before deployment. A minimal variant with only `busybox`, `glibc` shared libraries and required symlinks was also produced for faster transfer.
+- `PageTableNodeRef::lock` now takes and stores a `DisabledLocalIrqGuard` for RPi3, using plain load/store to set the node lock. This replaces `make_guard_unchecked` and protects the entire PTE modification critical section on the single-core board.
+- With these changes `ld.so` is able to resolve `setxattr`/`stderr` from `libc.so.6` (no more symbol-lookup errors), but executing any dynamic binary now triggers a kernel exception (`m[...Un`) immediately after `ld.so` finishes relocation. This points to a remaining kernel `exec`/page-table/TLB or syscall issue, not the initramfs itself.
+- `Mutex::acquire_lock` for RPi3 already disables local IRQs around its plain load+store sequence and has been committed previously.
+- The OSDK Docker image was rebuilt earlier and `cargo-osdk` was fixed to build from the current `osdk` source (`Arch::as_str` -> `Arch::to_str`).
 
 ## Operational Notes
 

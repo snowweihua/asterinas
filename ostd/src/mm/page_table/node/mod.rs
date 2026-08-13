@@ -153,11 +153,20 @@ impl<'a, C: PageTableConfig> PageTableNodeRef<'a, C> {
         if crate::IN_BOOTSTRAP_CONTEXT.load(Ordering::Relaxed)
             || crate::arch::is_rpi3()
         {
-            // RPi3 single-core: the LDXR/STXR (or LDADDB) loop used by the
-            // atomic swap below can fail/abort on this board. With only one CPU
-            // and the preempt guard ensuring no interruption, the lock is not
-            // needed. Same pattern already used for bootstrap.
-            return unsafe { self.make_guard_unchecked(_guard) };
+            // RPi3 single-core: LDXR/STXR (or LDADDB) loops used by the atomic
+            // CAS/swap below can fail/abort on this board. With only one CPU,
+            // disable local IRQs and use a plain load/store sequence instead.
+            // The DisabledLocalIrqGuard is stored in the PageTableGuard so the
+            // critical section is protected until the guard is dropped.
+            let irq_guard = crate::irq::disable_local();
+            while self.meta().lock.load(Ordering::Relaxed) != 0 {
+                core::hint::spin_loop();
+            }
+            self.meta().lock.store(1, Ordering::Relaxed);
+            return PageTableGuard::<'rcu, C> {
+                inner: self,
+                irq_guard: Some(irq_guard),
+            };
         }
 
         // WORKAROUND: QEMU 6.2 AArch64 compare_exchange fails spuriously (broken STXR).
@@ -168,7 +177,10 @@ impl<'a, C: PageTableConfig> PageTableNodeRef<'a, C> {
             }
         }
 
-        PageTableGuard::<'rcu, C> { inner: self }
+        PageTableGuard::<'rcu, C> {
+            inner: self,
+            irq_guard: None,
+        }
     }
 
     /// Creates a new [`PageTableGuard`] without checking if the page table lock is held.
@@ -186,7 +198,10 @@ impl<'a, C: PageTableConfig> PageTableNodeRef<'a, C> {
     where
         'a: 'rcu,
     {
-        PageTableGuard { inner: self }
+        PageTableGuard {
+            inner: self,
+            irq_guard: None,
+        }
     }
 }
 
@@ -194,6 +209,9 @@ impl<'a, C: PageTableConfig> PageTableNodeRef<'a, C> {
 #[derive(Debug)]
 pub(super) struct PageTableGuard<'rcu, C: PageTableConfig> {
     inner: PageTableNodeRef<'rcu, C>,
+    /// On RPi3 we keep local IRQs disabled for the duration of the guard so
+    /// the plain load/store lock sequence is safe on the single-core board.
+    irq_guard: Option<crate::irq::DisabledLocalIrqGuard>,
 }
 
 impl<'rcu, C: PageTableConfig> PageTableGuard<'rcu, C> {
