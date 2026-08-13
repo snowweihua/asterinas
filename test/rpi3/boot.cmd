@@ -3,8 +3,8 @@
 # This script:
 #   1. Starts USB and waits for the USB Ethernet adapter to enumerate
 #   2. Acquires an IP via DHCP
-#   3. Downloads kernel8.img from the TFTP server
-#   4. Downloads initramfs.cpio.gz from the TFTP server
+#   3. Downloads asterina.img from the TFTP server
+#   4. Downloads initramfs.cpio from the TFTP server
 #   5. Boots with booti (AArch64 Linux Image format)
 #
 # The DTB is provided by RPi firmware (passed to U-Boot in fdt_addr_r),
@@ -12,13 +12,13 @@
 #
 # Usage:
 #   - Set TFTP server IP below OR rely on DHCP option 66 (next-server)
-#   - Put kernel8.img in TFTP server root directory
+#   - Put asterina.img in TFTP server root directory
 #   - Compile: mkimage -A arm64 -O linux -T script -C none -a 0 -e 0 \
 #                -n "Asterinas RPi3 boot" -d boot.cmd boot.scr
 #
 # TFTP server setup (on dev machine):
 #   sudo apt-get install tftpd-hpa
-#   sudo cp kernel8.img /srv/tftp/
+#   sudo cp asterina.img /srv/tftp/
 #   # DHCP server should set option 66 to dev machine IP, or edit serverip below
 
 echo "Asterinas RPi3 U-Boot boot script starting..."
@@ -27,11 +27,10 @@ echo "Asterinas RPi3 U-Boot boot script starting..."
 echo "Starting USB..."
 usb start
 
-# Step 2: Acquire IP via DHCP, then override serverip to point to TFTP server
+# Step 2: Acquire IP via DHCP
 echo "Running DHCP..."
 dhcp
-# Hardcode TFTP server IP (Windows machine at 10.142.15.21, root: D:/pi_sd/)
-setenv serverip 10.142.15.21
+# serverip is set in U-Boot environment
 
 if test $? -ne 0; then
     echo "DHCP failed! Check Ethernet connection."
@@ -42,12 +41,12 @@ fi
 echo "IP: ${ipaddr}  Server: ${serverip}"
 
 # Step 3: Download kernel via TFTP
-echo "Downloading kernel8.img from TFTP server ${serverip}..."
-tftpboot ${kernel_addr_r} kernel8.img
+echo "Downloading asterina.img from TFTP server ${serverip}..."
+tftpboot ${kernel_addr_r} asterina.img
 
 if test $? -ne 0; then
-    echo "TFTP failed! kernel8.img not found on server ${serverip}"
-    echo "Check: sudo cp kernel8.img /srv/tftp/"
+    echo "TFTP failed! asterina.img not found on server ${serverip}"
+    echo "Check: sudo cp asterina.img /srv/tftp/"
     sleep 10
 fi
 
