@@ -21,10 +21,8 @@ pub fn sys_clone(
     ctx: &Context,
     parent_context: &UserContext,
 ) -> Result<SyscallReturn> {
-    warn!("+C");
     let args = CloneArgs::for_clone(clone_flags, parent_tidptr, child_tidptr, tls, new_sp)?;
     let child_pid = clone_child(ctx, parent_context, args).unwrap();
-    warn!("-C");
     Ok(SyscallReturn::Return(child_pid as _))
 }
 
@@ -34,10 +32,6 @@ pub fn sys_clone3(
     ctx: &Context,
     parent_context: &UserContext,
 ) -> Result<SyscallReturn> {
-    info!(
-        "sys_clone3: called, args addr = 0x{:x}, size = 0x{:x}",
-        clong_args_addr, size
-    );
     if size != size_of::<Clone3Args>() {
         return_errno_with_message!(Errno::EINVAL, "invalid size");
     }
@@ -49,7 +43,6 @@ pub fn sys_clone3(
     };
 
     let child_pid = clone_child(ctx, parent_context, clone_args)?;
-    info!("sys_clone3: child pid = {}", child_pid);
     Ok(SyscallReturn::Return(child_pid as _))
 }
 
