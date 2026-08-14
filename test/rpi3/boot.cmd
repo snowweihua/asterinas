@@ -46,8 +46,9 @@ tftpboot ${kernel_addr_r} asterina.img
 
 if test $? -ne 0; then
     echo "TFTP failed! asterina.img not found on server ${serverip}"
-    echo "Check: sudo cp asterina.img /srv/tftp/"
+    echo "Check: asterina.img exists in D:/pi_sd/"
     sleep 10
+    reset
 fi
 
 echo "Kernel loaded at ${kernel_addr_r}, size ${filesize} bytes"
@@ -56,6 +57,12 @@ echo "Kernel loaded at ${kernel_addr_r}, size ${filesize} bytes"
 # Using uncompressed CPIO to avoid miniz_oxide AArch64 inflate bug.
 echo "Downloading initramfs.cpio from TFTP server ${serverip}..."
 tftpboot ${ramdisk_addr_r} initramfs.cpio
+if test $? -ne 0; then
+    echo "TFTP failed! initramfs.cpio not found on server ${serverip}"
+    echo "Check: initramfs.cpio exists in D:/pi_sd/"
+    sleep 10
+    reset
+fi
 setenv initramfs_size ${filesize}
 echo "Initramfs loaded at ${ramdisk_addr_r}, size ${initramfs_size} bytes"
 

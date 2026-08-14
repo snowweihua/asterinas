@@ -1,5 +1,5 @@
-{ lib, stdenvNoCC, fetchFromGitHub, hostPlatform, writeClosure, busybox, apps
-, benchmark, syscall, }:
+{ lib, stdenvNoCC, fetchFromGitHub, hostPlatform, writeClosure, busybox
+, glibc, apps, benchmark, syscall, }:
 let
   etc = lib.fileset.toSource {
     root = ./../src/etc;
@@ -9,7 +9,7 @@ let
     name = "gvisor-libs";
     path = "/lib/x86_64-linux-gnu";
   };
-  all_pkgs = [ busybox etc ] ++ lib.optionals (apps != null) [ apps.package ]
+  all_pkgs = [ busybox glibc etc ] ++ lib.optionals (apps != null) [ apps.package ]
     ++ lib.optionals (benchmark != null) [ benchmark.package ]
     ++ lib.optionals (syscall != null) [ syscall.package ];
 in stdenvNoCC.mkDerivation {
@@ -30,6 +30,10 @@ export PATH=/bin:/usr/bin:/sbin:/usr/sbin
 exec /bin/busybox sh
 EOF
     chmod +x $out/init
+
+    for lib in ${glibc}/lib/*.so*; do
+      ln -s $lib $out/usr/lib/$(basename $lib)
+    done
 
     cp -r ${etc}/* $out/etc/
 

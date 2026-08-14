@@ -7,10 +7,9 @@ use core::{
     sync::atomic::{AtomicU64, AtomicU8, Ordering},
 };
 
-use spin::Once;
-
 use crate::{
     arch::{boot::DEVICE_TREE, trap::TrapFrame},
+    boot::SimpleOnce as Once,
     irq::IrqLine,
     timer::TIMER_FREQ,
 };
