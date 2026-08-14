@@ -43,6 +43,7 @@
 - [ ] A203 Validate `stat`, `lstat`, `fstat`, symlink metadata, and `ls /bin` on RPi3; `ls /bin` still stops in the getdents/stat path and needs follow-up.
 - [x] A204 Implement the smallest ABI correction: add the glibc reserved tail and preserve the verified field offsets; cross-target build passes.
 - [ ] A205 Record the final ABI decision and remove the stale SIGSEGV workaround note after hardware `ls`/metadata validation.
+- [x] A206 Wire the existing AArch64 exception-table fallible memory-copy helpers; the previous path used raw `core::ptr::copy` for user writes, which could hang on a user-page fault. Hardware revalidation is still required.
 
 ### A3 — Reboot syscall
 

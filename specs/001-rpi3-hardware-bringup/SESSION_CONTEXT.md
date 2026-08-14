@@ -29,6 +29,7 @@ This file records durable findings and the current active investigation. Probe c
 - After this change, `/bin/sh` command execution was verified with `echo shell-ok`, which printed `shell-ok` and returned to `~ #`. A subsequent 10-cycle power test reached `~ #` on all 10 cycles, with no TFTP failure, busybox symbol lookup error, or missing-prompt failure.
 - The AArch64 reboot syscall was registered at syscall 142 and RPi3 reboot uses PSCI through SMC while QEMU retains HVC. `busybox reboot -f` was verified to reset the board and return to `~ #`; plain PID1-mediated `reboot` still hangs in the busybox signal/sync path and remains open.
 - Cross-target glibc headers report the AArch64 `struct stat` size as 128 bytes with `st_rdev@32`, `st_size@48`, `st_blksize@56`, `st_blocks@64`, and timestamps at 72/88/104. `kernel/src/syscall/stat.rs` now includes the reserved tail and compile-time offset assertions; the build passes. Hardware `ls /bin` still stops in the getdents/stat path, so the runtime validation remains open.
+- Targeted tracing showed `getdents64` reaches the completed directory-read stage but does not reach the post-copy marker. AArch64 had an existing exception-table `memcpy_fallible.S`, but `ostd/src/arch/aarch64/mm/mod.rs` was using raw `core::ptr::copy`/atomic fallbacks instead of linking it. The helpers are now wired to the exception-table assembly in `d98d6b14`; hardware `ls` revalidation is still pending.
 
 ## Durable RPi3 Constraints
 
