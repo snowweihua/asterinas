@@ -11,6 +11,36 @@ pub enum QemuExitCode {
     Failed,
 }
 
+/// Invoke PSCI SYSTEM_RESET through the firmware monitor.
+pub fn psci_system_reset() -> ! {
+    const PSCI_SYSTEM_RESET: u64 = 0x8400_0009;
+    unsafe {
+        if super::is_rpi3() {
+            core::arch::asm!("smc #0", in("x0") PSCI_SYSTEM_RESET);
+        } else {
+            core::arch::asm!("hvc #0", in("x0") PSCI_SYSTEM_RESET);
+        }
+    }
+    loop {
+        core::hint::spin_loop();
+    }
+}
+
+/// Invoke PSCI SYSTEM_OFF through the firmware monitor.
+pub fn psci_system_off() -> ! {
+    const PSCI_SYSTEM_OFF: u64 = 0x8400_0008;
+    unsafe {
+        if super::is_rpi3() {
+            core::arch::asm!("smc #0", in("x0") PSCI_SYSTEM_OFF);
+        } else {
+            core::arch::asm!("hvc #0", in("x0") PSCI_SYSTEM_OFF);
+        }
+    }
+    loop {
+        core::hint::spin_loop();
+    }
+}
+
 /// Exit QEMU with the given exit code.
 pub fn exit_qemu(_exit_code: QemuExitCode) -> ! {
     const PSCI_SYSTEM_OFF: u64 = 0x8400_0008;
