@@ -40,10 +40,10 @@
 
 - [x] A201 Compare `kernel/src/syscall/stat.rs` with the Linux/glibc AArch64 `struct stat` offsets, alignment, and total size.
 - [x] A202 Add compile-time layout assertions for the AArch64 `Stat` layout.
-- [ ] A203 Validate `stat`, `lstat`, `fstat`, symlink metadata, and `ls /bin` on RPi3; `ls /bin` still stops in the getdents/stat path and needs follow-up.
+- [x] A203 Validate `stat`, `lstat`, `fstat`, symlink metadata, and `ls /bin` on RPi3; `ls /bin` and `ls -la /` now return to the prompt on hardware.
 - [x] A204 Implement the smallest ABI correction: add the glibc reserved tail and preserve the verified field offsets; cross-target build passes.
 - [ ] A205 Record the final ABI decision and remove the stale SIGSEGV workaround note after hardware `ls`/metadata validation.
-- [x] A206 Wire the existing AArch64 exception-table fallible memory-copy helpers; the previous path used raw `core::ptr::copy` for user writes, which could hang on a user-page fault. Hardware revalidation is still required.
+- [x] A206 Wire the existing AArch64 exception-table fallible memory-copy helpers; the previous path used raw `core::ptr::copy` for user writes, which could hang on a user-page fault. Hardware revalidation confirmed with `ls /bin` and `ls -la /`.
 
 ### A3 — Reboot syscall
 
