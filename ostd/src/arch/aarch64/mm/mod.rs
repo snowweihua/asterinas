@@ -3,6 +3,19 @@
 use alloc::fmt;
 use core::{arch::asm, ops::Range};
 
+core::arch::global_asm!(include_str!("memcpy_fallible.S"));
+
+unsafe extern "C" {
+    pub(crate) fn __memcpy_fallible(dst: *mut u8, src: *const u8, size: usize) -> usize;
+    pub(crate) fn __memset_fallible(dst: *mut u8, value: u8, size: usize) -> usize;
+    pub(crate) fn __atomic_load_fallible(ptr: *const u32) -> u64;
+    pub(crate) fn __atomic_cmpxchg_fallible(
+        ptr: *mut u32,
+        old_val: u32,
+        new_val: u32,
+    ) -> u64;
+}
+
 use crate::{
     mm::{
         page_prop::{CachePolicy, PageFlags, PageProperty, PrivilegedPageFlags as PrivFlags},
@@ -326,32 +339,3 @@ impl fmt::Debug for PageTableEntry {
     }
 }
 
-pub(crate) unsafe fn __memcpy_fallible(dst: *mut u8, src: *const u8, size: usize) -> usize {
-    unsafe { core::ptr::copy(src, dst, size) };
-    0
-}
-
-pub(crate) unsafe fn __memset_fallible(dst: *mut u8, value: u8, size: usize) -> usize {
-    unsafe { core::ptr::write_bytes(dst, value, size) };
-    0
-}
-
-pub(crate) unsafe fn __atomic_load_fallible(ptr: *const u32) -> u64 {
-    let atomic_ptr = ptr.cast::<core::sync::atomic::AtomicU32>();
-    unsafe { (*atomic_ptr).load(core::sync::atomic::Ordering::Relaxed) as u64 }
-}
-
-pub(crate) unsafe fn __atomic_cmpxchg_fallible(ptr: *mut u32, old_val: u32, new_val: u32) -> u64 {
-    let atomic_ptr = ptr.cast::<core::sync::atomic::AtomicU32>();
-    let old = unsafe {
-        (*atomic_ptr)
-            .compare_exchange(
-                old_val,
-                new_val,
-                core::sync::atomic::Ordering::Relaxed,
-                core::sync::atomic::Ordering::Relaxed,
-            )
-            .unwrap_or_else(|actual| actual)
-    };
-    old as u64
-}
