@@ -24,6 +24,13 @@ in stdenvNoCC.mkDerivation {
     ln -sfn usr/lib64 $out/lib64
     cp -r ${busybox}/bin/* $out/bin/
 
+    cat > $out/init <<'EOF'
+#!/bin/busybox sh
+export PATH=/bin:/usr/bin:/sbin:/usr/sbin
+exec /bin/busybox sh
+EOF
+    chmod +x $out/init
+
     cp -r ${etc}/* $out/etc/
 
     ${lib.optionalString (apps != null) ''
