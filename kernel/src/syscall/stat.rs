@@ -183,7 +183,26 @@ cfg_if! {
             st_mtime: timespec_t,
             /// Time of last status change
             st_ctime: timespec_t,
+            /// Reserved for future glibc fields
+            __reserved: [i32; 2],
         }
+
+        const _: () = {
+            assert!(core::mem::size_of::<Stat>() == 128);
+            assert!(core::mem::offset_of!(Stat, st_dev) == 0);
+            assert!(core::mem::offset_of!(Stat, st_ino) == 8);
+            assert!(core::mem::offset_of!(Stat, st_mode) == 16);
+            assert!(core::mem::offset_of!(Stat, st_nlink) == 20);
+            assert!(core::mem::offset_of!(Stat, st_uid) == 24);
+            assert!(core::mem::offset_of!(Stat, st_gid) == 28);
+            assert!(core::mem::offset_of!(Stat, st_rdev) == 32);
+            assert!(core::mem::offset_of!(Stat, st_size) == 48);
+            assert!(core::mem::offset_of!(Stat, st_blksize) == 56);
+            assert!(core::mem::offset_of!(Stat, st_blocks) == 64);
+            assert!(core::mem::offset_of!(Stat, st_atime) == 72);
+            assert!(core::mem::offset_of!(Stat, st_mtime) == 88);
+            assert!(core::mem::offset_of!(Stat, st_ctime) == 104);
+        };
 
         impl From<Metadata> for Stat {
             fn from(info: Metadata) -> Self {
@@ -198,11 +217,12 @@ cfg_if! {
                     st_rdev: info.rdev,
                     st_size: info.size as isize,
                     st_blksize: info.blk_size as _,
+                    __pad1: 0,
                     st_blocks: (info.blocks * (info.blk_size / 512)) as isize,
                     st_atime: info.atime.into(),
                     st_mtime: info.mtime.into(),
                     st_ctime: info.ctime.into(),
-                    __pad1: 0,
+                    __reserved: [0; 2],
                 }
             }
         }
