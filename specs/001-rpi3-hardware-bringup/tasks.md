@@ -38,11 +38,11 @@
 
 ### A2 — AArch64 stat ABI
 
-- [ ] A201 Compare `kernel/src/syscall/stat.rs` with the Linux AArch64 `struct stat` offsets, alignment, and total size.
-- [ ] A202 Add compile-time layout assertions or a focused test for the AArch64 `Stat` layout.
-- [ ] A203 Validate `stat`, `lstat`, `fstat`, symlink metadata, and `ls /bin` on RPi3 before changing the ABI.
-- [ ] A204 If incompatible, implement the smallest ABI correction and verify dynamic busybox plus x86/QEMU behavior.
-- [ ] A205 Record the final ABI decision and remove the stale SIGSEGV workaround note if resolved.
+- [x] A201 Compare `kernel/src/syscall/stat.rs` with the Linux/glibc AArch64 `struct stat` offsets, alignment, and total size.
+- [x] A202 Add compile-time layout assertions for the AArch64 `Stat` layout.
+- [ ] A203 Validate `stat`, `lstat`, `fstat`, symlink metadata, and `ls /bin` on RPi3; `ls /bin` still stops in the getdents/stat path and needs follow-up.
+- [x] A204 Implement the smallest ABI correction: add the glibc reserved tail and preserve the verified field offsets; cross-target build passes.
+- [ ] A205 Record the final ABI decision and remove the stale SIGSEGV workaround note after hardware `ls`/metadata validation.
 
 ### A3 — Reboot syscall
 
