@@ -12,6 +12,7 @@ mod io;
 pub(crate) mod iommu;
 pub(crate) mod irq;
 pub(crate) mod mm;
+pub(crate) mod ex_table;
 pub mod qemu;
 pub mod serial;
 pub(crate) mod task;

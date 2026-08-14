@@ -115,6 +115,34 @@ extern "C" fn sync_exception_current(f: &mut TrapFrame) {
         }};
     }
 
+    // Attempt to recover from a fallible kernel access to user-space memory
+    // before dumping the full EL1 state. If the faulting address is in user
+    // space, give the user page-fault handler a chance to map it. If that
+    // fails (or is absent), try the exception-table recovery address for the
+    // faulting instruction so that functions like __memcpy_fallible can return
+    // an EFAULT-style failure instead of hanging the kernel.
+    let esr = f.esr_el1;
+    let elr = f.elr_el1;
+    let far = FAR_EL1.get() as usize;
+    if CpuException::from_esr(esr) == CpuException::DataAbortCurrentEL
+        && far < MAX_USERSPACE_VADDR
+    {
+        if let Some(handler) = USER_PAGE_FAULT_HANDLER.get() {
+            let info = CpuExceptionInfo {
+                code: CpuException::DataAbortCurrentEL,
+                page_fault_addr: far,
+                error_code: esr,
+            };
+            if (*handler)(&info).is_ok() {
+                return;
+            }
+        }
+        if let Some(recovery) = super::ex_table::find_recovery_inst_addr(elr) {
+            f.elr_el1 = recovery;
+            return;
+        }
+    }
+
     put_crlf!();
     put_str!(b"[EL1-SYNC]");
     put_crlf!();
