@@ -11,7 +11,18 @@
 //! (crate::mm::kspace::KERNEL_BASE_VADDR) so that the peripheral pages are
 //! accessed with Device memory attributes and values are not cached.
 
+use core::sync::atomic::{AtomicBool, Ordering};
+
 use crate::mm::kspace::KERNEL_BASE_VADDR;
+
+static FORCE_BLOCKING_SEND: AtomicBool = AtomicBool::new(false);
+
+/// Force `send()` to wait for mini-UART TX space even when local IRQs are
+/// disabled. This is used by the panic handler so the full panic message is
+/// not truncated.
+pub fn set_force_blocking_send(enabled: bool) {
+    FORCE_BLOCKING_SEND.store(enabled, Ordering::Relaxed);
+}
 
 const PL011_BASE_PA_QEMU: usize = 0x0900_0000;
 const PL011_BASE_PA_RPI3: usize = 0x3F20_1000;
@@ -265,7 +276,9 @@ pub fn send(data: u8) {
         // the host to drain it, because that would block the interrupt handler
         // and lose incoming bytes.  In process context local IRQs are enabled,
         // so blocking until space is available remains safe.
-        if !crate::arch::irq::is_local_enabled() {
+        if !FORCE_BLOCKING_SEND.load(Ordering::Relaxed)
+            && !crate::arch::irq::is_local_enabled()
+        {
             if (miniuart_read_stat() & MINIUART_STAT_TX_SPACE) != 0 {
                 miniuart_write(data);
             }

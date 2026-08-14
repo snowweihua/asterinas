@@ -98,6 +98,10 @@ fn panic_handler(info: &core::panic::PanicInfo) -> ! {
         }
     }
 
+    // Prevent the panic log from being truncated due to the mini-UART dropping
+    // bytes while the console lock disables local IRQs.
+    ostd::arch::serial::set_force_blocking_send(true);
+
     let preempt_guard = disable_preempt();
     let thread = Thread::current();
     let cpu = preempt_guard.current_cpu();

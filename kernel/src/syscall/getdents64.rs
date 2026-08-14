@@ -43,7 +43,7 @@ pub fn sys_getdents64(
     buf_len: usize,
     ctx: &Context,
 ) -> Result<SyscallReturn> {
-    info!(
+    trace!(
         "sys_getdents64: fd = {}, buf_addr = 0x{:x}, buf_len = 0x{:x}",
         fd, buf_addr, buf_len
     );
