@@ -27,6 +27,7 @@ This file records durable findings and the current active investigation. Probe c
 - The AArch64 timer singleton used `spin::Once` even on RPi3, contrary to the RPi3 single-core/exclusive-atomic constraint. It now uses `boot::SimpleOnce`.
 - Disabling `timer::init()` entirely on the RPi3 path produced a clean full boot to `~ #` in the next cycle after another valid-transfer stop. This makes the RPi3 timer initialization/interrupt path the current leading cause of the remaining intermittent boot failure; timer callbacks are not required for the initial shell prompt in this bring-up configuration.
 - After this change, `/bin/sh` command execution was verified with `echo shell-ok`, which printed `shell-ok` and returned to `~ #`. A subsequent 10-cycle power test reached `~ #` on all 10 cycles, with no TFTP failure, busybox symbol lookup error, or missing-prompt failure.
+- The AArch64 reboot syscall was registered at syscall 142 and RPi3 reboot uses PSCI through SMC while QEMU retains HVC. `busybox reboot -f` was verified to reset the board and return to `~ #`; plain PID1-mediated `reboot` still hangs in the busybox signal/sync path and remains open.
 
 ## Durable RPi3 Constraints
 
