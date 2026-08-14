@@ -44,7 +44,7 @@ pub(crate) unsafe fn late_init_on_bsp() {
         unsafe { crate::boot::smp::boot_all_aps() };
     }
     if crate::arch::board::BoardType::cached() == 2 {
-        unsafe { timer::init() };
+        // RPi3 has no GIC-backed virtual timer path in this bring-up mode.
     } else {
         unsafe { timer::init() };
     }
