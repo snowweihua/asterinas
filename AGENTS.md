@@ -2,6 +2,12 @@
 
 ## last session status refer to specs/001-rpi3-hardware-bringup/SESSION_CONTEXT.md
 
+## Development Environment
+
+**Main development is in WSL2.**
+**TFTP runs on Windows with root directory `D:/pi_sd/`; `/srv/tftp` is not the TFTP root.** The WSL2 mapping is `/mnt/d/pi_sd/`. This is not the physical SD card, so if SD-card files need updating (for example, `boot.scr`), ask the user to copy them manually.
+**Build MCP runs in WSL2; serial/power MCP runs in Windows.**
+
 ## Current work flow (must follow exactly)
 
 **Research and analysis -> code change -> Build and Deploy -> power off -> serial buffer clear -> power on -> wait 60s and serial read -> analyze log -> If new progress, commit code -> continue next research and analysis**
@@ -36,7 +42,7 @@
 
 ## MCP Servers
 
-MCP servers are registered in `.opencode/opencode.json` and started automatically by OpenCode. No manual server startup required.
+For opencode, MCP servers are registered in `.opencode/opencode.json` and for Devin, MCP server are registered in '.devin/mcp_config.local.json', started automatically. 
 
 **Available MCP tools:**
 

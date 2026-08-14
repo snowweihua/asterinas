@@ -20,6 +20,8 @@ This file records durable findings and the current active investigation. Probe c
 - The IRQ workaround around the 16-byte `Result<()>` return was removed: `do_execve` now returns normally and `handle_syscall` no longer performs a manual IRQ enable. A fresh physical run of `exec /bin/busybox echo irqfree` printed `irqfree`, confirming that the TPIDR_EL0 TLS fix alone resolves the hang.
 - Clean diagnostic-free hardware output is confirmed. `/bin/busybox sh` replacement has been tested separately but produces no observable `sh -c 'echo ...'` output; this appears to be a distinct shell/job-control/TTY follow-up, not the original execve return hang.
 - A fresh test of the shell command `/bin/busybox ls` also hangs after the command is echoed and produces no directory listing or prompt. Temporary syscall/getdents probes were inconclusive because their serial markers were not reliably observable. No ls-path code change is committed; the source tree was restored to the last verified execve-fix state and rebuilt/deployed.
+- The generated dynamic initramfs did not contain a top-level `/init`, so successful kernel initialization could still fail to reach the shell prompt. `test/nix/initramfs.nix` now installs `/init` to launch `/bin/busybox sh`; this was committed as `d7bb190a` and the rebuilt dynamic cpio contains `/init`.
+- The intermittent boot problem is not yet fully resolved. With the corrected initramfs, some full 140-second cycles still stop after early component/log output; replacing only the init entrypoint with a statically linked busybox did not change that behavior. Do not revert to `asterina_last.img`; the remaining investigation must use the current source and current `asterina.img`.
 
 ## Durable RPi3 Constraints
 
@@ -95,6 +97,7 @@ The original logger failure was an EL1 synchronous abort in `spin::once::Once::t
 
 ## Operational Notes
 
+- The Windows TFTP server root is `D:/pi_sd/`, mapped in WSL2 as `/mnt/d/pi_sd/`. `/srv/tftp` is not used for RPi3 deployment; do not copy kernel or initramfs files there.
 - Physical verification sequence:
   1. Build the AArch64 OSDK image.
   2. Convert the ELF to `/tmp/asterina.img`.
