@@ -22,6 +22,12 @@ pub fn sys_rt_sigaction(
     sigset_size: u64,
     ctx: &Context,
 ) -> Result<SyscallReturn> {
+        // On RPi3, the sig_dispositions Mutex can deadlock on the A53
+        // exclusive-atomic workaround. Allow busybox to start by treating
+        // sigaction as a no-op until the locking is fixed.
+        if ostd::arch::is_rpi3() {
+            return Ok(SyscallReturn::Return(0));
+        }
     let sig_num = SigNum::try_from(sig_num)?;
     debug!(
         "signal = {}, sig_action_addr = 0x{:x}, old_sig_action_addr = 0x{:x}, sigset_size = {}",
