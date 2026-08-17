@@ -114,20 +114,15 @@ fn get_next_when() -> u64 {
 }
 
 fn set_next_timer_arch_rpi3() {
-    let next = get_next_when_rpi3();
+    // Use the relative TimerValue register so the compare value is computed
+    // against the current CNTPCT at the moment of the write. This prevents
+    // the interrupt from remaining pending if callback processing took longer
+    // than the tick interval.
+    let interval = TIMER_INTERVAL.load(Ordering::Relaxed);
     unsafe {
-        asm!("msr cntp_cval_el0, {0}", in(reg) next, options(nostack, nomem, preserves_flags));
+        asm!("msr cntp_tval_el0, {0}", in(reg) interval, options(nostack, nomem, preserves_flags));
         asm!("msr cntp_ctl_el0, {0}", in(reg) 1u64, options(nostack, nomem, preserves_flags));
     }
-}
-
-fn get_next_when_rpi3() -> u64 {
-    let current: u64;
-    unsafe {
-        asm!("mrs {0}, cntpct_el0", out(reg) current, options(nostack, nomem, preserves_flags));
-    }
-    let interval = TIMER_INTERVAL.load(Ordering::Relaxed);
-    current + interval
 }
 
 pub(crate) fn get_timebase_freq() -> u64 {
