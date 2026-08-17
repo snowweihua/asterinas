@@ -57,13 +57,24 @@ pub(super) unsafe fn init() {
         Ordering::Relaxed,
     );
 
+    let irq_num = if crate::arch::is_rpi3() {
+        30
+    } else {
+        AARCH64_VIRT_TIMER_PPI_IRQ
+    };
+
     TIMER_IRQ.call_once(|| {
-        let mut timer_irq = IrqLine::alloc_specific(AARCH64_VIRT_TIMER_PPI_IRQ).unwrap();
+        let mut timer_irq = IrqLine::alloc_specific(irq_num).unwrap();
         TIMER_IRQ_NUM.store(timer_irq.num(), Ordering::Relaxed);
         timer_irq.on_active(timer_callback);
 
         timer_irq
     });
+
+    if crate::arch::is_rpi3() {
+        // SAFETY: `init()` is called once, before any use of the function pointer.
+        unsafe { SET_NEXT_TIMER_FN = set_next_timer_arch_rpi3 };
+    }
 
     set_next_timer();
 }
@@ -97,6 +108,23 @@ fn get_next_when() -> u64 {
     let current: u64;
     unsafe {
         asm!("mrs {0}, cntvct_el0", out(reg) current, options(nostack, nomem, preserves_flags));
+    }
+    let interval = TIMER_INTERVAL.load(Ordering::Relaxed);
+    current + interval
+}
+
+fn set_next_timer_arch_rpi3() {
+    let next = get_next_when_rpi3();
+    unsafe {
+        asm!("msr cntp_cval_el0, {0}", in(reg) next, options(nostack, nomem, preserves_flags));
+        asm!("msr cntp_ctl_el0, {0}", in(reg) 1u64, options(nostack, nomem, preserves_flags));
+    }
+}
+
+fn get_next_when_rpi3() -> u64 {
+    let current: u64;
+    unsafe {
+        asm!("mrs {0}, cntpct_el0", out(reg) current, options(nostack, nomem, preserves_flags));
     }
     let interval = TIMER_INTERVAL.load(Ordering::Relaxed);
     current + interval

@@ -27,7 +27,13 @@
 
 ## Phase A — Known issues and regression gates
 
-**Exit criteria**: known issue status is accurate; stat behavior is validated; reboot is hardware-tested; UART scope is decided; QEMU regression passes; this task file has no superseded v1.0 tasks.
+**Exit criteria**: known issue status is accurate; stat behavior is validated; the RPi3 periodic timer is enabled and validated; `reboot -f` is hardware-tested; plain PID1 `reboot` is deprioritized until A0 is complete; UART scope is decided; QEMU regression passes; this task file has no superseded v1.0 tasks.
+
+### A0 — RPi3 periodic timer (urgent, do first)
+
+- [x] A001 Re-enable `timer::init()` on RPi3 and wire the BCM2836 non-secure physical timer (CNTPNSIRQ, IRQ 30) through the existing `IrqLine`/`bcm2836_irq` path.
+- [x] A002 Validate `sleep`, `nanosleep`, and scheduler `Waiter` timeouts on RPi3 without the CNTPCT busy-wait workaround.
+- [ ] A003 Re-run 10 power-cycle boot baseline after the timer is enabled and confirm no intermittent hang.
 
 ### A1 — Documentation and issue reconciliation
 

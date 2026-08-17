@@ -52,8 +52,10 @@ pub(crate) unsafe fn init_on_bsp() {
 pub(crate) fn init_interrupt(irq_num: u8) {
     if crate::arch::board::BoardType::cached() == 2 {
         // The Raspberry Pi 3 has no GIC; enable the per-IP interrupt router.
-        if irq_num == 27 {
-            crate::arch::bcm2836_irq::enable_timer_irq();
+        if irq_num == 30 {
+            crate::arch::bcm2836_irq::enable_cntpns_irq();
+        } else if irq_num == 27 {
+            crate::arch::bcm2836_irq::enable_cntv_irq();
         } else if irq_num == crate::arch::bcm2836_irq::MINIUART_IRQ_NUM as u8 {
             crate::arch::bcm2836_irq::enable_miniuart_irq();
         } else if irq_num == 57 {

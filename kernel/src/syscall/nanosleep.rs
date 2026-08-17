@@ -87,18 +87,6 @@ fn do_clock_nanosleep(
         request_time
     };
 
-    // RPi3 single-core bring-up currently has no periodic timer interrupt, so
-    // the Waiter-based timeout will never wake. Busy-wait on the monotonic
-    // counter for now; this is enough for `sleep` and PID1 `reboot`.
-    #[cfg(target_arch = "aarch64")]
-    if ostd::arch::is_rpi3() {
-        let deadline = start_time + duration;
-        while read_clock(clockid, ctx)? < deadline {
-            core::hint::spin_loop();
-        }
-        return Ok(SyscallReturn::Return(0));
-    }
-
     // FIXME: sleeping thread can only be interrupted by signals that will call signal handler or terminate
     // current process. i.e., the signals that should be ignored will not interrupt sleeping thread.
     let waiter = Waiter::new_pair().0;

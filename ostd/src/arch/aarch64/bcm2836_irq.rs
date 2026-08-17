@@ -42,6 +42,7 @@ const CORE3_BOOT_CONTROL: usize = 0xF8;
 /// Per-core register block stride for ARM local registers.
 const CORE_REG_STRIDE: usize = 0x400;
 
+const CNTPNSIRQ_BIT: u32 = 1 << 1;
 const CNTVIRQ_BIT: u32 = 1 << 3;
 
 /// BCM2835 Peripheral Interrupt Controller (shared across RPi3 peripherals).
@@ -143,7 +144,13 @@ pub unsafe fn init_on_bsp() {
     }
 }
 
-pub fn enable_timer_irq() {
+pub fn enable_cntpns_irq() {
+    let core = core_id();
+    let offset = CORE0_TIMER_INT_CONTROL + (core * CORE_REG_STRIDE);
+    unsafe { write_reg(offset, CNTPNSIRQ_BIT) };
+}
+
+pub fn enable_cntv_irq() {
     let core = core_id();
     let offset = CORE0_TIMER_INT_CONTROL + (core * CORE_REG_STRIDE);
     unsafe { write_reg(offset, CNTVIRQ_BIT) };
@@ -152,7 +159,7 @@ pub fn enable_timer_irq() {
 pub unsafe fn init_on_ap() {
     let core = core_id();
     let offset = CORE0_TIMER_INT_CONTROL + (core * CORE_REG_STRIDE);
-    unsafe { write_reg(offset, CNTVIRQ_BIT) };
+    unsafe { write_reg(offset, CNTPNSIRQ_BIT) };
 }
 
 /// Enable the BCM2835 AUX mini-UART IRQ (GPU IRQ 29).
@@ -219,8 +226,13 @@ pub fn acknowledge_interrupt() -> usize {
     let offset = CORE0_IRQ_SOURCE + (core * CORE_REG_STRIDE);
     let pending = unsafe { read_reg(offset) };
 
+    if pending & CNTPNSIRQ_BIT != 0 {
+        // Non-secure physical timer (CNTP) is what EL1 uses on RPi3.
+        return 30;
+    }
+
     if pending & CNTVIRQ_BIT != 0 {
-        // Timer IRQ: return the virtual timer PPI number used by AArch64 timer::init().
+        // Virtual timer (CNTV) is the default on QEMU; also keep this path.
         return 27;
     }
 

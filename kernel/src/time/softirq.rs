@@ -11,10 +11,9 @@ static TIMER_SOFTIRQ_CALLBACKS: RcuOption<Box<Vec<fn()>>> = RcuOption::new_none(
 pub(super) fn init() {
     SoftIrqLine::get(TIMER_SOFTIRQ_ID).enable(timer_softirq_handler);
 
-    // Disabled for RPi3 timer-callback debugging.
-    // timer::register_callback_on_cpu(|| {
-    //     SoftIrqLine::get(TIMER_SOFTIRQ_ID).raise();
-    // });
+    timer::register_callback_on_cpu(|| {
+        SoftIrqLine::get(TIMER_SOFTIRQ_ID).raise();
+    });
 }
 
 /// Registers a function that will be executed during timer softirq.
