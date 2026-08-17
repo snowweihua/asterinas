@@ -13,6 +13,15 @@ static RNG: Once<SpinLock<StdRng>> = Once::new();
 ///
 /// It's cryptographically secure, as documented in [`rand::rngs::StdRng`].
 pub fn getrandom(dst: &mut [u8]) -> Result<()> {
+    // RPi3 single-core bring-up: the StdRng SpinLock can deadlock on the
+    // A53 exclusive-atomic workaround, and there is no hardware RNG. Use the
+    // monotonic counter as a deterministic but non-blocking entropy source.
+    if ostd::arch::is_rpi3() {
+        for (i, byte) in dst.iter_mut().enumerate() {
+            *byte = ((ostd::arch::read_tsc() >> ((i % 8) * 8)) & 0xff) as u8;
+        }
+        return Ok(());
+    }
     Ok(RNG.get().unwrap().lock().try_fill_bytes(dst)?)
 }
 

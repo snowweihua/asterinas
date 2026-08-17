@@ -39,7 +39,7 @@
 
 - [ ] A101 Compare `tasks.md`, `plan.md`, `research.md`, `quickstart.md`, and `known-issues.md` with `SESSION_CONTEXT.md` and remove stale v1.0 claims.
 - [ ] A102 Remove obsolete `/srv/tftp`, `kernel8.img` payload, compressed-initramfs, and temporary debug-marker instructions.
-- [ ] A103 Document the current RPi3 timer policy: timer initialization is disabled until the BCM2836 timer/IRQ path is independently validated.
+- [ ] A103 Document the current RPi3 timer policy: the non-secure physical timer (CNTPNSIRQ, IRQ 30) is used for a 1000Hz tick; the virtual timer is not enabled.
 - [ ] A104 Add a repeatable v1.1 build/deploy/smoke-test checklist and evidence format.
 
 ### A2 — AArch64 stat ABI
