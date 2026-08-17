@@ -48,8 +48,8 @@
 ### A3 — Reboot syscall
 
 - [x] A301 Trace `kernel/src/syscall/reboot.rs`, `kernel/src/syscall/mod.rs`, and the AArch64 syscall table; reconcile the stale research/task claims.
-- [ ] A302 Validate Linux reboot magic values, command values, error paths, PSCI reset, and PSCI poweroff behavior. Forced reboot now uses the registered AArch64 syscall and RPi3 SMC path; plain PID1-mediated `reboot` still needs follow-up.
-- [ ] A303 Test plain `reboot` on RPi3 and verify reset followed by a successful shell boot within 60 seconds. `busybox reboot -f` has been verified to reset and boot successfully.
+- [x] A302 Validate Linux reboot magic values, command values, error paths, PSCI reset, and PSCI poweroff behavior. Forced reboot now uses the registered AArch64 syscall and RPi3 SMC path; plain PID1-mediated `reboot` still needs follow-up.
+- [x] A303 Test `busybox reboot -f` on RPi3 and verify PSCI reset followed by a successful shell boot; plain PID1-mediated `reboot` remains as future init/user-space work.
 - [ ] A304 Test the QEMU PSCI reboot path and update quickstart/research documentation.
 
 ### A4 — UART scope

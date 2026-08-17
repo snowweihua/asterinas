@@ -109,11 +109,17 @@ pub fn tgkill(tid: Tid, tgid: Pid, signal: Option<UserSignal>, ctx: &Context) ->
 pub fn kill_all(signal: Option<UserSignal>, ctx: &Context) -> Result<()> {
     let current = current!();
     for process in process_table::process_table_mut().iter() {
-        if Arc::ptr_eq(&current, process) || process.is_init_process() {
+        if process.pid() == current.pid() || process.is_init_process() {
             continue;
         }
 
-        kill_process(process, signal, ctx)?;
+        // Do not fail the whole `kill(-1, ...)` if a single process cannot be
+        // signaled; Linux semantics allow partial success for broadcast kills.
+        if let Err(e) = kill_process(process, signal, ctx) {
+            if e.error() != Errno::EPERM {
+                return Err(e);
+            }
+        }
     }
 
     Ok(())
