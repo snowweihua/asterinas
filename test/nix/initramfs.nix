@@ -1,4 +1,4 @@
-{ lib, stdenvNoCC, fetchFromGitHub, hostPlatform, writeClosure, busybox
+{ lib, stdenv, stdenvNoCC, fetchFromGitHub, hostPlatform, writeClosure, busybox
 , glibc, apps, benchmark, syscall, }:
 let
   etc = lib.fileset.toSource {
@@ -8,6 +8,19 @@ let
   gvisor_libs = builtins.path {
     name = "gvisor-libs";
     path = "/lib/x86_64-linux-gnu";
+  };
+  rebootStatic = stdenv.mkDerivation {
+    name = "reboot-static";
+    src = ./reboot.S;
+    unpackPhase = ''
+      cp "$src" reboot.S
+    '';
+    buildPhase = ''
+      $CC -nostdlib -static -o reboot reboot.S
+    '';
+    installPhase = ''
+      install -D reboot $out/bin/reboot
+    '';
   };
   all_pkgs = [ busybox glibc etc ] ++ lib.optionals (apps != null) [ apps.package ]
     ++ lib.optionals (benchmark != null) [ benchmark.package ]
@@ -23,6 +36,9 @@ in stdenvNoCC.mkDerivation {
     ln -sfn usr/lib $out/lib
     ln -sfn usr/lib64 $out/lib64
     cp -r ${busybox}/bin/* $out/bin/
+    # Install the static reboot helper so `reboot -f` reaches the PSCI reset
+    # without tripping over glibc dynamic-linking issues in the busybox applet.
+    cp -f ${rebootStatic}/bin/reboot $out/bin/reboot
 
     cat > $out/init <<'EOF'
 #!/bin/busybox sh
