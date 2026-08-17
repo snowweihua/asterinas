@@ -27,9 +27,10 @@ This file records durable findings and the current active investigation. Probe c
 - The AArch64 timer singleton used `spin::Once` even on RPi3, contrary to the RPi3 single-core/exclusive-atomic constraint. It now uses `boot::SimpleOnce`.
 - Disabling `timer::init()` entirely on the RPi3 path produced a clean full boot to `~ #` in the next cycle after another valid-transfer stop. This makes the RPi3 timer initialization/interrupt path the current leading cause of the remaining intermittent boot failure; timer callbacks are not required for the initial shell prompt in this bring-up configuration.
 - After this change, `/bin/sh` command execution was verified with `echo shell-ok`, which printed `shell-ok` and returned to `~ #`. A subsequent 10-cycle power test reached `~ #` on all 10 cycles, with no TFTP failure, busybox symbol lookup error, or missing-prompt failure.
-- The AArch64 reboot syscall was registered at syscall 142 and RPi3 reboot uses PSCI through SMC while QEMU retains HVC. `busybox reboot -f` was verified to reset the board and return to `~ #`; plain PID1-mediated `reboot` still hangs in the busybox signal/sync path and remains open.
+- The AArch64 reboot syscall was registered at syscall 142 and RPi3 reboot uses PSCI through SMC while QEMU retains HVC. `busybox reboot -f` is verified to reset the board and return to `~ #`; the path is committed and the latest built `asterina.img`/`initramfs.cpio` both pass this test. Plain PID1-mediated `reboot` (non-forced) still does not reset because the busybox `sh` init process does not catch `SIGTERM`/load `ENV` aliases; this is a user-space follow-up rather than a PSCI kernel issue.
 - Cross-target glibc headers report the AArch64 `struct stat` size as 128 bytes with `st_rdev@32`, `st_size@48`, `st_blksize@56`, `st_blocks@64`, and timestamps at 72/88/104. `kernel/src/syscall/stat.rs` now includes the reserved tail and compile-time offset assertions; the build passes. Hardware `ls /bin` still stops in the getdents/stat path, so the runtime validation remains open.
-- Targeted tracing showed `getdents64` reaches the completed directory-read stage but does not reach the post-copy marker. AArch64 had an existing exception-table `memcpy_fallible.S`, but `ostd/src/arch/aarch64/mm/mod.rs` was using raw `core::ptr::copy`/atomic fallbacks instead of linking it. The helpers are now wired to the exception-table assembly in `d98d6b14`; hardware `ls` revalidation is still pending.
+- `getdents64` was failing on a user-copy page fault in the AArch64 `memcpy` fallback. The existing exception-table `memcpy_fallible.S` helpers are now wired in `ostd/src/arch/aarch64/mm/mod.rs`. Hardware validation now passes `ls /bin`, `ls -la /`, `stat`/`lstat`/`fstat` symlinks, and `echo`/`true` shell commands.
+- RPi3 `timer::init()` remains disabled (the periodic tick path was a leading cause of intermittent boot hangs), so `nanosleep` busy-waits on the CNTPCT monotonic counter instead of using the `Waiter` timeout. This is a temporary single-core bring-up workaround until the BCM2836 local timer/IRQ path is independently validated.
 
 ## Durable RPi3 Constraints
 
@@ -102,6 +103,12 @@ The original logger failure was an EL1 synchronous abort in `spin::once::Once::t
 - On the physical RPi3 with the clean kernel and full rootfs, `true`, `ls`, and `/bin/busybox ls` execute successfully and `ls` lists the root directory. Dynamic `execve` also works (`/bin/busybox echo` prints its argument).
 - `Mutex::acquire_lock` for RPi3 already disables local IRQs around its plain load+store sequence and has been committed previously.
 - The OSDK Docker image was rebuilt earlier and `cargo-osdk` was fixed to build from the current `osdk` source (`Arch::as_str` -> `Arch::to_str`).
+
+## Active Investigation: plain `reboot` vs `reboot -f`
+
+- `busybox reboot -f` resets the RPi3 through the AArch64 `reboot` syscall and PSCI `smc #0` with `x0 = 0x8400_0009`. The board returns to the U-Boot/TFTP boot path and reaches `~ #`.
+- Plain `reboot` (busybox without `-f`) is designed to signal `init` and wait for it to shut down the system. The current initramfs runs `busybox sh` as PID1 and does not catch `SIGTERM` or load a profile/`ENV` file, so it returns to the prompt instead of resetting. A wrapper `reboot` script, shell function, and `alias` were all attempted; all of them failed on `reboot -f` when invoked from a shell script, while direct `reboot -f` works.
+- The remaining fix is either a self-contained initramfs `reboot` replacement that does not call back into the shell, or implementing proper `SIGTERM`/PID1 shutdown. This is not a kernel PSCI problem.
 
 ## Operational Notes
 
