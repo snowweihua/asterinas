@@ -12,21 +12,10 @@ static LOGGER: AsterLogger = AsterLogger;
 
 impl log::Log for AsterLogger {
     fn enabled(&self, metadata: &Metadata) -> bool {
-        // On RPi3 the console printer uses a SpinLock that can deadlock on the
-        // A53 exclusive-atomic workaround, so suppress non-error logs.
-        if ostd::arch::is_rpi3() {
-            metadata.level() <= log::Level::Error
-        } else {
-            metadata.level() <= log::Level::Warn
-        }
+        metadata.level() <= log::Level::Warn
     }
 
     fn log(&self, record: &Record) {
-        // On RPi3 the console printer uses a SpinLock that can deadlock on the
-        // A53 exclusive-atomic workaround, so skip non-error logs there.
-        if ostd::arch::is_rpi3() && record.level() > log::Level::Error {
-            return;
-        }
         let timestamp = Jiffies::elapsed().as_duration();
         print_logs(record, &timestamp);
     }

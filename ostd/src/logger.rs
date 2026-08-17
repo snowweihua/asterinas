@@ -76,13 +76,6 @@ impl log::Log for Logger {
             return logger.log(record);
         };
 
-        // On RPi3, the default early console uses a SpinLock that can deadlock
-        // on the A53 exclusive-atomic workaround, so only emit errors until a
-        // real logger is injected.
-        if crate::arch::is_rpi3() && record.level() > log::Level::Error {
-            return;
-        }
-
         // Default implementation.
         let level = record.level();
         crate::console::early_print(format_args!("{}: {}\n", level, record.args()));
