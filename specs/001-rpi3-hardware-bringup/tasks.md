@@ -66,8 +66,8 @@
 
 ### A5 — QEMU and code gates
 
-- [ ] A501 Run the documented AArch64 virt boot with the correct AArch64 initramfs and verify `/ #`.
-- [ ] A502 Run affected crate checks/tests and `./tools/format_all.sh --check`.
+- [ ] A501 Run the documented AArch64 virt boot with the correct AArch64 initramfs and verify `/ #` (attempted: stale initramfs and patched DTB, QEMU produced no serial output; needs fresh Nix initramfs and a regenerated DTB with matching initrd-end).
+- [ ] A502 Run affected crate checks/tests and `./tools/format_all.sh --check` (attempted: `format_all.sh --check` reported many pre-existing rustfmt diffs across the tree).
 - [ ] A503 Establish a pre-merge gate covering QEMU boot, RPi3 shell smoke tests, TFTP validation, and no stale deployment paths.
 
 ---
