@@ -84,6 +84,10 @@ static OOPS_COUNT: AtomicUsize = AtomicUsize::new(0);
 fn panic_handler(info: &core::panic::PanicInfo) -> ! {
     let message = info.message();
 
+    // Print the panic before any cpu-local / scheduler state is accessed so
+    // that very early boot failures are visible on the serial console.
+    ostd::early_println!("kernel panic (early): {:#?}", info);
+
     if let Some(thread) = Thread::current() {
         let panic_on_oops = PANIC_ON_OOPS.load(Ordering::Relaxed);
         if !panic_on_oops && info.can_unwind() {

@@ -61,6 +61,18 @@ const FR_RXFE: u32 = 1 << 4;
 const IM_RXIM: u32 = 1 << 4;
 /// PL011 IMSC (Interrupt Mask Set/Clear) is at offset 0x038, not 0x004 (which is RSR/ECR).
 const PL011_IMSC_OFFSET: usize = 0x038;
+// PL011 line control and control register offsets.
+const PL011_IBRD_OFFSET: usize = 0x024;
+const PL011_FBRD_OFFSET: usize = 0x028;
+const PL011_LCR_H_OFFSET: usize = 0x02C;
+const PL011_CR_OFFSET: usize = 0x030;
+const PL011_CR_UARTEN: u32 = 1 << 0;
+const PL011_CR_TXE: u32 = 1 << 8;
+const PL011_CR_RXE: u32 = 1 << 9;
+const PL011_LCR_H_WLEN_8: u32 = 3 << 5;
+const PL011_LCR_H_FEN: u32 = 1 << 4;
+
+static PL011_INITIALIZED: AtomicBool = AtomicBool::new(false);
 
 fn is_rpi3() -> bool {
     crate::arch::board::BoardType::cached() == 2
@@ -72,7 +84,14 @@ fn pl011_base_va() -> usize {
     } else {
         PL011_BASE_PA_QEMU
     };
-    base_pa + KERNEL_BASE_VADDR
+    // QEMU's PL011 is at 0x0900_0000, which is outside the first high-half GiB
+    // that the kernel maps to DRAM.  Access it through the TTBR0 identity map
+    // (2 MiB device block in boot_l2pt_gb0) instead of adding KERNEL_BASE_VADDR.
+    if is_rpi3() {
+        base_pa + KERNEL_BASE_VADDR
+    } else {
+        base_pa
+    }
 }
 
 #[inline(always)]
@@ -83,6 +102,36 @@ fn read_fr() -> u32 {
 #[inline(always)]
 fn read_dr() -> u32 {
     unsafe { core::ptr::read_volatile((pl011_base_va() + 0x000) as *const u32) }
+}
+
+/// Ensure the QEMU PL011 is enabled before any TX/RX.
+///
+/// QEMU's PL011 model is present at boot but does not echo DR writes unless the
+/// UART has been enabled, so early panics would otherwise produce no output.
+fn pl011_ensure_init() {
+    if PL011_INITIALIZED.load(Ordering::Relaxed) {
+        return;
+    }
+    PL011_INITIALIZED.store(true, Ordering::Relaxed);
+
+    unsafe {
+        let base = pl011_base_va();
+        // Disable the UART before configuring it.
+        core::ptr::write_volatile((base + PL011_CR_OFFSET) as *mut u32, 0);
+        // Divisor for 115200-ish baud (QEMU ignores the exact value).
+        core::ptr::write_volatile((base + PL011_IBRD_OFFSET) as *mut u32, 1);
+        core::ptr::write_volatile((base + PL011_FBRD_OFFSET) as *mut u32, 0);
+        // 8N1 with FIFOs enabled.
+        core::ptr::write_volatile(
+            (base + PL011_LCR_H_OFFSET) as *mut u32,
+            PL011_LCR_H_WLEN_8 | PL011_LCR_H_FEN,
+        );
+        // Enable UART, transmitter, and receiver.
+        core::ptr::write_volatile(
+            (base + PL011_CR_OFFSET) as *mut u32,
+            PL011_CR_UARTEN | PL011_CR_TXE | PL011_CR_RXE,
+        );
+    }
 }
 
 #[inline(always)]
@@ -287,6 +336,7 @@ pub fn send(data: u8) {
         while (miniuart_read_stat() & MINIUART_STAT_TX_SPACE) == 0 {}
         miniuart_write(data);
     } else {
+        pl011_ensure_init();
         while (read_fr() & FR_TXFF) != 0 {}
         unsafe {
             core::ptr::write_volatile((pl011_base_va() + 0x000) as *mut u32, data as u32);

@@ -43,6 +43,19 @@ pub(crate) unsafe fn init_on_bsp() {
                 )
             };
             gic.setup();
+            // Enable forwarding for both Group 0 and Group 1; the arm-gic
+            // setup only sets Group 1.  Also set AckCtl so GICC_IAR can
+            // acknowledge either group.
+            unsafe {
+                core::ptr::write_volatile(
+                    (QEMU_VIRT_GICD_BASE) as *mut u32,
+                    0x3,
+                );
+                core::ptr::write_volatile(
+                    (QEMU_VIRT_GICC_BASE) as *mut u32,
+                    0b101,
+                );
+            }
             Mutex::new(gic)
         });
     } else {
@@ -81,10 +94,14 @@ pub(crate) fn acknowledge_interrupt() -> Option<usize> {
         let irq = crate::arch::bcm2836_irq::acknowledge_interrupt();
         return (irq != 0).then_some(irq);
     }
-    let gic = GIC.get().expect("GICv2 is not initialized");
-    let mut gic = gic.lock();
-    gic.get_and_acknowledge_interrupt()
-        .and_then(intid_to_irq_num)
+    // Use the banked GICC_IAR so we can acknowledge both Group 0 and Group 1
+    // interrupts (the arm-gic crate only reads GICC_AIAR, which is Group 1).
+    let raw = unsafe { core::ptr::read_volatile((QEMU_VIRT_GICC_BASE + 0x0c) as *const u32) };
+    if raw == 1023 {
+        None
+    } else {
+        Some(raw as usize)
+    }
 }
 
 pub(crate) fn end_interrupt(irq_num: usize) {
@@ -92,11 +109,15 @@ pub(crate) fn end_interrupt(irq_num: usize) {
         crate::arch::bcm2836_irq::end_interrupt(irq_num);
         return;
     }
-    if irq_num > u8::MAX as usize {
+    if irq_num > u16::MAX as usize {
         return;
     }
 
-    let gic = GIC.get().expect("GICv2 is not initialized");
-    let mut gic = gic.lock();
-    gic.end_interrupt(irq_num_to_intid(irq_num as u8));
+    // Drop the GICC_IAR pending priority by writing GICC_EOIR.
+    unsafe {
+        core::ptr::write_volatile(
+            (QEMU_VIRT_GICC_BASE + 0x10) as *mut u32,
+            irq_num as u32,
+        );
+    }
 }

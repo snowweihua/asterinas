@@ -165,19 +165,13 @@ impl BoardType {
 static DRAM_BASE_CACHE: AtomicUsize = AtomicUsize::new(usize::MAX);
 
 pub fn dram_base() -> usize {
-    use crate::arch::boot::DEVICE_TREE;
-
     let cached = DRAM_BASE_CACHE.load(Ordering::Relaxed);
     if cached != usize::MAX {
         return cached;
     }
 
-    let base = if let Some(fdt) = DEVICE_TREE.get() {
-        if let Some(region) = fdt.memory().regions().next() {
-            region.starting_address as usize
-        } else {
-            0x4000_0000
-        }
+    let base = if BoardType::cached() == 2 {
+        0
     } else {
         0x4000_0000
     };

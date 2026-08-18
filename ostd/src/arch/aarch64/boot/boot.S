@@ -261,20 +261,29 @@ jump_to_main:
     adr     x10, boot_l3pt_low
     str     x9,  [x10]
 
-	/* boot_l3pt_high[0] = runtime PA(boot_l2pt_gb0) | MM_TYPE_TABLE
+	/* boot_l3pt_high[0] maps the first 1 GB of the kernel high half.
 	 *
-	 * Use a TABLE descriptor pointing to boot_l2pt_gb0 instead of a 1 GiB
-	 * block descriptor.  boot_l2pt_gb0 maps the first 1 GB with per‑2 MiB
-	 * attributes (Normal for DRAM, Device for the peripheral window at
-	 * 0x3F000000+).  On Cortex‑A53 a 1 GiB block entry spanning both DRAM
-	 * and Device memory causes speculative instruction fetches to hit the
-	 * peripheral bus, which can corrupt x30 (return address) and trigger
-	 * external aborts — the root cause of the persistent "Synchronous
-	 * Abort" at 0x3AF610A8. */
+	 * On RPi3 (DRAM_BASE == 0) the first high GB aliases PA 0x00000000-0x3FFFFFFF,
+	 * which contains both DRAM and the peripheral bus.  Use the per-2 MiB
+	 * boot_l2pt_gb0 table so MMIO windows are marked Device and the unpopulated
+	 * gap is absent, preventing speculative instruction fetches from triggering
+	 * external aborts on Cortex-A53.
+	 *
+	 * On QEMU (DRAM_BASE == 0x40000000) the first high GB aliases the DRAM block
+	 * 0x40000000-0x7FFFFFFF.  It contains no peripherals, so a 1 GiB Normal block
+	 * is safe and is the only way to make the kernel's high .text section
+	 * (linked at 0xffff000000108000, loaded at 0x40108000) executable. */
+	adr     x10, boot_l3pt_high
+	cbz     x21, 4f                 /* if DRAM_BASE == 0 (RPi3): use 2 MiB table */
+	ldr     x11, =(PTE_NORMAL_1G)
+	orr     x11, x11, x21           /* 1 GiB Normal block starting at DRAM_BASE */
+	str     x11, [x10]
+	b       5f
+4:
 	adr     x9,  boot_l2pt_gb0
 	add     x9,  x9,  #MM_TYPE_TABLE
-	adr     x10, boot_l3pt_high
 	str     x9,  [x10]
+5:
 
 	/* boot_l3pt_linear[0] = same table descriptor (boot_l2pt_gb0) on RPi3.
 	 * QEMU keeps the static 1 GiB block for slot 0 (PA 0x00000000 not DRAM). */

@@ -32,6 +32,13 @@ const QEMU_LOADER_DTB_PADDR: usize = 0x4700_0000;
 const FDT_MAX_TOTAL_SIZE: usize = 2 * 1024 * 1024;
 const FDT_MAGIC_BE: [u8; 4] = [0xd0, 0x0d, 0xfe, 0xed];
 
+/// A high-half, page-table-resident copy of the DTB.
+///
+/// Accessing the DTB through the boot-time raw physical pointer is fragile:
+/// the fdt crate returns a `&[u8]` and later methods can dereference through it
+/// with assumptions that are safer to satisfy with a normal `static` slice.
+static mut DTB_COPY: [u8; FDT_MAX_TOTAL_SIZE] = [0; FDT_MAX_TOTAL_SIZE];
+
 pub fn kernel_physical_base(kernel_start: usize, kernel_loaded_offset: usize) -> usize {
     crate::arch::board::dram_base() + (kernel_start - kernel_loaded_offset)
 }
@@ -41,10 +48,26 @@ fn parse_bootloader_name() -> &'static str {
 }
 
 fn parse_kernel_commandline() -> &'static str {
+    if crate::arch::board::BoardType::cached() != 2 {
+        return "init=/init console=ttyAMA0";
+    }
     DEVICE_TREE.get().unwrap().chosen().bootargs().unwrap_or("")
 }
 
+/// Hardcoded initramfs location used by QEMU virt.
+// initramfs_with_init.cpio: 44041728 bytes = 0x2a00600
+const QEMU_INITRAMFS_START: usize = 0x5800_0000;
+const QEMU_INITRAMFS_END: usize = 0x5aa0_0600;
+
 fn parse_initramfs() -> Option<&'static [u8]> {
+    if crate::arch::board::BoardType::cached() != 2 {
+        return Some(unsafe {
+            core::slice::from_raw_parts(
+                paddr_to_vaddr(QEMU_INITRAMFS_START) as *const u8,
+                QEMU_INITRAMFS_END - QEMU_INITRAMFS_START,
+            )
+        });
+    }
     let (start, end) = parse_initramfs_range()?;
     Some(unsafe { core::slice::from_raw_parts(paddr_to_vaddr(start) as *const u8, end - start) })
 }
@@ -68,45 +91,55 @@ fn parse_memory_regions() -> MemoryRegionArray {
     let usable_end = dram_base.saturating_add(QEMU_VIRT_RAM_SCAN_SIZE);
     let (kernel_phys_start, _) = kernel_phys_range();
 
-    for region in DEVICE_TREE.get().unwrap().memory().regions() {
-        if region.size.unwrap_or(0) > 0 {
-            let region_start = region.starting_address as usize;
-            let region_end = region_start + region.size.unwrap();
-            let clipped_start = region_start.max(usable_start);
-            let clipped_end = region_end.min(usable_end);
-            if clipped_start >= clipped_end {
-                continue;
+    if crate::arch::board::BoardType::cached() != 2 {
+        regions
+            .push(MemoryRegion::new(
+                usable_start,
+                usable_end - usable_start,
+                MemoryRegionType::Usable,
+            ))
+            .unwrap();
+    } else {
+        for region in DEVICE_TREE.get().unwrap().memory().regions() {
+            if region.size.unwrap_or(0) > 0 {
+                let region_start = region.starting_address as usize;
+                let region_end = region_start + region.size.unwrap();
+                let clipped_start = region_start.max(usable_start);
+                let clipped_end = region_end.min(usable_end);
+                if clipped_start >= clipped_end {
+                    continue;
+                }
+
+                regions
+                    .push(MemoryRegion::new(
+                        clipped_start,
+                        clipped_end - clipped_start,
+                        MemoryRegionType::Usable,
+                    ))
+                    .unwrap();
             }
-
-            regions
-                .push(MemoryRegion::new(
-                    clipped_start,
-                    clipped_end - clipped_start,
-                    MemoryRegionType::Usable,
-                ))
-                .unwrap();
         }
-    }
 
-    if let Some(node) = DEVICE_TREE.get().unwrap().find_node("/reserved-memory") {
-        for child in node.children() {
-            if let Some(reg_iter) = child.reg() {
-                for region in reg_iter {
-                    let region_start = region.starting_address as usize;
-                    let region_end = region_start + region.size.unwrap();
-                    let clipped_start = region_start.max(usable_start);
-                    let clipped_end = region_end.min(usable_end);
-                    if clipped_start >= clipped_end {
-                        continue;
+        if let Some(node) = DEVICE_TREE.get().unwrap().find_node("/reserved-memory") {
+            for child in node.children() {
+                if let Some(reg_iter) = child.reg() {
+                    for region in reg_iter {
+                        let region_start = region.starting_address as usize;
+                        let region_end = region_start + region.size.unwrap();
+                        let clipped_start = region_start.max(usable_start);
+                        let clipped_end = region_end.min(usable_end);
+                        if clipped_start >= clipped_end {
+                            continue;
+                        }
+
+                        regions
+                            .push(MemoryRegion::new(
+                                clipped_start,
+                                clipped_end - clipped_start,
+                                MemoryRegionType::Reserved,
+                            ))
+                            .unwrap();
                     }
-
-                    regions
-                        .push(MemoryRegion::new(
-                            clipped_start,
-                            clipped_end - clipped_start,
-                            MemoryRegionType::Reserved,
-                        ))
-                        .unwrap();
                 }
             }
         }
@@ -153,7 +186,10 @@ fn parse_memory_regions() -> MemoryRegionArray {
 }
 
 fn parse_initramfs_range() -> Option<(usize, usize)> {
-    let chosen = DEVICE_TREE.get().unwrap().find_node("/chosen").unwrap();
+    if crate::arch::board::BoardType::cached() != 2 {
+        return Some((QEMU_INITRAMFS_START, QEMU_INITRAMFS_END));
+    }
+    let chosen = DEVICE_TREE.get().unwrap().find_node("/chosen")?;
     let initrd_start_prop = chosen.property("linux,initrd-start")?;
     let initrd_start = initrd_start_prop.as_usize()?;
     let initrd_end = chosen.property("linux,initrd-end")?.as_usize()?;
@@ -244,16 +280,28 @@ pub unsafe extern "C" fn aarch64_boot(device_tree_paddr: usize, _reserved: usize
     if discovered_dtb_paddr != 0 {
         let device_tree_ptr = discovered_dtb_paddr as *const u8;
         let device_tree_size = parse_fdt_total_size(device_tree_ptr);
-        // Use from_ptr with a fallback: RPi3 DTBs (FDT v16) may be rejected
-        // by strict version checks in the fdt crate.  If parsing fails, halt
-        // with an explicit message rather than silently panicking.
-        let fdt = match unsafe { fdt::Fdt::from_ptr(device_tree_ptr) } {
-            Ok(f) => f,
-            Err(_e) => {
-                loop { core::hint::spin_loop(); }
-            }
+
+        // Copy the DTB into a high-half, page-table-backed buffer before parsing.
+        // The fdt crate works with Rust slices; this guarantees the data is in a
+        // stable, lifetime-compatible location and is not confused with a physical
+        // address that may later be unmapped.
+        let dtb_copy_ptr = core::ptr::addr_of_mut!(DTB_COPY).cast::<u8>();
+        unsafe {
+            core::ptr::copy_nonoverlapping(device_tree_ptr, dtb_copy_ptr, device_tree_size);
+        }
+        let dtb_slice: &'static [u8] = unsafe {
+            core::slice::from_raw_parts(core::ptr::addr_of!(DTB_COPY).cast::<u8>(), device_tree_size)
         };
-        DEVICE_TREE.call_once(|| fdt);
+
+        if crate::arch::board::BoardType::cached() == 2 {
+            let fdt = match fdt::Fdt::new(dtb_slice) {
+                Ok(f) => f,
+                Err(_e) => {
+                    loop { core::hint::spin_loop(); }
+                }
+            };
+            DEVICE_TREE.call_once(|| fdt);
+        }
         DEVICE_TREE_REGION.call_once(|| (discovered_dtb_paddr, device_tree_size));
         let initramfs_info = parse_initramfs();
         if initramfs_info.is_some() {

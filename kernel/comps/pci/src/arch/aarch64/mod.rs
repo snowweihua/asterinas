@@ -40,11 +40,11 @@ pub(crate) fn has_pci_bus() -> bool {
 }
 
 pub(crate) fn init() {
-    let Some(pci) = DEVICE_TREE
-        .get()
-        .unwrap()
-        .find_compatible(&["pci-host-ecam-generic"])
-    else {
+    let Some(fdt) = DEVICE_TREE.get() else {
+        warn!("Device tree not available, skipping PCI ECAM initialization");
+        return;
+    };
+    let Some(pci) = fdt.find_compatible(&["pci-host-ecam-generic"]) else {
         warn!("No generic PCI host controller node found in the device tree");
         return;
     };

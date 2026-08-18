@@ -17,7 +17,7 @@ use crate::{
 static TIMER_IRQ: Once<IrqLine> = Once::new();
 pub(super) static TIMER_IRQ_NUM: AtomicU8 = AtomicU8::new(0);
 
-const AARCH64_VIRT_TIMER_PPI_IRQ: u8 = 27;
+const AARCH64_VIRT_TIMER_PPI_IRQ: u8 = 30;
 
 static TIMEBASE_FREQ: AtomicU64 = AtomicU64::new(0);
 static TIMER_INTERVAL: AtomicU64 = AtomicU64::new(0);
@@ -77,6 +77,8 @@ pub(super) unsafe fn init() {
     }
 
     set_next_timer();
+
+    crate::early_println!("[timer] init done, freq={}", timebase_freq);
 }
 
 fn timer_callback(trapframe: &TrapFrame) {
@@ -99,15 +101,15 @@ static mut SET_NEXT_TIMER_FN: fn() = set_next_timer_arch;
 fn set_next_timer_arch() {
     let next = get_next_when();
     unsafe {
-        asm!("msr cntv_cval_el0, {0}", in(reg) next, options(nostack, nomem, preserves_flags));
-        asm!("msr cntv_ctl_el0, {0}", in(reg) 1u64, options(nostack, nomem, preserves_flags));
+        asm!("msr cntp_cval_el0, {0}", in(reg) next, options(nostack, nomem, preserves_flags));
+        asm!("msr cntp_ctl_el0, {0}", in(reg) 1u64, options(nostack, nomem, preserves_flags));
     }
 }
 
 fn get_next_when() -> u64 {
     let current: u64;
     unsafe {
-        asm!("mrs {0}, cntvct_el0", out(reg) current, options(nostack, nomem, preserves_flags));
+        asm!("mrs {0}, cntpct_el0", out(reg) current, options(nostack, nomem, preserves_flags));
     }
     let interval = TIMER_INTERVAL.load(Ordering::Relaxed);
     current + interval

@@ -51,20 +51,21 @@ pub fn init() {
             use rand::SeedableRng;
             use ostd::arch::boot::DEVICE_TREE;
 
-            let seed: [u8; 32] = if let Some(chosen) = DEVICE_TREE
-                .get()
-                .unwrap()
-                .find_node("/chosen")
-            {
-                if let Some(prop) = chosen.property("rng-seed") {
-                    prop.value.try_into().unwrap_or([0u8; 32])
+            let seed: [u8; 32] = if let Some(fdt) = DEVICE_TREE.get() {
+                if let Some(chosen) = fdt.find_node("/chosen") {
+                    if let Some(prop) = chosen.property("rng-seed") {
+                        prop.value.try_into().unwrap_or([0u8; 32])
+                    } else {
+                        // No rng-seed in DTB; use a fixed seed (not secure, but allows boot)
+                        log::warn!("No rng-seed in device tree; using fixed seed");
+                        *b"asterinas-aarch64-fixed-rng-seed"
+                    }
                 } else {
-                    // No rng-seed in DTB; use a fixed seed (not secure, but allows boot)
-                    log::warn!("No rng-seed in device tree; using fixed seed");
+                    log::warn!("No /chosen node in device tree; using fixed seed");
                     *b"asterinas-aarch64-fixed-rng-seed"
                 }
             } else {
-                log::warn!("No /chosen node in device tree; using fixed seed");
+                log::warn!("No device tree; using fixed rng seed");
                 *b"asterinas-aarch64-fixed-rng-seed"
             };
 

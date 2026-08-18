@@ -21,7 +21,7 @@ pub struct RtcPl031 {
 impl Driver for RtcPl031 {
     fn try_new() -> Option<Self> {
         // Look for a PL031-compatible node in the device tree
-        let dt = DEVICE_TREE.get().unwrap();
+        let dt = DEVICE_TREE.get()?;
         // Only match "arm,pl031" – generic "arm,primecell" is shared by many
         // other peripherals (e.g. PL011 UART) and must not be probed as RTC.
         let node = dt.find_compatible(&["arm,pl031"])?;

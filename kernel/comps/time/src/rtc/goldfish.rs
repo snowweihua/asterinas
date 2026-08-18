@@ -11,11 +11,12 @@ pub struct RtcGoldfish {
 
 impl Driver for RtcGoldfish {
     fn try_new() -> Option<RtcGoldfish> {
-        let chosen = DEVICE_TREE.get().unwrap().find_node("/soc/rtc").unwrap();
+        let dt = DEVICE_TREE.get()?;
+        let chosen = dt.find_node("/soc/rtc")?;
         if let Some(compatible) = chosen.compatible()
             && compatible.all().any(|c| c == "google,goldfish-rtc")
         {
-            let region = chosen.reg().unwrap().next().unwrap();
+            let region = chosen.reg()?.next()?;
             let io_mem = IoMem::acquire(
                 region.starting_address as usize
                     ..region.starting_address as usize + region.size.unwrap(),

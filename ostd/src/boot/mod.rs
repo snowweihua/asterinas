@@ -54,7 +54,7 @@ impl<T> SimpleOnce<T> {
         if self.initialized.load(Ordering::Relaxed) == 0 {
             unsafe {
                 *self.value.get() = Some(f());
-                self.initialized.store(1, Ordering::Relaxed);
+                self.initialized.store(1, Ordering::Release);
             }
         }
         unsafe { (*self.value.get()).as_ref().unwrap_unchecked() }
