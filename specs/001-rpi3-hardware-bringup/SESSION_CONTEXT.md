@@ -33,6 +33,8 @@ This file records durable findings and the current active investigation. Probe c
 - `getdents64` was failing on a user-copy page fault in the AArch64 `memcpy` fallback. The existing exception-table `memcpy_fallible.S` helpers are now wired in `ostd/src/arch/aarch64/mm/mod.rs`. Hardware validation now passes `ls /bin`, `ls -la /`, `stat`/`lstat`/`fstat` symlinks, and `echo`/`true` shell commands.
 - RPi3 `timer::init()` is re-enabled: it uses the BCM2836 non-secure physical timer (CNTPNSIRQ) as a 1000Hz periodic tick through `IrqLine` 30. The timer softirq raise path is re-enabled in `kernel/src/time/softirq.rs`, and hardware `sleep 1` now returns to the prompt using the `Waiter`/timeout path.
 - The dynamic initramfs `busybox` was hanging at startup because `getrandom` filled the `StdRng` buffer under a `SpinLock` that deadlocks on RPi3's exclusive-atomic workaround. `kernel/src/util/random.rs` now falls back to `ostd::arch::read_tsc` (CNTPCT) bytes for `is_rpi3()`, and `ostd/src/arch/aarch64/timer/mod.rs` now uses the relative `CNTP_TVAL_EL0` to avoid an in-the-past `CNTP_CVAL_EL0` after timer callbacks. The earlier `rt_sigaction` no-op and log-level suppression were reverted: the real fix is the existing RPi3 `ostd::sync::SpinLock` and `ostd::sync::Mutex` paths, which use plain load/store with local IRQs disabled instead of `LDXR`/`STXR`. With those restored, `busybox sh -i` reaches `~ #`, `echo` and `sleep 1` work, and `reboot -f` can sometimes reset the board, but it still intermittently segfaults or returns to the prompt without resetting.
+- The build MCP now supports both targets through `build_kernel_tool(target="rpi3"|"qemu")` and `build_and_deploy_tool(target="rpi3"|"qemu")`. The RPi3 target uses `aarch64-rpi3` with `-C target-cpu=cortex-a53`; the QEMU target uses the generic `aarch64` scheme. QEMU builds convert to `/tmp/qemu.bin` and do not deploy to the RPi3 TFTP directory. This was tested through MCP with a successful QEMU build and conversion.
+- The QEMU virt image reaches the Asterinas banner and completes component initialization after the GIC/timer changes, but the current QEMU userspace console validation remains open: the initramfs unpacker does not support character-device entries, and the shell has not yet produced a reliable `/ #` prompt on serial.
 
 ## Durable RPi3 Constraints
 
@@ -118,12 +120,16 @@ The original logger failure was an EL1 synchronous abort in `spin::once::Once::t
 
 - The Windows TFTP server root is `D:/pi_sd/`, mapped in WSL2 as `/mnt/d/pi_sd/`. `/srv/tftp` is not used for RPi3 deployment; do not copy kernel or initramfs files there.
 - Physical verification sequence:
-  1. Build the AArch64 OSDK image.
-  2. Convert the ELF to `/tmp/asterina.img`.
-  3. Deploy it to `/mnt/d/pi_sd/asterina.img`.
+  1. Call `build_kernel_tool(target="rpi3")` through the build MCP.
+  2. Convert the ELF to `/tmp/asterina.img` with `convert_kernel_tool`.
+  3. Deploy it to `/mnt/d/pi_sd/asterina.img` with `deploy_kernel_tool`.
   4. Power off the board.
   5. Clear the serial buffer.
   6. Power on the board.
   7. Wait about 60 seconds, then read serial repeatedly until empty.
+- QEMU verification sequence:
+  1. Call `build_kernel_tool(target="qemu")` through the build MCP.
+  2. Convert the ELF to `/tmp/qemu.bin` with `convert_kernel_tool`.
+  3. Run QEMU with the raw kernel and an AArch64 initramfs; do not call `deploy_kernel_tool`.
 - Runtime evidence is authoritative. Do not promote a suspected boundary to a root cause without a reproducible observation and a toggle or equivalent causal proof.
 - Temporary UART probes, `early_print`/`pl011_puts`-style probes, and `.debug-journal.md` must not remain in the working tree after an investigation is complete.
