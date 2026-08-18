@@ -33,14 +33,14 @@
 
 - [x] A001 Re-enable `timer::init()` on RPi3 and wire the BCM2836 non-secure physical timer (CNTPNSIRQ, IRQ 30) through the existing `IrqLine`/`bcm2836_irq` path.
 - [x] A002 Validate `sleep`, `nanosleep`, and scheduler `Waiter` timeouts on RPi3 without the CNTPCT busy-wait workaround.
-- [ ] A003 Re-run 10 power-cycle boot baseline after the timer is enabled and confirm no intermittent hang.
+- [x] A003 Re-run 10 power-cycle boot baseline after the timer is enabled and confirm no intermittent hang. (10/10 cold-power `BOOT_OK` boots reached, no hang.)
 
 ### A1 — Documentation and issue reconciliation
 
-- [ ] A101 Compare `tasks.md`, `plan.md`, `research.md`, `quickstart.md`, and `known-issues.md` with `SESSION_CONTEXT.md` and remove stale v1.0 claims.
-- [ ] A102 Remove obsolete `/srv/tftp`, `kernel8.img` payload, compressed-initramfs, and temporary debug-marker instructions.
-- [ ] A103 Document the current RPi3 timer policy: the non-secure physical timer (CNTPNSIRQ, IRQ 30) is used for a 1000Hz tick; the virtual timer is not enabled.
-- [ ] A104 Add a repeatable v1.1 build/deploy/smoke-test checklist and evidence format.
+- [x] A101 Compare `tasks.md`, `plan.md`, `research.md`, `quickstart.md`, and `known-issues.md` with `SESSION_CONTEXT.md` and remove stale v1.0 claims.
+- [x] A102 Remove obsolete `/srv/tftp`, `kernel8.img` payload, compressed-initramfs, and temporary debug-marker instructions.
+- [x] A103 Document the current RPi3 timer policy: the non-secure physical timer (CNTPNSIRQ, IRQ 30) is used for a 1000Hz tick; the virtual timer is not enabled.
+- [x] A104 Add a repeatable v1.1 build/deploy/smoke-test checklist and evidence format.
 
 ### A2 — AArch64 stat ABI
 

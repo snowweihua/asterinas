@@ -114,11 +114,12 @@ The key mismatch: In Asterinas, `__pad0` is placed AFTER `st_rdev` (at offset 44
 
 Additionally, `st_size` is at offset 52 in Asterinas but offset 44 in Linux — an 8-byte discrepancy. When busybox writes `st_size` via the stat syscall, it writes to Linux's expected offset (44), but Asterinas reads from offset 52. The `st_size` read by busybox is actually `st_blksize` in Asterinas, which is likely garbage or zero.
 
-### Fix Approach
-Fix the `struct Stat` layout for AArch64 to match Linux's `arch/arm64/include/uapi/asm/stat.h`:
-1. Move `__pad0` before `st_rdev`
-2. Ensure `st_size` is at offset 44 (8-byte aligned after `st_rdev`)
-3. Remove `__pad1` if Linux doesn't have it (or place it correctly)
+### Resolution
+The AArch64 `Stat` layout in `kernel/src/syscall/stat.rs` was fixed and now:
+- Includes the glibc reserved tail to reach the full 128-byte struct size.
+- Places `__pad0` before `st_rdev` (offset 32) and `__pad1` before `st_size` as required.
+- Adds compile-time assertions for the Linux AArch64 offsets.
+`ls /bin` and `ls -la /` now return correctly on RPi3 hardware.
 
 ---
 
@@ -134,13 +135,12 @@ On AArch64, `reboot` typically invokes PSCI `SYSTEM_RESET` function (function ID
 
 The PSCI infrastructure already exists in `smp.rs` (`psci_call` function using `hvc #0`). The `PSCI_SYSTEM_OFF` function ID is `0x84000008` and `PSCI_SYSTEM_RESET` is `0x84000009`.
 
-### Fix Approach
-1. Create `kernel/src/syscall/reboot.rs` implementing `sys_reboot(cmd, arg)`:
-   - Map Linux reboot commands (`RB_POWER_OFF`, `RB_RESTART`, `RB_AUTOBOOT`) to PSCI calls
-   - `RB_AUTOBOOT` (0x1234567) and `RB_RESTART` (0x01234567) → PSCI `SYSTEM_RESET` (0x84000009)
-   - `RB_POWER_OFF` (0x4321fedc) → PSCI `SYSTEM_OFF` (0x84000008)
-2. Register in `mod.rs` and `arch/aarch64.rs` with syscall number 142
-3. On RPi3, PSCI calls go through the ARM Trusted Firmware (HVC), which handles reset correctly
+### Resolution
+Implemented in `kernel/src/syscall/reboot.rs` and registered in `kernel/src/syscall/mod.rs` and `arch/aarch64.rs` as syscall 142:
+- `RB_AUTOBOOT` (0x1234567) and `RB_RESTART` (0x01234567) → `psci_system_reset`.
+- `RB_POWER_OFF` (0x43211234) → `psci_system_off`.
+- On RPi3 the PSCI conduit is `smc #0` (not HVC) with function ID `0x8400_0009` for reset and `0x8400_0008` for power-off.
+- A static `/bin/reboot` helper is built into the AArch64 initramfs so `reboot -f` from the shell reliably reaches the syscall without dynamic busybox/glibc faults.
 
 ---
 
@@ -150,5 +150,5 @@ The PSCI infrastructure already exists in `smp.rs` (`psci_call` function using `
 |---|-------|------------------|----------|
 | 1 | First-boot D-cache coherency | `ostd/src/arch/aarch64/boot/boot.S` | Add `dc cvac` for initramfs region + `ic iallu` after MMU enable |
 | 2 | SMP AP never starts | `ostd/src/arch/aarch64/boot/smp_rpi3.rs`, `ap_boot.S` | Debug trace; verify spin-table reads; check BCM2836 mailbox IRQ |
-| 3 | stat struct layout | `kernel/src/syscall/stat.rs` | Fix AArch64 Stat struct: move `__pad0` before `st_rdev` |
-| 4 | reboot syscall missing | `kernel/src/syscall/reboot.rs` + mod.rs + aarch64.rs | Implement via PSCI SYSTEM_RESET |
+| 3 | stat struct layout | `kernel/src/syscall/stat.rs` | Fixed — correct AArch64 Stat layout with compile-time offset assertions |
+| 4 | reboot syscall missing | `kernel/src/syscall/reboot.rs` + mod.rs + aarch64.rs | Implemented — PSCI SYSTEM_RESET via `smc #0`; initramfs uses a static `/bin/reboot` helper |

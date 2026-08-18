@@ -6,7 +6,7 @@
 
 ## Summary
 
-Asterinas on RPi3 3B hardware boots to a shell prompt but suffers from first-boot reliability failures (D-cache coherency gap during CPIO extraction), `ls /bin` SIGSEGV (stat/lstat struct layout mismatch), broken SMP secondary core bringup (BCM2836 spin-table not working), and missing reboot syscall (169). This plan addresses all four issues plus documents remaining cleanup.
+Asterinas on RPi3 3B hardware boots to a shell prompt. `ls /bin` (stat ABI) and the `reboot` syscall are now fixed and hardware-validated. First-boot reliability is addressed by the corrected TFTP boot script (abort on failed transfers), `getrandom`/RNG, and a static `reboot -f` helper. SMP secondary core bringup remains the open Phase B item.
 
 ## Technical Context
 
@@ -39,7 +39,7 @@ Asterinas on RPi3 3B hardware boots to a shell prompt but suffers from first-boo
 | Principle | Status | Notes |
 |-----------|--------|-------|
 | I. Memory Safety Through Rust | ✅ PASS | All new code uses safe Rust; unsafe only in arch modules; cache maintenance via inline asm |
-| II. Linux ABI Compatibility | ⚠️ Needs resolution | stat struct `__pad0` placement wrong for AArch64; initial fix reverted due to userspace ABI regression — busybox binary expects wrong layout; see quickstart.md troubleshooting |
+| II. Linux ABI Compatibility | ✅ PASS | AArch64 `struct stat` layout now matches the Linux/glibc offsets (reserved tail, `__pad0` placement, compile-time assertions); `ls /bin` and `ls -la /` validated on RPi3 hardware |
 | III. Small and Sound TCB | ✅ PASS | No new TCB additions; existing arch modules only |
 | IV. AArch64 Architecture Support | ✅ PASS | Code lives in ostd/src/arch/aarch64/; CNTV timer, BCM2836 IRQ, PL011 UART already implemented |
 | V. Rigorous Testing and CI | ✅ PASS | Manual RPi3 hardware testing in quickstart.md; QEMU regression documented |
@@ -95,8 +95,8 @@ kernel/src/driver/mod.rs # Driver framework
 
 1. **D-cache coherency**: U-Boot uses cached DRAM writes; `dc cvac` + `ic iallu` needed before kernel parses initramfs (research.md §1)
 2. **BCM2836 SMP**: Two-phase spin-table protocol correct in code; AP never wakes — likely BCM2836 mailbox IRQ not reaching AP (research.md §2)
-3. **stat struct**: `__pad0` placed AFTER `st_rdev` in Asterinas vs BEFORE in Linux — shifts all fields by 12 bytes. Initial fix caused userspace ABI regression (stack smashing); fix reverted. The stat struct issue remains open and needs resolution. See quickstart.md troubleshooting.
-4. **reboot syscall**: Syscall 142 not mapped; needs new `reboot.rs` using PSCI `SYSTEM_RESET` (research.md §4)
+3. **stat struct**: Fixed in `kernel/src/syscall/stat.rs` — the AArch64 `Stat` layout now includes the glibc reserved tail, correct `__pad0` placement, and compile-time offset assertions. `ls /bin` and `ls -la /` are validated on RPi3 hardware.
+4. **reboot syscall**: Implemented in `kernel/src/syscall/reboot.rs` as AArch64 syscall 142. RPi3 reset uses PSCI `SYSTEM_RESET` via `smc #0` with `x0 = 0x8400_0009`; a static `/bin/reboot` helper in the initramfs makes `reboot -f` reliable from the shell.
 
 ---
 
@@ -121,5 +121,5 @@ No constitution violations requiring justification.
 |------|------------|--------------------------------------|
 | BCM2836 spin-table protocol | RPi3 doesn't support PSCI for SMP; hardware-level spin-table is the only way | No alternative — PSCI not available on RPi3 |
 | D-cache maintenance before initramfs parse | U-Boot uses cached DRAM writes; without explicit `dc cvac`, initramfs data may be stale when kernel reads it | Can't disable D-cache on U-Boot; would destroy performance |
-| AArch64 stat struct fix | Must match Linux kernel struct stat layout exactly, or musl busybox will read/write wrong offsets | No alternative — Linux ABI compatibility requires correct struct layout. NOTE: initial fix caused stack smashing regression and was reverted. The stat struct issue remains unresolved. |
+| AArch64 stat struct fix | Must match Linux kernel struct stat layout exactly, or musl busybox will read/write wrong offsets | No alternative — Linux ABI compatibility requires correct struct layout. NOTE: initial fix caused stack smashing regression and was reverted. Fixed and validated on RPi3. |
 | PSCI reboot | RPi3 has no PMIC; only way to reset is via ARM Trusted Firmware PSCI call | No alternative — hardware reset requires PSCI |

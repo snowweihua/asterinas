@@ -4,7 +4,7 @@
 
 1. **Hardware**: Raspberry Pi 3 Model B (BCM2837, not RPi 4)
 2. **SD card**: FAT-formatted with VideoCore firmware, U-Boot as `kernel8.img`, `config.txt`, `boot.scr`
-3. **TFTP server**: Running on host machine, serving `asterina.img` and `initramfs.cpio.gz`
+3. **TFTP server**: Running on the dev machine, serving `asterina.img` and the uncompressed `initramfs.cpio` from `D:/pi_sd/` (mapped as `/mnt/d/pi_sd/` in WSL2). Do not use `/srv/tftp`.
 4. **Serial console**: PL011 UART connection at 115200 baud, 8N1, to host `/dev/ttyUSB0`
 5. **Build tools**: Docker with Asterinas aarch64-dev image
 
@@ -24,10 +24,10 @@ docker run --rm -v $(pwd):/root/asterinas asterinas/aarch64-dev:latest bash -c \
 # or not in Docker, with deploy
 aarch64-linux-gnu-objcopy -O binary /home/snow/asterinas/target/aarch64-unknown-none-softfloat/release/aster-nix-osdk-bin /mnt/d/pi_sd/asterina.img
 
-# 3. Deploy to TFTP root (rename to initramfs.cpio.gz — boot.cmd TFTP command expects this name)
+# 3. Deploy to the TFTP root on the dev machine
 cp target/osdk/aster-nix/asterina.img /mnt/d/pi_sd/
-# if initramfs is updated then
-cp test/build/aarch64-shell-initramfs.cpio.gz /mnt/d/pi_sd/initramfs.cpio.gz
+# if the AArch64 initramfs is updated then
+cp test/build/initramfs.cpio /mnt/d/pi_sd/initramfs.cpio
 ```
 
 ## Power
@@ -62,6 +62,26 @@ stty -F /dev/ttyUSB0 115200 raw -echo 2>/dev/null; cat /dev/ttyUSB0 &
 ```
 
 Note: The `/ #` shell prompt is the **correct and expected result**. If the kernel reaches `/ #` without crashing or hanging, the boot is successful. If QEMU exits immediately (exit code 0) without reaching `/ #`, the initramfs may be the wrong architecture (x86-64 instead of AArch64).
+
+## RPi3 Timer Policy
+
+- The RPi3 v1.1 bring-up uses the **BCM2836 non-secure physical timer** (`CNTPNSIRQ`, routed to ARM local IRQ 30) for a 1000 Hz periodic tick.
+- The virtual timer (`CNTV_*`) is **not** enabled on RPi3; it is handled by the QEMU `virt` path instead.
+- The driver lives in `ostd/src/arch/aarch64/timer/mod.rs` and the IRQ routing in `ostd/src/arch/aarch64/bcm2836_irq.rs`.
+- `sleep 1` and scheduler `Waiter` timeouts are validated; do not re-enable the virtual timer for RPi3 until it is separately tested.
+
+## v1.1 Build / Deploy / Smoke-Test Checklist
+
+1. Build the AArch64 kernel and uncompressed AArch64 initramfs.
+2. Convert `target/osdk/aster-nix/aster-nix-osdk-bin.qemu_elf` → `asterina.img` (raw AArch64 binary for `booti`).
+3. Copy `asterina.img` and `test/build/initramfs.cpio` to `/mnt/d/pi_sd/` (the Windows TFTP root). Do not use `/srv/tftp`.
+4. Ensure `boot.scr` on the SD card aborts and resets on any TFTP failure instead of booting stale data.
+5. Power off the board, clear the serial buffer, power on, wait 140–150 s, and read serial until empty.
+6. Record outcomes:
+   - TFTP success/failure separately from kernel/user-space failure.
+   - `/ #` prompt reached or hang point.
+   - Shell commands: `echo hello`, `sleep 1`, `ls /bin`, `reboot -f`.
+   - 10-cycle power baseline pass/fail count.
 
 ## Test Scenarios
 
@@ -106,12 +126,13 @@ qemu-system-aarch64 \
   -machine virt -cpu cortex-a72 -smp 1 -m 512M \
   -kernel target/osdk/aster-nix/aster-nix-osdk-bin.qemu_elf \
   -dtb test/nix/aarch64-virt.dtb \
-  -device loader,file=test/build/virt-init.dtb,addr=0x47000000,force-raw=on \
-  -device loader,file=test/build/aarch64-shell-initramfs.cpio.gz,addr=0x48000000,force-raw=on \
+  -device loader,file=test/build/virt-2cpu-initrd.dtb,addr=0x47000000,force-raw=on \
+  -device loader,file=test/build/initramfs.cpio,addr=0x48000000,force-raw=on \
   -append "console=ttyAMA0" -nographic -display none
 
 # Expected: / # shell prompt within 60 seconds
-# NOTE: Always use aarch64-shell-initramfs.cpio.gz — init.cpio.gz is x86-64 and causes silent hang
+# NOTE: Use the uncompressed AArch64 initramfs (initramfs.cpio); the old
+#       aarch64-shell-initramfs.cpio.gz path is obsolete.
 ```
 
 ## Troubleshooting
@@ -119,9 +140,9 @@ qemu-system-aarch64 \
 | Symptom | Likely Cause |
 |---------|-------------|
 | No serial output after power-on | U-Boot not loading; check SD card, config.txt |
-| Boot hangs at `[kt1] init in first kthread` | Using wrong initramfs (x86-64 instead of AArch64); for QEMU use `aarch64-shell-initramfs.cpio.gz`; for RPi3 TFTP ensure `initramfs.cpio.gz` is the AArch64 build |
-| `ls /bin` causes SIGSEGV | stat struct layout mismatch (FR-002); NOTE: fix was reverted due to userspace ABI regression — see plan.md |
-| Reboot hangs | reboot syscall not implemented (was syscall 88, now implemented in commit 5e2313ba) |
+| Boot hangs at `[kt1] init in first kthread` | Using wrong initramfs (x86-64 instead of AArch64); for QEMU use the uncompressed AArch64 `initramfs.cpio`; for RPi3 TFTP ensure `initramfs.cpio` is the AArch64 build. Also verify `boot.scr` aborts on TFTP errors |
+| `ls /bin` causes SIGSEGV | AArch64 `struct stat` layout mismatch — now fixed in `kernel/src/syscall/stat.rs` with compile-time offset assertions; rebuild and redeploy the AArch64 initramfs |
+| `reboot -f` returns to prompt or segfaults | Use the static `/bin/reboot` helper in the AArch64 initramfs; the dynamic busybox `reboot -f` applet is not reliable on RPi3. Plain `reboot` (no `-f`) requires PID1 shutdown support |
 | APs not coming online | BCM2836 spin-table SMP issue (FR-006) |
 
 ## Further Documentation

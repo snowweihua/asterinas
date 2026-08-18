@@ -16,10 +16,10 @@
 #   - Compile: mkimage -A arm64 -O linux -T script -C none -a 0 -e 0 \
 #                -n "Asterinas RPi3 boot" -d boot.cmd boot.scr
 #
-# TFTP server setup (on dev machine):
-#   sudo apt-get install tftpd-hpa
-#   sudo cp asterina.img /srv/tftp/
-#   # DHCP server should set option 66 to dev machine IP, or edit serverip below
+# Deployment (on dev machine):
+#   - The Windows TFTP root is D:/pi_sd/, mapped in WSL2 as /mnt/d/pi_sd/.
+#   - Copy asterina.img and initramfs.cpio to /mnt/d/pi_sd/ (do NOT use /srv/tftp).
+#   - DHCP option 66 can point to the dev machine, or edit serverip below.
 
 echo "Asterinas RPi3 U-Boot boot script starting..."
 
