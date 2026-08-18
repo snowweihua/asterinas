@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""MCP server for building and deploying Asterinas kernel for RPi3.
+"""MCP server for building and deploying the Asterinas AArch64 kernel.
 
 Run directly as a script (uses stdio protocol):
   python3 -m build_mcp.server
@@ -63,10 +63,12 @@ WORKSPACE = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 DEFAULT_DEPLOY_PATH = "/mnt/d/pi_sd/asterina.img"
 DEFAULT_ELF_PATH = os.path.join(WORKSPACE, "target/osdk/aster-nix/aster-nix-osdk-bin.qemu_elf")
 DEFAULT_RAW_PATH = "/tmp/asterina.img"
+DEFAULT_QEMU_RAW_PATH = "/tmp/qemu.bin"
 DOCKER_IMAGE = "asterinas/aarch64-dev:latest"
 LOG_FILE = "/home/snow/asterinas/tools/logs/build_mcp.log"
+VALID_TARGETS = {"rpi3", "qemu"}
 
-build_result = {"status": "idle", "result": None}
+build_result = {"status": "idle", "result": None, "target": None}
 build_lock = threading.Lock()
 
 
@@ -81,20 +83,36 @@ log("=== Build MCP server starting ===")
 
 BUILD_OUTPUT_FILE = "/home/snow/asterinas/tools/logs/build_output.log"
 
-def do_build_kernel():
+def _validate_target(target: str) -> str:
+    t = target.lower().strip()
+    if t not in VALID_TARGETS:
+        raise ValueError(f"unknown target '{target}'; supported: {sorted(VALID_TARGETS)}")
+    return t
+
+
+def do_build_kernel(target: str):
     """Run the Dockerised cargo build in background thread."""
     global build_result
-    env = dict(os.environ, RUSTFLAGS="-C target-cpu=cortex-a53")
+
+    target = _validate_target(target)
+    if target == "rpi3":
+        rustflags = "-C target-cpu=cortex-a53"
+        scheme = "aarch64-rpi3"
+    else:
+        rustflags = ""
+        scheme = "aarch64"
+
+    env = dict(os.environ, RUSTFLAGS=rustflags)
     cmd = (
-        f"docker run --rm -v {WORKSPACE}:/root/asterinas -e RUSTFLAGS='-C target-cpu=cortex-a53' {DOCKER_IMAGE} bash -c "
-        f"'cd /root/asterinas && cargo osdk build --release --target-arch aarch64 --boot-method qemu-direct --scheme aarch64-rpi3'"
+        f"docker run --rm -v {WORKSPACE}:/root/asterinas -e RUSTFLAGS='{rustflags}' {DOCKER_IMAGE} bash -c "
+        f"'cd /root/asterinas && cargo osdk build --release --target-arch aarch64 --boot-method qemu-direct --scheme {scheme}'"
     )
     start = time.time()
     result = None
     try:
         r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=3600)
         elapsed = time.time() - start
-        full_output = f"=== Build Output (elapsed: {elapsed:.0f}s, exit: {r.returncode}) ===\n"
+        full_output = f"=== Build Output (target={target}, elapsed: {elapsed:.0f}s, exit: {r.returncode}) ===\n"
         full_output += f"=== stderr ===\n{r.stderr}\n=== stdout ===\n{r.stdout}\n"
         os.makedirs(os.path.dirname(BUILD_OUTPUT_FILE), exist_ok=True)
         with open(BUILD_OUTPUT_FILE, "w", encoding="utf-8") as f:
@@ -102,23 +120,23 @@ def do_build_kernel():
         if r.returncode != 0:
             stderr_tail = r.stderr[-3000:] if len(r.stderr) > 3000 else r.stderr
             stdout_tail = r.stdout[-3000:] if len(r.stdout) > 3000 else r.stdout
-            result = (f"BUILD FAILED (exit={r.returncode}, {elapsed:.0f}s)\n"
+            result = (f"BUILD FAILED (target={target}, exit={r.returncode}, {elapsed:.0f}s)\n"
                     f"Full output saved to: {BUILD_OUTPUT_FILE}\n"
                     f"stderr (last 3000 chars):\n{stderr_tail}\n\nstdout (last 3000 chars):\n{stdout_tail}")
         else:
-            result = f"BUILD OK ({elapsed:.0f}s)\n{r.stdout[-3000:]}"
+            result = f"BUILD OK (target={target}, {elapsed:.0f}s)\n{r.stdout[-3000:]}"
     except subprocess.TimeoutExpired:
-        result = "BUILD FAILED: timeout after 3600s"
+        result = f"BUILD FAILED (target={target}): timeout after 3600s"
     except Exception as e:
-        result = f"BUILD FAILED: exception {e}\n{traceback.format_exc()}"
+        result = f"BUILD FAILED (target={target}): exception {e}\n{traceback.format_exc()}"
     finally:
         with build_lock:
-            build_result = {"status": "done", "result": result}
-        log(f"do_build_kernel: completed with status={build_result['status']}")
+            build_result = {"status": "done", "result": result, "target": target}
+        log(f"do_build_kernel: completed target={target} status={build_result['status']}")
 
 
 def convert_kernel(src: str = None, dst: str = None) -> str:
-    """objcopy ELF → raw binary."""
+    """objcopy ELF -> raw binary."""
     if src is None:
         src = DEFAULT_ELF_PATH
     if dst is None:
@@ -141,7 +159,7 @@ def convert_kernel(src: str = None, dst: str = None) -> str:
         return "ERROR: objcopy produced no output"
     shutil.move(tmp, dst)
     sz = os.path.getsize(dst)
-    return f"CONVERT OK: {sz} bytes → {dst}"
+    return f"CONVERT OK: {sz} bytes -> {dst}"
 
 
 def deploy(raw_path: str = None, deploy_path: str = None) -> str:
@@ -154,37 +172,43 @@ def deploy(raw_path: str = None, deploy_path: str = None) -> str:
         return f"ERROR: raw binary not found: {raw_path} (run convert first)"
     shutil.copy2(raw_path, deploy_path)
     sz = os.path.getsize(deploy_path)
-    return f"DEPLOY OK: {sz} bytes → {deploy_path}"
+    return f"DEPLOY OK: {sz} bytes -> {deploy_path}"
 
 
 mcp = FastMCP(
     name="Build MCP",
-    instructions="MCP server for building and deploying Asterinas kernel for RPi3. Provides tools: build_kernel, convert_kernel, deploy_kernel, build_and_deploy.",
+    instructions="MCP server for building and deploying the Asterinas AArch64 kernel for RPi3 and QEMU virt. Provides tools: build_kernel, convert_kernel, deploy_kernel, build_and_deploy.",
 )
 
 
 @mcp.tool
-def build_kernel_tool() -> str:
+def build_kernel_tool(target: str = "rpi3") -> str:
     """Run 'cargo osdk build --release' for aarch64 inside Docker. Takes 2-5 minutes.
 
+    `target` must be 'rpi3' or 'qemu'.
     If a build is already running, returns its status. Poll this tool repeatedly to get the result.
     """
     global build_result
 
+    try:
+        target = _validate_target(target)
+    except ValueError as e:
+        return f"ERROR: {e}"
+
     with build_lock:
         if build_result["status"] == "running":
-            return "BUILD IN PROGRESS (check again in ~30s)"
+            return f"BUILD IN PROGRESS for {build_result['target']} (check again in ~30s)"
         elif build_result["status"] == "done":
             result = build_result["result"]
-            build_result = {"status": "idle", "result": None}
+            build_result = {"status": "idle", "result": None, "target": None}
             return result
 
-    log("build_kernel_tool: starting background build")
+    log(f"build_kernel_tool: starting background build for target={target}")
     with build_lock:
-        build_result = {"status": "running", "result": None}
+        build_result = {"status": "running", "result": None, "target": target}
 
-    threading.Thread(target=do_build_kernel, daemon=True).start()
-    return "BUILD STARTED (check again in ~30s for result)"
+    threading.Thread(target=do_build_kernel, args=(target,), daemon=True).start()
+    return f"BUILD STARTED for {target} (check again in ~30s for result)"
 
 
 @mcp.tool
@@ -198,7 +222,7 @@ def convert_kernel_tool(source_elf: str = DEFAULT_ELF_PATH, output_img: str = DE
 
 @mcp.tool
 def deploy_kernel_tool(source_img: str = DEFAULT_RAW_PATH, deploy_path: str = DEFAULT_DEPLOY_PATH) -> str:
-    """Copy raw binary to SD card mount point."""
+    """Copy raw binary to SD card mount point (RPi3)."""
     log(f"deploy_kernel_tool called")
     result = deploy(source_img, deploy_path)
     log(f"deploy_kernel_tool result: {result[:100]}")
@@ -206,17 +230,28 @@ def deploy_kernel_tool(source_img: str = DEFAULT_RAW_PATH, deploy_path: str = DE
 
 
 @mcp.tool
-def build_and_deploy_tool(deploy_path: str = DEFAULT_DEPLOY_PATH) -> str:
-    """Build → convert → deploy. WARNING: May take 5-10 minutes. Use build_kernel_tool first."""
+def build_and_deploy_tool(target: str = "rpi3", deploy_path: str = DEFAULT_DEPLOY_PATH) -> str:
+    """Build -> convert -> deploy. WARNING: May take 5-10 minutes. Use build_kernel_tool first.
+
+    `target` must be 'rpi3' (builds for RPi3 and deploys) or 'qemu' (builds for QEMU, converts only).
+    """
     log("build_and_deploy_tool called")
-    text = build_kernel_tool()
+    try:
+        target = _validate_target(target)
+    except ValueError as e:
+        return f"ERROR: {e}"
+
+    text = build_kernel_tool(target=target)
     if "IN PROGRESS" in text:
         return text
     if "STARTED" in text:
-        return "BUILD STARTED - check build_kernel_tool for result, then use convert_kernel_tool and deploy_kernel_tool separately"
+        return f"BUILD STARTED for {target} - check build_kernel_tool for result, then use convert_kernel_tool and deploy_kernel_tool separately"
     if "BUILD OK" in text:
-        text += "\n---\n" + convert_kernel()
-        text += "\n---\n" + deploy(deploy_path=deploy_path)
+        if target == "qemu":
+            text += "\n---\n" + convert_kernel(dst=DEFAULT_QEMU_RAW_PATH)
+        else:
+            text += "\n---\n" + convert_kernel()
+            text += "\n---\n" + deploy(deploy_path=deploy_path)
     log(f"build_and_deploy_tool result: {text[:200]}")
     return text
 
