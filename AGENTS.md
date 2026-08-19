@@ -49,6 +49,7 @@ For opencode, MCP servers are registered in `.opencode/opencode.json` and for De
 | Server | Tools |
 |--------|-------|
 | build | `build_kernel_tool`, `convert_kernel_tool`, `deploy_kernel_tool`, `build_and_deploy_tool` |
+| qemu-test | `qemu_start_tool`, `qemu_read_serial_tool`, `qemu_write_serial_tool`, `qemu_run_tool`, `qemu_stop_tool` |
 | power | `power_on_tool`, `power_off_tool`, `power_status_tool` |
 | serial | `serial_read`, `serial_write`, `serial_wait`, `serial_clear`, `serial_capture`, `serial_is_open`, `serial_reconnect` |
 
