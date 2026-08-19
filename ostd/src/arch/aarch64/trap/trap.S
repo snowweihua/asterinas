@@ -137,8 +137,10 @@ sync_lower_64_\el:
     b __el0_exception_handler
 .balign 0x80
 irq_lower_64_\el:
-    str  x0, [sp, #112]
-    b __el0_exception_handler
+    save_volatile_to_stack el1
+    bl   irq_lower
+    restore_volatile_from_stack el1
+    eret
 .balign 0x80
 fiq_lower_64_\el:
     str  x0, [sp, #112]
