@@ -35,7 +35,7 @@ def _append_output(data: bytes) -> None:
 def _reader(proc: subprocess.Popen[bytes]) -> None:
     assert proc.stdout is not None
     while True:
-        data = proc.stdout.read(4096)
+        data = os.read(proc.stdout.fileno(), 4096)
         if not data:
             break
         _append_output(data)
