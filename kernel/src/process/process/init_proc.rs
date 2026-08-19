@@ -72,7 +72,6 @@ fn create_init_process(
         envp,
     )?;
     init_proc.tasks().lock().insert(init_task).unwrap();
-
     Ok(init_proc)
 }
 
@@ -107,8 +106,7 @@ fn create_init_task(
         let program_to_load =
             ProgramToLoad::build_from_file(elf_file, &fs_resolver, argv, envp, 1)?;
         process_vm.clear_and_map();
-        let r = program_to_load.load_to_vm(process_vm, &fs_resolver)?;
-        r
+        program_to_load.load_to_vm(process_vm, &fs_resolver)?
     };
 
     let mut user_ctx = UserContext::default();
@@ -120,5 +118,5 @@ fn create_init_task(
         .process(process)
         .fs(Arc::new(fs))
         .is_init_process();
-    Ok(thread_builder.build())
+    thread_builder.build()
 }

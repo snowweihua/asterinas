@@ -71,10 +71,10 @@ pub(super) unsafe fn init() {
         timer_irq
     });
 
-    if crate::arch::is_rpi3() {
-        // SAFETY: `init()` is called once, before any use of the function pointer.
-        unsafe { SET_NEXT_TIMER_FN = set_next_timer_arch_rpi3 };
-    }
+    // Use RPi3-style relative timer for both RPi3 and QEMU, as the relative
+    // timer is more robust against timing issues in virtualized environments.
+    // SAFETY: `init()` is called once, before any use of the function pointer.
+    unsafe { SET_NEXT_TIMER_FN = set_next_timer_arch_rpi3 };
 
     set_next_timer();
 
