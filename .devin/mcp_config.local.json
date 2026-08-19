@@ -1,0 +1,24 @@
+{
+  "mcpServers": {
+    "build": {
+      "command": "bash",
+      "args": ["-c", "cd /home/snow/asterinas/tools && python3 -m build_mcp.server"],
+      "transport": "stdio"
+    },
+    "qemu-test": {
+      "command": "bash",
+      "args": ["-c", "cd /home/snow/asterinas/tools && python3 -m qemu_mcp.server"],
+      "transport": "stdio"
+    },
+    "power": {
+      "command": "python3",
+      "args": ["/home/snow/asterinas/tools/tcp_client.py", "--host", "172.19.96.1", "--port", "9001"],
+      "transport": "stdio"
+    },
+    "serial": {
+      "command": "python3",
+      "args": ["/home/snow/asterinas/tools/tcp_client.py", "--host", "172.19.96.1", "--port", "9002"],
+      "transport": "stdio"
+    }
+  }
+}
