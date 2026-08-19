@@ -521,7 +521,9 @@ boot_l3pt_linear:
 boot_l2pt_gb0:
     .set _mb2, 0
     .rept 512
-    .if _mb2 == 0x09000000
+    .if _mb2 == 0x08000000
+    .quad ( PTE_DEVICE_2M | _mb2 )          /* QEMU GIC */
+    .elseif _mb2 == 0x09000000
     .quad ( PTE_DEVICE_2M | _mb2 )          /* QEMU UART */
     .elseif _mb2 >= 0x3B400000 && _mb2 < 0x3F000000
     .quad 0                                  /* gap – no physical memory */

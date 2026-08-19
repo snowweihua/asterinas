@@ -14,6 +14,11 @@ use spin::{Mutex, Once};
 const QEMU_VIRT_GICD_BASE: usize = 0x0800_0000;
 const QEMU_VIRT_GICC_BASE: usize = 0x0801_0000;
 
+#[inline]
+fn gicc_base_va() -> usize {
+    crate::mm::kspace::paddr_to_vaddr(QEMU_VIRT_GICC_BASE)
+}
+
 static GIC: Once<Mutex<GicV2<'static>>> = Once::new();
 
 fn irq_num_to_intid(irq_num: u8) -> IntId {
@@ -53,7 +58,7 @@ pub(crate) unsafe fn init_on_bsp() {
                 );
                 core::ptr::write_volatile(
                     (QEMU_VIRT_GICC_BASE) as *mut u32,
-                    0b101,
+                    0b111,
                 );
             }
             Mutex::new(gic)
@@ -96,7 +101,7 @@ pub(crate) fn acknowledge_interrupt() -> Option<usize> {
     }
     // Use the banked GICC_IAR so we can acknowledge both Group 0 and Group 1
     // interrupts (the arm-gic crate only reads GICC_AIAR, which is Group 1).
-    let raw = unsafe { core::ptr::read_volatile((QEMU_VIRT_GICC_BASE + 0x0c) as *const u32) };
+    let raw = unsafe { core::ptr::read_volatile((gicc_base_va() + 0x0c) as *const u32) };
     if raw == 1023 {
         None
     } else {
@@ -116,7 +121,7 @@ pub(crate) fn end_interrupt(irq_num: usize) {
     // Drop the GICC_IAR pending priority by writing GICC_EOIR.
     unsafe {
         core::ptr::write_volatile(
-            (QEMU_VIRT_GICC_BASE + 0x10) as *mut u32,
+            (gicc_base_va() + 0x10) as *mut u32,
             irq_num as u32,
         );
     }
