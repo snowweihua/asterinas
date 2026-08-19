@@ -55,9 +55,9 @@ fn parse_kernel_commandline() -> &'static str {
 }
 
 /// Hardcoded initramfs location used by QEMU virt.
-// initramfs_with_init.cpio: 44041728 bytes = 0x2a00600
+// test/build/initramfs.cpio: 44051456 bytes = 0x2a02c00
 const QEMU_INITRAMFS_START: usize = 0x5800_0000;
-const QEMU_INITRAMFS_END: usize = 0x5aa0_0600;
+const QEMU_INITRAMFS_END: usize = 0x5aa0_2c00;
 
 fn parse_initramfs() -> Option<&'static [u8]> {
     if crate::arch::board::BoardType::cached() != 2 {
