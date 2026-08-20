@@ -203,22 +203,22 @@ fn match_and_call(
     debug!("Remain components:{components:?}");
 
     if !components.is_empty() {
-        debug!("Exists components that are not initialized");
+        info!("Exists components that are not initialized");
     }
 
     infos.sort();
     debug!("component infos: {infos:?}");
-    debug!("Components initializing in {stage:?} stage...");
+    info!("Components initializing in {stage:?} stage...");
 
     for i in infos {
-        debug!("Component initializing:{:?}", i);
+        info!("Component initializing:{:?}", i);
         if let Err(res) = i.function.unwrap().call(()) {
             error!("Component initialize error:{:?}", res);
         } else {
-            debug!("Component initialize complete");
+            info!("Component initialize complete");
         }
     }
-    debug!("All components initialization in {stage:?} stage completed");
+    info!("All components initialization in {stage:?} stage completed");
     Ok(())
 }
 

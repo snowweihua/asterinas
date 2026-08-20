@@ -77,6 +77,8 @@ pub(super) unsafe fn init() {
     unsafe { SET_NEXT_TIMER_FN = set_next_timer_arch_rpi3 };
 
     set_next_timer();
+
+    crate::early_println!("[timer] init done, freq={}", timebase_freq);
 }
 
 fn timer_callback(trapframe: &TrapFrame) {
