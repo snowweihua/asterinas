@@ -1,6 +1,6 @@
 # Tasks: AArch64 RPi3 v1.1
 
-**Baseline**: `aarch64_v1.0.0` — verified RPi3 shell boot, working shell command execution, and 10/10 clean power-cycle boots.
+**Baseline**: `aarch64_v1.0.1` — verified RPi3 shell boot, working shell command execution, and 10/10 clean power-cycle boots. QEMU now also boots to shell and `ls` works after the relative timer fix.
 
 **Execution order**: Phase A → Phase B → Phase C. Do not enable SMP until the single-core baseline remains reproducible.
 
@@ -10,7 +10,7 @@
 
 ---
 
-## Baseline — v1.0.0 evidence
+## Baseline — v1.0.0 / v1.0.1 evidence
 
 - [x] B001 Build and deploy the current AArch64 kernel and initramfs.
 - [x] B002 Boot the RPi3 to an interactive `~ #` shell.
@@ -22,6 +22,8 @@
 - [x] B008 Disable RPi3 virtual timer initialization and use `SimpleOnce` for the AArch64 timer singleton.
 - [x] B009 Run 10 full power cycles; all 10 reached `~ #`.
 - [x] B010 Create tag `aarch64_v1.0.0`.
+- [x] B011 Fix QEMU init hang by using RPi3-style relative timer (`cntp_tval_el0`) instead of absolute compare timer (`cntp_cval_el0`). QEMU now boots to shell and `ls` works.
+- [x] B012 Create tag `aarch64_v1.0.1`.
 
 ---
 
@@ -66,7 +68,7 @@
 
 ### A5 — QEMU and code gates
 
-- [ ] A501 Run the documented AArch64 virt boot with the correct AArch64 initramfs and verify `/ #` (attempted: stale initramfs and patched DTB, QEMU produced no serial output; needs fresh Nix initramfs and a regenerated DTB with matching initrd-end).
+- [x] A501 Run the documented AArch64 virt boot with the correct AArch64 initramfs and verify `/ #` — QEMU now boots to shell and `ls` works after using RPi3-style relative timer (`cntp_tval_el0`) instead of absolute compare timer (`cntp_cval_el0`).
 - [ ] A502 Run affected crate checks/tests and `./tools/format_all.sh --check` (attempted: `format_all.sh --check` reported many pre-existing rustfmt diffs across the tree).
 - [ ] A503 Establish a pre-merge gate covering QEMU boot, RPi3 shell smoke tests, TFTP validation, and no stale deployment paths.
 
