@@ -175,8 +175,22 @@ fn wait_for_all_aps_started(num_cpus: usize) {
         HW_CPU_ID_MAP.lock().len() == num_cpus
     }
 
+    const TIMEOUT_ITERATIONS: usize = 500000;
+    let mut iterations = 0;
+
     while !is_all_aps_started(num_cpus) {
+        iterations += 1;
+        if iterations > TIMEOUT_ITERATIONS {
+            log::warn!("[a2-smp] TIMEOUT: waiting for {} CPUs, only {} online after ~{} iterations",
+                num_cpus, HW_CPU_ID_MAP.lock().len(), TIMEOUT_ITERATIONS);
+            break;
+        }
         core::hint::spin_loop();
+    }
+
+    let online = HW_CPU_ID_MAP.lock().len();
+    if online < num_cpus {
+        log::warn!("[a2-smp] Only {}/{} CPUs online", online, num_cpus);
     }
 }
 

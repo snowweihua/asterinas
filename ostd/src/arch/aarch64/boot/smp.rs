@@ -65,15 +65,15 @@ fn psci_call(function_id: u64, arg0: u64, arg1: u64, arg2: u64) -> u64 {
 }
 
 pub(crate) unsafe fn bringup_all_aps(info_ptr: *const PerApRawInfo, pt_ptr: Paddr, num_cpus: u32) {
-
+    log::info!("[a2-smp] PSCI: START bringup_all_aps num_cpus={}", num_cpus);
 
     let ap_entry_paddr = ap_boot_entry as usize as u64;
+    log::info!("[a2-smp] PSCI: ap_entry_paddr=0x{:016x}", ap_entry_paddr);
 
     unsafe {
         __ap_boot_info_array_pointer = info_ptr;
         __boot_page_table_pointer = pt_ptr as u64;
     }
-
 
     for cpu_id in 1..num_cpus {
         let mpidr = get_mpidr(cpu_id);
@@ -81,11 +81,16 @@ pub(crate) unsafe fn bringup_all_aps(info_ptr: *const PerApRawInfo, pt_ptr: Padd
 
         let stack_top = info.stack_top as u64;
 
+        log::info!("[a2-smp] PSCI: calling CPU_ON cpu_id={} mpidr=0x{:016x}", cpu_id, mpidr);
+
         let result = psci_call(PSCI_CPU_ON, mpidr, ap_entry_paddr, stack_top);
+
+        log::info!("[a2-smp] PSCI: cpu_id={} result=0x{:016x}", cpu_id, result);
 
         if result != PSCI_SUCCESS {
             log::warn!("PSCI CPU_ON for CPU {} returned {:x}", cpu_id, result);
         }
     }
 
+    log::info!("[a2-smp] PSCI: DONE bringup_all_aps");
 }

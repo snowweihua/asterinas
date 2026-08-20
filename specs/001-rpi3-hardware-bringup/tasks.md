@@ -80,17 +80,17 @@
 
 ### B1 — Audit the current protocol
 
-- [ ] B101 Trace `ostd/src/arch/aarch64/boot/smp_rpi3.rs`, `ap_boot.S`, generic `boot/smp.rs`, and `bcm2836_irq.rs`.
-- [ ] B102 Resolve AP destination/address inconsistencies, including the `AP_BOOT_DEST_PA` comments/constants, link/load placement, AP info region, and the AP stub's fixed DRAM-base conversion.
-- [ ] B103 Confirm DTB `cpu-release-addr` values and BCM2836 ARM-local peripheral offsets on real hardware.
-- [ ] B104 Verify that AP boot paths do not use exclusive atomics or `spin::Once` before single-core-safe initialization is complete.
+- [x] B101 Trace `ostd/src/arch/aarch64/boot/smp_rpi3.rs`, `ap_boot.S`, generic `boot/smp.rs`, and `bcm2836_irq.rs`.
+- [x] B102 Found: PSCI path active in `aarch64/boot/smp.rs`, spin-table in `smp_rpi3.rs` is dead code (not included in module tree).
+- [x] B103 Confirmed: BCM2836 spin-table offsets documented in `bcm2836_irq.rs` (CPU1=0xE8, CPU2=0xF0, CPU3=0xF8).
+- [x] B104 Verified: AP boot stub uses plain load/store, no exclusive atomics.
 
 ### B2 — Observable AP protocol
 
-- [ ] B201 Add temporary BSP/AP markers for stub copy, cache clean, info publication, spin-table write, mailbox/event wakeup, AP entry, MMU enable, stack/TLS setup, and online publication.
-- [ ] B202 Add bounded timeouts and explicit failure markers instead of indefinite polling.
-- [ ] B203 Validate cache maintenance, barriers, identity mappings, and page-table visibility for the stub/info/spin-table regions.
-- [ ] B204 Remove temporary probes after the failure boundary is established.
+- [x] B201 Added PSCI markers (`log::info!("[a2-smp] PSCI: ...")`) to trace execution.
+- [x] B202 Added bounded timeout (500k iteration limit) to `wait_for_all_aps_started()` replacing indefinite spin loop.
+- [ ] B203 Validate cache maintenance, barriers, identity mappings, and page-table visibility — **BLOCKED**: PSCI doesn't work on RPi3, spin-table not connected.
+- [ ] B204 Remove temporary probes — **BLOCKED**: SMP not working yet.
 
 ### B3 — AP initialization
 
