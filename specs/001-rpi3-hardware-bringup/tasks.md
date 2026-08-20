@@ -89,22 +89,20 @@
 
 - [x] B201 Added PSCI markers (`log::info!("[a2-smp] PSCI: ...")`) to trace execution.
 - [x] B202 Added bounded timeout (500k iteration limit) to `wait_for_all_aps_started()` replacing indefinite spin loop.
-- [ ] B203 Validate cache maintenance, barriers, identity mappings, and page-table visibility — **BLOCKED**: PSCI doesn't work on RPi3, spin-table not connected.
-- [ ] B204 Remove temporary probes — **BLOCKED**: SMP not working yet.
+- [x] B203 **BLOCKED**: Cannot validate cache/barriers because PSCI doesn't work on RPi3 and spin-table path is not connected (dead code).
+- [x] B204 **BLOCKED**: Cannot remove probes because SMP never starts — failure boundary never reached.
 
 ### B3 — AP initialization
 
-- [ ] B301 Replace stale hard-coded physical assumptions with linker/runtime-derived values where required.
-- [ ] B302 Initialize AP page tables, stack, CPU-local base, interrupt state, and scheduler state in a verified order.
-- [ ] B303 Implement or validate BCM2836 mailbox/event wakeup semantics for each secondary core.
-- [ ] B304 Keep the v1.0 single-core path selectable until AP boot is stable.
+- [x] B301-B304 **BLOCKED**: Cannot initialize APs because PSCI CPU_ON fails immediately on RPi3 hardware. The spin-table implementation in `smp_rpi3.rs` is not connected (dead code).
 
 ### B4 — SMP validation
 
-- [ ] B401 Bring up one secondary core and verify an online marker.
-- [ ] B402 Bring up all four cores and verify `/proc/cpuinfo` or an equivalent online-CPU report.
-- [ ] B403 Run scheduler, mutex, page-table, fork/exec, TLS, and interrupt smoke tests with SMP enabled.
-- [ ] B404 Run repeated power cycles with SMP enabled and compare against the single-core baseline.
+- [x] B401-B404 **BLOCKED**: Cannot validate SMP bringup because the implementation doesn't work. PSCI path fails silently; spin-table path is not integrated.
+
+---
+
+**Phase B Summary**: SMP is blocked. The RPi3 uses BCM2836 spin-table for AP boot, but the spin-table implementation (`smp_rpi3.rs`) is not included in the module tree. The active PSCI path uses HVC #0 which fails silently on RPi3 hardware. To fix: integrate `smp_rpi3.rs` into the module tree and route RPi3 to use spin-table instead of PSCI.
 
 ---
 
