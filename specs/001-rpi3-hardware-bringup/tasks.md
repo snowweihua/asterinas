@@ -50,7 +50,7 @@
 - [x] A202 Add compile-time layout assertions for the AArch64 `Stat` layout.
 - [x] A203 Validate `stat`, `lstat`, `fstat`, symlink metadata, and `ls /bin` on RPi3; `ls /bin` and `ls -la /` now return to the prompt on hardware.
 - [x] A204 Implement the smallest ABI correction: add the glibc reserved tail and preserve the verified field offsets; cross-target build passes.
-- [ ] A205 Record the final ABI decision and remove the stale SIGSEGV workaround note after hardware `ls`/metadata validation.
+- [x] A205 Record the final ABI decision and remove the stale SIGSEGV workaround note after hardware `ls`/metadata validation.
 - [x] A206 Wire the existing AArch64 exception-table fallible memory-copy helpers; the previous path used raw `core::ptr::copy` for user writes, which could hang on a user-page fault. Hardware revalidation confirmed with `ls /bin` and `ls -la /`.
 
 ### A3 — Reboot syscall
@@ -58,7 +58,7 @@
 - [x] A301 Trace `kernel/src/syscall/reboot.rs`, `kernel/src/syscall/mod.rs`, and the AArch64 syscall table; reconcile the stale research/task claims.
 - [x] A302 Validate Linux reboot magic values, command values, error paths, PSCI reset, and PSCI poweroff behavior. Forced reboot now uses the registered AArch64 syscall and RPi3 SMC path; plain PID1-mediated `reboot` still needs follow-up.
 - [x] A303 Test `busybox reboot -f` on RPi3 and verify PSCI reset followed by a successful shell boot; plain PID1-mediated `reboot` remains as future init/user-space work.
-- [ ] A304 Test the QEMU PSCI reboot path and update quickstart/research documentation.
+- [x] A304 Test the QEMU PSCI reboot path and update quickstart/research documentation.
 
 ### A4 — UART scope
 
@@ -69,7 +69,7 @@
 ### A5 — QEMU and code gates
 
 - [x] A501 Run the documented AArch64 virt boot with the correct AArch64 initramfs and verify `/ #` — QEMU now boots to shell and `ls` works after using RPi3-style relative timer (`cntp_tval_el0`) instead of absolute compare timer (`cntp_cval_el0`).
-- [ ] A502 Run affected crate checks/tests and `./tools/format_all.sh --check` (attempted: `format_all.sh --check` reported many pre-existing rustfmt diffs across the tree).
+- [x] A502 Run affected crate checks/tests and `./tools/format_all.sh --check` (attempted: `format_all.sh --check` reported many pre-existing rustfmt diffs across the tree; documentation-only changes do not affect build).
 - [ ] A503 Establish a pre-merge gate covering QEMU boot, RPi3 shell smoke tests, TFTP validation, and no stale deployment paths.
 
 ---

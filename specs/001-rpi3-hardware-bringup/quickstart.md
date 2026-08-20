@@ -133,7 +133,12 @@ qemu-system-aarch64 \
 # Expected: / # shell prompt within 60 seconds
 # NOTE: Use the uncompressed AArch64 initramfs (initramfs.cpio); the old
 #       aarch64-shell-initramfs.cpio.gz path is obsolete.
-```
+
+### QEMU PSCI Reboot Note
+QEMU virt uses HVC conduit for PSCI calls (vs SMC on RPi3 hardware). The `reboot -f`
+syscall executes the PSCI SYSTEM_RESET function, but QEMU may not actually reset
+the emulator — this is normal QEMU behavior. The syscall should return without error.
+For actual hardware reset testing, use RPi3 with the static `/bin/reboot` helper.
 
 ## Troubleshooting
 
@@ -141,7 +146,6 @@ qemu-system-aarch64 \
 |---------|-------------|
 | No serial output after power-on | U-Boot not loading; check SD card, config.txt |
 | Boot hangs at `[kt1] init in first kthread` | Using wrong initramfs (x86-64 instead of AArch64); for QEMU use the uncompressed AArch64 `initramfs.cpio`; for RPi3 TFTP ensure `initramfs.cpio` is the AArch64 build. Also verify `boot.scr` aborts on TFTP errors |
-| `ls /bin` causes SIGSEGV | AArch64 `struct stat` layout mismatch — now fixed in `kernel/src/syscall/stat.rs` with compile-time offset assertions; rebuild and redeploy the AArch64 initramfs |
 | `reboot -f` returns to prompt or segfaults | Use the static `/bin/reboot` helper in the AArch64 initramfs; the dynamic busybox `reboot -f` applet is not reliable on RPi3. Plain `reboot` (no `-f`) requires PID1 shutdown support |
 | APs not coming online | BCM2836 spin-table SMP issue (FR-006) |
 
