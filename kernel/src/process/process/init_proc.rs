@@ -118,5 +118,5 @@ fn create_init_task(
         .process(process)
         .fs(Arc::new(fs))
         .is_init_process();
-    thread_builder.build()
+    Ok(thread_builder.build())
 }
