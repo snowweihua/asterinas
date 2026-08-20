@@ -62,9 +62,9 @@
 
 ### A4 — UART scope
 
-- [ ] A401 Document the working mini-UART console as the v1.0 baseline.
-- [ ] A402 Decide whether PL011 migration is required for v1.1; defer it if mini-UART satisfies current requirements.
-- [ ] A403 If migration is selected, isolate it behind the existing board/serial abstraction and test TX, RX, IRQ acknowledgement, and interactive shell behavior.
+- [x] A401 Document the working mini-UART console as the v1.0 baseline. The AUX mini-UART (AUX UART1) at GPIO 14/15 alt5 is verified working on RPi3 with IRQ 29. This is the v1.0/v1.1 baseline.
+- [x] A402 PL011 migration was attempted but not working on RPi3 hardware. The kernel boots but produces no serial output with PL011. Mini-UART remains the working solution; PL011 deferred to future investigation.
+- [ ] A403 (blocked) PL011 migration requires further debugging — the GPIO alt0 configuration and AUX peripheral disable sequence needs investigation on real hardware.
 
 ### A5 — QEMU and code gates
 
