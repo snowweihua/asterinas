@@ -135,3 +135,17 @@ The original logger failure was an EL1 synchronous abort in `spin::once::Once::t
   3. Start and interact with QEMU through the `qemu-test` MCP (`qemu_start_tool`, `qemu_read_serial_tool`, `qemu_write_serial_tool`, `qemu_stop_tool`); do not call `deploy_kernel_tool`.
 - Runtime evidence is authoritative. Do not promote a suspected boundary to a root cause without a reproducible observation and a toggle or equivalent causal proof.
 - Temporary UART probes, `early_print`/`pl011_puts`-style probes, and `.debug-journal.md` must not remain in the working tree after an investigation is complete.
+
+## Phase B Update: SMP Spin-Table Implementation (aarch64_v1.0.4+)
+
+### Changes Made
+- Added `smp_rpi3.rs` to boot module tree (`ostd/src/arch/aarch64/boot/mod.rs`)
+- Fixed `smp_rpi3.rs`: replaced non-existent `early_puts()` calls with `log::info!`, removed GIC references (RPi3 uses BCM2836 ARM local IRQ controller, not GICv2)
+- Routed RPi3 board type → `smp_rpi3::bringup_all_aps_rpi3()` (spin-table), QEMU → `smp::bringup_all_aps()` (PSCI)
+
+### RPi3 Garbled Serial Output (Pre-Existing Issue)
+- **Observation**: RPi3 shows garbled output like `INFO: Cre[IWARN: NIINFOExists co` followed by raw ANSI escape codes (`[38;2;87;180;249m`) and `Unimplemented`
+- **Root Cause**: Not caused by spin-table changes. The kernel outputs the colored ASCII logo via ANSI 24-bit color codes (`38;2;R;G;Bm`). QEMU's serial console interprets these as colors; RPi3 mini-UART serial console does not.
+- **Evidence**: Baseline code (without spin-table changes) shows the same garbled output
+- **Impact**: Kernel appears to boot, but serial console output is unreadable. QEMU works correctly with same code.
+- **Status**: Pre-existing issue, not a regression from spin-table implementation

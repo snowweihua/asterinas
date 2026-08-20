@@ -193,5 +193,5 @@ fn first_kthread() {
 
 fn print_banner() {
     println!("");
-    println!("{}", logo_ascii_art::get_gradient_color_version());
+    println!("{}", logo_ascii_art::get_black_white_version());
 }
