@@ -7,7 +7,7 @@ use alloc::{boxed::Box, collections::btree_map::BTreeMap, vec::Vec};
 use spin::Once;
 
 use crate::{
-    arch::{boot::smp::bringup_all_aps, irq::HwCpuId},
+    arch::{boot::smp, boot::smp_rpi3, irq::HwCpuId},
     mm::{
         frame::{meta::KernelMeta, Segment},
         paddr_to_vaddr, FrameAllocOptions, HasPaddrRange, PAGE_SIZE,
@@ -111,9 +111,16 @@ pub(crate) unsafe fn boot_all_aps() {
 
     let info_ptr = AP_BOOT_INFO.get().unwrap().per_ap_raw_info.as_ptr();
     let pt_ptr = crate::mm::page_table::boot_pt::with_borrow(|pt| pt.root_address()).unwrap();
-    // SAFETY: It's the right time to boot APs (guaranteed by the caller) and
-    // the arguments are valid to boot APs (generated above).
-    unsafe { bringup_all_aps(info_ptr, pt_ptr, num_cpus as u32) };
+
+    let is_rpi3 = crate::arch::board::BoardType::cached() == 2;
+
+    if is_rpi3 {
+        log::info!("[a2-smp] Using RPi3 spin-table bringup");
+        unsafe { smp_rpi3::bringup_all_aps_rpi3(info_ptr, pt_ptr, num_cpus as u32) };
+    } else {
+        log::info!("[a2-smp] Using PSCI bringup");
+        unsafe { smp::bringup_all_aps(info_ptr, pt_ptr, num_cpus as u32) };
+    }
 
     wait_for_all_aps_started(num_cpus);
 

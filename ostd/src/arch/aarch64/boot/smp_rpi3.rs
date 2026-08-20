@@ -63,14 +63,14 @@ fn get_cpu_release_addr(cpu_index: u32) -> Option<u64> {
     let fdt = match DEVICE_TREE.get() {
         Some(f) => f,
         None => {
-            unsafe { crate::arch::boot::early_puts(b"[a2-smp] rpi3: DEVICE_TREE.get()=None\n"); }
+            log::info!("[a2-smp] rpi3: DEVICE_TREE.get()=None");
             return None;
         }
     };
     let cpus = match fdt.find_node("/cpus") {
         Some(c) => c,
         None => {
-            unsafe { crate::arch::boot::early_puts(b"[a2-smp] rpi3: /cpus node not found\n"); }
+            log::info!("[a2-smp] rpi3: /cpus node not found");
             return None;
         }
     };
@@ -89,13 +89,13 @@ fn get_cpu_release_addr(cpu_index: u32) -> Option<u64> {
                         return Some(addr);
                     }
                 }
-                unsafe { crate::arch::boot::early_puts(b"[a2-smp] rpi3: no cpu-release-addr prop\n"); }
+                log::info!("[a2-smp] rpi3: no cpu-release-addr prop");
                 return None;
             }
             current_cpu += 1;
         }
     }
-    unsafe { crate::arch::boot::early_puts(b"[a2-smp] rpi3: cpu not found in DT\n"); }
+    log::info!("[a2-smp] rpi3: cpu not found in DT");
     None
 }
 
@@ -105,7 +105,7 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
     num_cpus: u32,
 ) {
     #[cfg(target_arch = "aarch64")]
-    crate::arch::boot::early_puts(b"[a2-smp] rpi3: SMP bringup starting\n");
+    log::info!("[a2-smp] rpi3: SMP bringup starting");
 
     unsafe {
         __ap_boot_info_array_pointer = info_ptr;
@@ -148,23 +148,16 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
     }
 
     #[cfg(target_arch = "aarch64")]
-    crate::arch::boot::early_puts(b"[a2-smp] rpi3: boot stub copied\n");
+    log::info!("[a2-smp] rpi3: boot stub copied");
 
     let ap_entry_paddr = AP_BOOT_DEST_PA as u64;
 
     for cpu_id in 1..num_cpus {
-        // Configure GICC CPU interface on this AP so it can receive interrupts.
-        let gicc_va = super::super::gic::gic_pa_to_va(super::super::gic::RPI3_GICC_BASE);
-        unsafe {
-            core::ptr::write_volatile(gicc_va as *mut u32, 0b111);
-            core::ptr::write_volatile((gicc_va + 0x04) as *mut u32, 0xF0);
-        }
-
         let release_addr = match get_cpu_release_addr(cpu_id) {
             Some(addr) => addr,
             None => {
                 #[cfg(target_arch = "aarch64")]
-                crate::arch::boot::early_puts(b"[a2-smp] rpi3: no release addr, skipping\n");
+                log::info!("[a2-smp] rpi3: no release addr, skipping");
                 continue;
             }
         };
@@ -252,12 +245,12 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
         for _ in 0..10000 {
             let val = unsafe { core::ptr::read_volatile(0x41000 as *const u8) };
             if val != 0x55 && val != 0 {
-                unsafe { crate::arch::boot::early_puts(b"[a2-smp] rpi3: AP started!\n") };
+                log::info!("[a2-smp] rpi3: AP started!");
                 break;
             }
         }
     }
 
     #[cfg(target_arch = "aarch64")]
-    crate::arch::boot::early_puts(b"[a2-smp] rpi3: SMP bringup done\n");
+    log::info!("[a2-smp] rpi3: SMP bringup done");
 }

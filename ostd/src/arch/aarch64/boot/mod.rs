@@ -3,6 +3,7 @@
 //! The RISC-V boot module defines the entrypoints of Asterinas.
 
 pub mod smp;
+pub mod smp_rpi3;
 
 use core::arch::global_asm;
 
