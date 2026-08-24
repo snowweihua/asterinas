@@ -143,9 +143,18 @@ The original logger failure was an EL1 synchronous abort in `spin::once::Once::t
 - Fixed `smp_rpi3.rs`: replaced non-existent `early_puts()` calls with `log::info!`, removed GIC references (RPi3 uses BCM2836 ARM local IRQ controller, not GICv2)
 - Routed RPi3 board type → `smp_rpi3::bringup_all_aps_rpi3()` (spin-table), QEMU → `smp::bringup_all_aps()` (PSCI)
 
-### RPi3 Garbled Serial Output (Pre-Existing Issue)
-- **Observation**: RPi3 shows garbled output like `INFO: Cre[IWARN: NIINFOExists co` followed by raw ANSI escape codes (`[38;2;87;180;249m`) and `Unimplemented`
-- **Root Cause**: Not caused by spin-table changes. The kernel outputs the colored ASCII logo via ANSI 24-bit color codes (`38;2;R;G;Bm`). QEMU's serial console interprets these as colors; RPi3 mini-UART serial console does not.
-- **Evidence**: Baseline code (without spin-table changes) shows the same garbled output
-- **Impact**: Kernel appears to boot, but serial console output is unreadable. QEMU works correctly with same code.
-- **Status**: Pre-existing issue, not a regression from spin-table implementation
+### RPi3 Garbled Serial Output (FIXED)
+- **Observation**: RPi3 showed garbled output like `INFO: Cre[IWARN: NIINFOExists co` followed by raw ANSI escape codes (`[38;2;87;180;249m`) and `Unimplemented`
+- **Root Cause**: The kernel outputs the colored ASCII logo via ANSI 24-bit color codes (`38;2;R;G;Bm`). QEMU's serial console interprets these as colors; RPi3 mini-UART serial console does not.
+- **Fix**: Changed `logo_ascii_art::get_gradient_color_version()` to `logo_ascii_art::get_black_white_version()` in `kernel/src/lib.rs`
+- **Status**: FIXED - RPi3 now boots correctly with readable output. Shell prompt `~ #` appears and `echo` command works.
+
+### QEMU Hang Issue (INVESTIGATION NEEDED)
+- **Observation**: QEMU hangs after the banner is printed. Shell prompt never appears and commands don't produce output.
+- **Root Cause**: Unknown - timer fix (f158257d using cntp_tval_el0) is already in place but QEMU still hangs.
+- **Evidence**: 
+  - Both current code and earlier commits show same hang
+  - RPi3 works correctly with same code
+  - QEMU output shows banner but no shell prompt
+- **Impact**: QEMU development/testing is blocked until this is resolved.
+- **Status**: Open issue - investigation needed.
