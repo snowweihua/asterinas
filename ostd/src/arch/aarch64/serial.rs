@@ -131,6 +131,9 @@ fn pl011_ensure_init() {
             (base + PL011_CR_OFFSET) as *mut u32,
             PL011_CR_UARTEN | PL011_CR_TXE | PL011_CR_RXE,
         );
+        // Ensure UART configuration is visible before returning.
+        // Without this barrier, QEMU's PL011 may not have processed the enable.
+        core::sync::atomic::fence(Ordering::SeqCst);
     }
 }
 

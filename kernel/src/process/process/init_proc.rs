@@ -30,9 +30,13 @@ pub fn spawn_init_process(
     envp: Vec<CString>,
 ) -> Result<Arc<Process>> {
     debug_assert!(executable_path.starts_with('/'));
+    ostd::early_println!("[init_proc] Creating init process");
     let process = create_init_process(executable_path, argv, envp)?;
+    ostd::early_println!("[init_proc] Init process created, setting session");
     set_session_and_group(&process);
+    ostd::early_println!("[init_proc] Session set, calling process.run()");
     process.run();
+    ostd::early_println!("[init_proc] process.run() returned");
     Ok(process)
 }
 

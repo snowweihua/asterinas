@@ -122,6 +122,7 @@ mod recvmsg;
 mod removexattr;
 mod rename;
 mod rmdir;
+mod rseq;
 mod rt_sigaction;
 mod rt_sigpending;
 mod rt_sigprocmask;

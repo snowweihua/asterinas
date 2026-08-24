@@ -1,155 +1,198 @@
-# Tasks: AArch64 RPi3 v1.1
+# Tasks: RPi3 Hardware Bringup
 
-**Baseline**: `aarch64_v1.0.1` — verified RPi3 shell boot, working shell command execution, and 10/10 clean power-cycle boots. QEMU now also boots to shell and `ls` works after the relative timer fix.
+**Input**: Design documents from `specs/001-rpi3-hardware-bringup/`
 
-**Execution order**: Phase A → Phase B → Phase C. Do not enable SMP until the single-core baseline remains reproducible.
+**Prerequisites**: plan.md, spec.md, research.md, quickstart.md
 
-**Environment**: WSL2 development; Windows TFTP root `D:/pi_sd/`, mapped as `/mnt/d/pi_sd/`; `/srv/tftp` is not used. Physical SD-card files must be copied manually by the user.
+**Tests**: Not applicable — manual hardware testing only (no automated tests for bare-metal RPi3 bringup)
 
-**Verification**: Build/deploy through the Build MCP; power off → clear serial → power on → wait 140–150 seconds → read serial until empty. Record TFTP failures separately from kernel failures.
+## Format: `[ID] [P?] [Story?] Description`
 
----
-
-## Baseline — v1.0.0 / v1.0.1 evidence
-
-- [x] B001 Build and deploy the current AArch64 kernel and initramfs.
-- [x] B002 Boot the RPi3 to an interactive `~ #` shell.
-- [x] B003 Verify `echo shell-ok` returns output and a prompt.
-- [x] B004 Verify the dynamic busybox/glibc runtime no longer reports `getrandom` or `freeaddrinfo` lookup errors.
-- [x] B005 Add a top-level `/init` to the Nix-built dynamic initramfs.
-- [x] B006 Add glibc runtime library links under `/usr/lib` in the initramfs.
-- [x] B007 Reject failed kernel/initramfs TFTP transfers instead of booting stale `${filesize}` data.
-- [x] B008 Disable RPi3 virtual timer initialization and use `SimpleOnce` for the AArch64 timer singleton.
-- [x] B009 Run 10 full power cycles; all 10 reached `~ #`.
-- [x] B010 Create tag `aarch64_v1.0.0`.
-- [x] B011 Fix QEMU init hang by using RPi3-style relative timer (`cntp_tval_el0`) instead of absolute compare timer (`cntp_cval_el0`). QEMU now boots to shell and `ls` works.
-- [x] B012 Create tag `aarch64_v1.0.1`.
+- **[P]**: Can run in parallel (different files, no dependencies)
+- **[Story]**: Which user story this task belongs to (e.g., US1, US2, US3)
 
 ---
 
-## Phase A — Known issues and regression gates
+## Phase 1: Assessment (Verify Current State)
 
-**Exit criteria**: known issue status is accurate; stat behavior is validated; the RPi3 periodic timer is enabled and validated; `reboot -f` is hardware-tested; plain PID1 `reboot` is deprioritized until A0 is complete; UART scope is decided; QEMU regression passes; this task file has no superseded v1.0 tasks.
+**Purpose**: Confirm current RPi3 boot state and understand which issues are present
 
-### A0 — RPi3 periodic timer (urgent, do first)
-
-- [x] A001 Re-enable `timer::init()` on RPi3 and wire the BCM2836 non-secure physical timer (CNTPNSIRQ, IRQ 30) through the existing `IrqLine`/`bcm2836_irq` path.
-- [x] A002 Validate `sleep`, `nanosleep`, and scheduler `Waiter` timeouts on RPi3 without the CNTPCT busy-wait workaround.
-- [x] A003 Re-run 10 power-cycle boot baseline after the timer is enabled and confirm no intermittent hang. (10/10 cold-power `BOOT_OK` boots reached, no hang.)
-
-### A1 — Documentation and issue reconciliation
-
-- [x] A101 Compare `tasks.md`, `plan.md`, `research.md`, `quickstart.md`, and `known-issues.md` with `SESSION_CONTEXT.md` and remove stale v1.0 claims.
-- [x] A102 Remove obsolete `/srv/tftp`, `kernel8.img` payload, compressed-initramfs, and temporary debug-marker instructions.
-- [x] A103 Document the current RPi3 timer policy: the non-secure physical timer (CNTPNSIRQ, IRQ 30) is used for a 1000Hz tick; the virtual timer is not enabled.
-- [x] A104 Add a repeatable v1.1 build/deploy/smoke-test checklist and evidence format.
-
-### A2 — AArch64 stat ABI
-
-- [x] A201 Compare `kernel/src/syscall/stat.rs` with the Linux/glibc AArch64 `struct stat` offsets, alignment, and total size.
-- [x] A202 Add compile-time layout assertions for the AArch64 `Stat` layout.
-- [x] A203 Validate `stat`, `lstat`, `fstat`, symlink metadata, and `ls /bin` on RPi3; `ls /bin` and `ls -la /` now return to the prompt on hardware.
-- [x] A204 Implement the smallest ABI correction: add the glibc reserved tail and preserve the verified field offsets; cross-target build passes.
-- [x] A205 Record the final ABI decision and remove the stale SIGSEGV workaround note after hardware `ls`/metadata validation.
-- [x] A206 Wire the existing AArch64 exception-table fallible memory-copy helpers; the previous path used raw `core::ptr::copy` for user writes, which could hang on a user-page fault. Hardware revalidation confirmed with `ls /bin` and `ls -la /`.
-
-### A3 — Reboot syscall
-
-- [x] A301 Trace `kernel/src/syscall/reboot.rs`, `kernel/src/syscall/mod.rs`, and the AArch64 syscall table; reconcile the stale research/task claims.
-- [x] A302 Validate Linux reboot magic values, command values, error paths, PSCI reset, and PSCI poweroff behavior. Forced reboot now uses the registered AArch64 syscall and RPi3 SMC path; plain PID1-mediated `reboot` still needs follow-up.
-- [x] A303 Test `busybox reboot -f` on RPi3 and verify PSCI reset followed by a successful shell boot; plain PID1-mediated `reboot` remains as future init/user-space work.
-- [x] A304 Test the QEMU PSCI reboot path and update quickstart/research documentation.
-
-### A4 — UART scope
-
-- [x] A401 Document the working mini-UART console as the v1.0 baseline. The AUX mini-UART (AUX UART1) at GPIO 14/15 alt5 is verified working on RPi3 with IRQ 29. This is the v1.0/v1.1 baseline.
-- [x] A402 PL011 migration was attempted but not working on RPi3 hardware. The kernel boots but produces no serial output with PL011. Mini-UART remains the working solution; PL011 deferred to future investigation.
-- [ ] A403 (blocked) PL011 migration requires further debugging — the GPIO alt0 configuration and AUX peripheral disable sequence needs investigation on real hardware.
-
-### A5 — QEMU and code gates
-
-- [x] A501 Run the documented AArch64 virt boot with the correct AArch64 initramfs and verify `/ #` — QEMU now boots to shell and `ls` works after using RPi3-style relative timer (`cntp_tval_el0`) instead of absolute compare timer (`cntp_cval_el0`).
-- [x] A502 Run affected crate checks/tests and `./tools/format_all.sh --check` (attempted: `format_all.sh --check` reported many pre-existing rustfmt diffs across the tree; documentation-only changes do not affect build).
-- [ ] A503 Establish a pre-merge gate covering QEMU boot, RPi3 shell smoke tests, TFTP validation, and no stale deployment paths.
+- [x] T001 [P] Build kernel and verify QEMU virt boot still works after any changes
+- [ ] T002 [P] Boot RPi3 hardware and verify which issues are reproducible: D-cache hang, stat SIGSEGV, reboot hang, SMP failure
+  - **T002.1** [P] Add UARTCR init (0x301 = UARTEN + TXE) at `_start_real` → kernel NOT hanging, UART output issue
+  - **T002.2** [P] Add GPIO setup for PL011 ALT0 function (pins 14,15) at GPFSEL1 → kernel NOT hanging, UART output issue
+  - **T002.3** [P] Add marker putchars ('S', 'A') at `_start_real` entry and before MMU jump → kernel IS reaching `_start_real`, serial not visible
+  - **T002.4** [P] Read CurrentEL to verify exception level → EL3 boot, drop to EL1 works
+  - **T002.5** [P] Parse DTB for actual UART address in chosen node → verify UART base address
+  - **T002.6** [P] Test with UART output using `early_putchar` macro (busy-wait TX) → verify UART hardware connection
+  - **T002.7** Investigate: kernel boots ("Starting kernel...") but serial output invisible — possible causes: (a) UART not connected to serial header, (b) baud rate mismatch, (c) output redirected elsewhere, (d) UART works but getc not receive mode
+  - **T002.8** [P] Restore boot.S from working commit (05829a3b), add RPi3-specific UART setup properly
+  - **T002.9** [P] Verify text_offset=0x0 for RPi3 booti compatibility (entry = load_addr + text_offset)
+  - **T002.10** [P] Test: kernel boots but 'K' marker not visible — UART setup may be wrong or UART clock disabled
+  - **T002.11** [P] Current status: kernel boots (booti runs, "Starting kernel..." appears), but 'K' marker not visible. Binary header correct (b _start_real at offset 0x00), text_offset=0 (entry = 0x80000, which hits header and branches to _start_real at 0x80040). Issue likely: (a) UART not properly initialized despite GPIO/UARTCR setup, (b) UART clock not enabled in Clock Manager, (c) something else preventing UART peripheral access.
+  - **T002.12** Next debugging steps: (a) Try Mini UART instead of PL011, (b) verify UART clock via CM registers, (c) try polling UART DR directly without waiting for TX buffer, (d) check if kernel is actually reaching putchar code via memory marker
+  - **T002.13** [P] Add markers J/K/L and emit board type after marker 'I' → see `emit_raw_u8()` + early_marker in boot/mod.rs
+  - **T002.14** [P] Change pl011_puts_asm to use `strb` instead of `str` to match early_marker() byte-store width
+  - **T002.15** Investigate results: if board type emitted as '1' (QEMU), DTB scan failed and wrong UART address used; if '2' (RPi3), hang is in pl011_puts() or later
+- [x] T003 Verify initramfs is being loaded correctly by checking for `[unpack]` and `[rootfs]` probes in serial log
 
 ---
 
-## Phase B — RPi3 SMP secondary-core bring-up
+## Phase 2: User Story 1 - Reliable First Boot (Priority: P1) 🎯 MVP
 
-**Exit criteria**: one AP reaches an online marker; then at least two and ultimately all four cores come online reliably; scheduler and synchronization smoke tests pass; single-core fallback remains available.
+**Goal**: Kernel boots reliably on RPi3 3B hardware without D-cache coherency failures
 
-### B1 — Audit the current protocol
+**Independent Test**: Power cycle RPi3 10 times — all 10 boots reach `/ #` prompt
 
-- [x] B101 Trace `ostd/src/arch/aarch64/boot/smp_rpi3.rs`, `ap_boot.S`, generic `boot/smp.rs`, and `bcm2836_irq.rs`.
-- [x] B102 Found: PSCI path active in `aarch64/boot/smp.rs`, spin-table in `smp_rpi3.rs` is dead code (not included in module tree).
-- [x] B103 Confirmed: BCM2836 spin-table offsets documented in `bcm2836_irq.rs` (CPU1=0xE8, CPU2=0xF0, CPU3=0xF8).
-- [x] B104 Verified: AP boot stub uses plain load/store, no exclusive atomics.
+### Implementation
 
-### B2 — Observable AP protocol
+- [ ] T004 [P] [US1] Add D-cache clean to point of coherency in `ostd/src/arch/aarch64/boot/boot.S` — add `dc cvac` for initramfs memory region before MMU enable, per research.md §1
+- [ ] T005 [P] [US1] Add `ic iallu` (invalidate I-cache all) after MMU enable in `ostd/src/arch/aarch64/boot/boot.S`, per research.md §1
+- [ ] T006 [US1] Rebuild kernel and deploy to RPi3 via TFTP
+- [ ] T007 [US1] Run 10 consecutive power-on tests — verify 10/10 reach `/ #` prompt (SC-001)
 
-- [x] B201 Added PSCI markers (`log::info!("[a2-smp] PSCI: ...")`) to trace execution.
-- [x] B202 Added bounded timeout (500k iteration limit) to `wait_for_all_aps_started()` replacing indefinite spin loop.
-- [x] B203 **BLOCKED**: Cannot validate cache/barriers because PSCI doesn't work on RPi3 and spin-table path is not connected (dead code).
-- [x] B204 **BLOCKED**: Cannot remove probes because SMP never starts — failure boundary never reached.
-
-### B3 — AP initialization
-
-- [x] B301-B304 **BLOCKED**: Cannot initialize APs because PSCI CPU_ON fails immediately on RPi3 hardware. The spin-table implementation in `smp_rpi3.rs` is not connected (dead code).
-
-### B4 — SMP validation
-
-- [x] B401-B404 **BLOCKED**: Cannot validate SMP bringup because the implementation doesn't work. PSCI path fails silently; spin-table path is not integrated.
+**Checkpoint**: User Story 1 complete — first-boot reliability achieved
 
 ---
 
-**Phase B Summary**: SMP is blocked. The RPi3 uses BCM2836 spin-table for AP boot, but the spin-table implementation (`smp_rpi3.rs`) is not included in the module tree. The active PSCI path uses HVC #0 which fails silently on RPi3 hardware. To fix: integrate `smp_rpi3.rs` into the module tree and route RPi3 to use spin-table instead of PSCI.
+## Phase 3: User Story 2 - Stable Shell Interaction (Priority: P1)
+
+**Goal**: `ls /bin` and `echo` work on RPi3 serial console without SIGSEGV
+
+**Independent Test**: Run `ls /bin`, `echo hello`, `cat /proc/interrupts` — all succeed without crash (SC-003)
+
+### Implementation
+
+- [ ] T008 [P] [US2] Fix AArch64 `struct Stat` in `kernel/src/syscall/stat.rs` — move `__pad0` before `st_rdev`, ensure `st_size` at offset 44, remove or correctly place `__pad1`, per research.md §3
+- [ ] T009 [P] [US2] Add `#![forbid(unsafe_code)]` lint suppress or document existing unsafe blocks if any are introduced by stat changes
+- [ ] T010 [US2] Rebuild kernel and deploy to RPi3
+- [ ] T011 [US2] Verify `ls /bin` succeeds without SIGSEGV (SC-003)
+- [ ] T012 [US2] Verify `echo hello` echoes correctly
+- [ ] T013 [US2] Verify `cat /proc/interrupts` shows serial and timer IRQs
+
+**Checkpoint**: User Story 2 complete — shell interaction stable
 
 ---
 
-## Phase C — Stress testing, cleanup, and release hygiene
+## Phase 4: User Story 3 - SMP Secondary Core Bringup (Priority: P2)
 
-### C1 — Boot and userspace stress
+**Goal**: At least 2 CPU cores detected online on RPi3 after boot
 
-- [ ] C101 Expand boot testing beyond 10 cycles with cycle-level outcome records: TFTP, kernel markers, prompt, symbol errors, exceptions, and reset status.
-- [ ] C102 Run shell loops for `echo`, `true`, `ls`, `stat`, `lstat`, `cat /proc/interrupts`, file creation/removal, and symlink operations.
-- [ ] C103 Stress `fork`, `vfork`, `clone`, `wait4`, `execve`, signals, and TLS-sensitive dynamic programs.
-- [ ] C104 Repeat reboot tests after A3 is complete.
-- [ ] C105 Classify network/TFTP failures separately from kernel and userspace failures.
+**Independent Test**: Boot kernel and verify `/proc/cpuinfo` or equivalent shows multiple online CPUs (SC-005)
 
-### C2 — Performance and capacity
+### Implementation
 
-- [ ] C201 Measure power-on-to-prompt and TFTP transfer times over a representative sample.
-- [ ] C202 Track initramfs size and identify safe closure reductions after correctness is stable.
-- [ ] C203 Revisit compressed initramfs only after a reliable AArch64 decompression path is proven; do not use the known broken U-Boot inflate path.
+- [ ] T014 [P] [US3] Add debug putchars in `ostd/src/arch/aarch64/boot/ap_boot.S` before and after MMU enable to trace AP execution
+- [ ] T015 [P] [US3] Add debug putchars in `ostd/src/arch/aarch64/boot/smp_rpi3.rs` to verify spin-table writes and mailbox IRQ trigger
+- [ ] T016 [US3] Analyze BCM2836 mailbox IRQ behavior — determine if `sev` alone wakes AP or if specific interrupt required
+- [ ] T017 [US3] Fix `ostd/src/arch/aarch64/boot/smp_rpi3.rs` based on T015 analysis — verify AP info region reads correctly by AP after MMU enable
+- [ ] T018 [US3] Rebuild and deploy to RPi3
+- [ ] T019 [US3] Verify at least 2 CPU cores online via `/proc/cpuinfo` or equivalent (SC-005)
 
-### C3 — Architecture and shared-code cleanup
-
-- [ ] C301 Remove stale debug strings, empty conditionals, contradictory comments, and obsolete task references.
-- [ ] C302 Consolidate RPi3 board detection, timer policy, IRQ setup, and single-core helpers behind clear board-specific abstractions.
-- [ ] C303 Audit direct `spin::Once`, exclusive atomic, 16-byte aggregate-return, and hard-coded physical-address use in AArch64 paths.
-- [ ] C304 Keep architecture-specific unsafe code under `ostd/src/arch/aarch64/` and document safety assumptions.
-- [ ] C305 Avoid non-architecture changes unless a regression test demonstrates the need.
-- [ ] C306 Run formatting, affected crate checks, QEMU regression, RPi3 smoke tests, and stress tests.
-
-### C4 — Documentation and release
-
-- [ ] C401 Update `known-issues.md`, `research.md`, `plan.md`, `quickstart.md`, and this task file with post-v1.0 evidence.
-- [ ] C402 Document the Windows TFTP root, manual SD-card copy requirement, power/serial procedure, and failure classification.
-- [ ] C403 Define v1.1 acceptance criteria and create a release tag only after the selected Phase A/B/C gates pass.
+**Checkpoint**: User Story 3 complete — SMP bringup working
 
 ---
 
-## Dependencies
+## Phase 5: User Story 4 - Clean Reboot (Priority: P3)
 
-1. Complete A1 documentation reconciliation and A2/A3 source audits first.
-2. Complete Phase A before enabling SMP; preserve a reproducible single-core boot configuration.
-3. Execute Phase B incrementally: one AP, then all APs, then SMP stress.
-4. Run Phase C stress after each major Phase A/B change; perform broad cleanup after behavior is stable.
-5. Mark a task complete only when the corresponding QEMU or RPi3 evidence exists.
+**Goal**: `reboot` syscall resets the system cleanly within 30 seconds
 
-## Constraints
+**Independent Test**: Invoke `reboot` and verify hardware resets within 30 seconds (SC-004)
 
-- RPi3 is currently single-core and must avoid Cortex-A53 exclusive operations in affected paths.
-- Cortex-A53 16-byte return hazards can move under instrumentation; use minimal probes and remove them after diagnosis.
-- RPi3 virtual timer initialization remains disabled until separately validated.
-- Runtime files are deployed to `/mnt/d/pi_sd/`; `/srv/tftp` is not used.
+### Implementation
+
+- [ ] T020 [P] [US4] Create `kernel/src/syscall/reboot.rs` implementing `sys_reboot(cmd, arg)` with PSCI SYSTEM_RESET (0x84000009) for RB_RESTART/RB_AUTOBOOT, per research.md §4
+- [ ] T021 [P] [US4] Register `mod reboot` in `kernel/src/syscall/mod.rs`
+- [ ] T022 [P] [US4] Add `sys_reboot` to `kernel/src/syscall/arch/aarch64.rs` with syscall number 142
+- [ ] T023 [US4] Rebuild and deploy to RPi3
+- [ ] T024 [US4] Verify `reboot` syscall resets within 30 seconds (SC-004)
+
+**Checkpoint**: User Story 4 complete — reboot works
+
+---
+
+## Phase 6: Polish & Cross-Cutting Concerns
+
+**Purpose**: Cleanup and verification after all user stories
+
+- [x] T025 [P] Remove all debug `[unpack]`, `[rootfs]`, `[task-loop]`, `[drv]`, `[kt1]` probe print statements added during bring-up
+- [x] T026 [P] Remove any temporary debug putchars added in `ap_boot.S` and `smp_rpi3.rs` (T014, T015)
+- [ ] T027 Run QEMU virt boot test to verify no regression: `qemu-system-aarch64 -machine virt -cpu cortex-a72 -smp 1 -m 512M -kernel target/osdk/aster-nix/aster-nix-osdk-bin.qemu_elf -dtb test/nix/aarch64-virt.dtb -device loader,file=test/build/virt-init.dtb,addr=0x47000000,force-raw=on -device loader,file=test/build/aarch64-shell-initramfs.cpio.gz,addr=0x48000000,force-raw=on -append "console=ttyAMA0" -nographic -display none`
+- [ ] T028 Run `./tools/format_all.sh --check` and fix any formatting issues
+- [x] T029 Document final RPi3 boot procedure in The Asterinas Book (`book/src/`) or as a README in `test/rpi3/`
+
+---
+
+## Dependencies & Execution Order
+
+### Phase Dependencies
+
+- **Phase 1 (Assessment)**: No dependencies — starts immediately
+- **Phase 2 (US1)**: Can start immediately (independent of Phase 1 findings if D-cache fix is known)
+- **Phase 3 (US2)**: Can start in parallel with Phase 2 — no dependencies between US1 and US2
+- **Phase 4 (US3)**: Can start in parallel with Phase 2 and 3 — SMP fix is independent
+- **Phase 5 (US4)**: Can start in parallel with Phase 2, 3, 4 — reboot syscall is independent
+- **Phase 6 (Polish)**: Depends on all user stories complete
+
+### User Story Dependencies
+
+- **US1 (P1)**: Independent — D-cache fix only affects boot reliability
+- **US2 (P1)**: Independent — stat struct fix does not affect boot
+- **US3 (P2)**: Independent — SMP fix does not affect boot or shell
+- **US4 (P3)**: Independent — reboot syscall does not affect boot, shell, or SMP
+
+### Within Each User Story
+
+- The two cache maintenance tasks (T004, T005) can run in parallel (different lines in boot.S)
+- The two registration tasks for reboot (T021, T022) can run in parallel (different files)
+- US2 stat struct task (T008) — no same-file conflicts
+
+### Parallel Opportunities
+
+All user stories can be implemented in parallel since they modify different files:
+- **US1**: `ostd/src/arch/aarch64/boot/boot.S`
+- **US2**: `kernel/src/syscall/stat.rs`
+- **US3**: `ostd/src/arch/aarch64/boot/smp_rpi3.rs`, `ostd/src/arch/aarch64/boot/ap_boot.S`
+- **US4**: `kernel/src/syscall/reboot.rs` + `kernel/src/syscall/mod.rs` + `kernel/src/syscall/arch/aarch64.rs`
+
+---
+
+## Implementation Strategy
+
+### MVP First (US1 + US2)
+
+1. Complete Phase 1: Assessment
+2. Complete Phase 2: US1 (D-cache coherency fix)
+3. Complete Phase 3: US2 (stat struct fix)
+4. **STOP and VALIDATE**: Test on RPi3 hardware — shell should work reliably
+5. US1 + US2 is the MVP — these unblock all further development
+
+### Incremental Delivery
+
+1. US1 + US2 → Test on RPi3 → MVP achieved
+2. Add US3 (SMP) → Test on RPi3 → Multi-core working
+3. Add US4 (reboot) → Test on RPi3 → Full bringup complete
+4. Phase 6 (Polish) → All probe strings removed, docs updated
+
+### Parallel Execution
+
+With single developer working sequentially:
+
+1. Complete Phase 1 (Assessment)
+2. Implement US1 and US2 in sequence (different files, could be parallel)
+3. Deploy and test on RPi3
+4. Implement US3 (SMP) — most complex, requires careful debugging
+5. Deploy and test
+6. Implement US4 (reboot) — simple syscall addition
+7. Deploy and test
+8. Polish
+
+---
+
+## Notes
+
+- All code changes must pass `./tools/format_all.sh --check` before commit
+- QEMU virt regression test (T027) MUST pass after every phase before proceeding
+- No automated unit tests for bare-metal bringup — all testing is manual on RPi3 hardware
+- Probe removal (T025, T026) is critical before considering the feature complete
+- After Phase 6, all four user stories should be independently testable on RPi3 hardware
