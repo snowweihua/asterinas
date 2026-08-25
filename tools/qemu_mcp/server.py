@@ -44,15 +44,16 @@ def _reader(proc: subprocess.Popen[bytes]) -> None:
 def _qemu_command(kernel: str, initramfs: str, memory: str, cpus: int) -> list[str]:
     return [
         "qemu-system-aarch64",
-        "-machine", "virt,gic-version=2",
-        "-cpu", "cortex-a72",
-        "-smp", str(cpus),
-        "-m", memory,
+        "-machine", "raspi3b",
+        "-cpu", "cortex-a53",
+        "-smp", "4",
+        "-m", "1G",
         "-nographic",
         "-monitor", "none",
         "-serial", "stdio",
+        "-dtb", "/mnt/d/pi_sd/bcm2710-rpi-3-b.dtb",
         "-kernel", kernel,
-        "-device", f"loader,file={initramfs},addr=0x58000000,force-raw=on",
+        "-initrd", initramfs,
         "-append", "init=/init console=ttyAMA0",
     ]
 

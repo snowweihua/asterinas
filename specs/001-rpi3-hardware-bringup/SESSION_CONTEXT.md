@@ -173,3 +173,31 @@ The original logger failure was an EL1 synchronous abort in `spin::once::Once::t
 - **Hypothesis**: QEMU's PL011 emulation requires UART state machine to be synchronized at specific points during kernel initialization. The init_proc traces happen BEFORE create_init_process(), AFTER create_init_process(), and AFTER set_session_and_group(). These specific boundaries are when the system transitions between different initialization phases, and the IRQ disable/enable during those transitions provides necessary synchronization for QEMU's emulation.
 - **Note on TFTP**: RPi3 boots via TFTP from Windows with root at `D:/pi_sd/` (mapped as `/mnt/d/pi_sd/`). `/srv/tftp` is NOT the TFTP root. Ensure `/mnt/d/pi_sd/asterina.img` has the correct size (3902592 bytes).
 - **Status**: RESOLVED - both platforms working.
+
+## Additional QEMU Machine Type Investigation
+
+### Root Cause Found
+- **Root cause**: QEMU `virt` machine type's emulated PL011 at `0x0900_0000` has timing/synchronization issues that require workarounds.
+- **Solution**: Use `raspi3b` machine type with the real RPi3 DTB (`bcm2710-rpi-3-b.dtb`). This makes QEMU's UART emulation behave correctly.
+
+### Key Changes
+- Changed server.py to use `raspi3b` machine type instead of `virt`
+- Added `-dtb /mnt/d/pi_sd/bcm2710-rpi-3-b.dtb` to use real RPi3 DTB
+- Changed from `-device loader,file=...,addr=0x58000000` to `-initrd` (QEMU auto-sets DTB's /chosen node)
+- **Removed**: Burst workaround in task.rs and init_proc traces - no longer needed with raspi3b
+
+### raspi3b Requirements
+- Minimum 4 CPUs (`-smp 4`)
+- Minimum 1GB memory (`-m 1G`)
+- CPU must be `cortex-a53` (not cortex-a72)
+
+### Verification (3/3 runs passed)
+- Built with `target=rpi3` (uses `PL011_BASE_PA_RPI3 = 0x3F20_1000`)
+- Tested without burst workaround - PASS
+- Tested without init_proc traces - PASS
+- Shell prompt `~ #` appears reliably
+
+### Why It Works
+- The real RPi3 DTB configures UART at `0x3F20_1000` which matches the kernel's `PL011_BASE_PA_RPI3`
+- QEMU's raspi3b machine emulation properly initializes the PL011 when using the real DTB
+- No artificial UART "priming" needed

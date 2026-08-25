@@ -73,8 +73,6 @@ pub fn create_new_user_task(
 
         if is_init_process {
             crate::init_in_first_process(&ctx);
-            let burst = [0u8; 256];
-            ostd::arch::serial::send_burst_with_irq_disabled(&burst);
         }
 
         while !current_thread.is_exited() {
