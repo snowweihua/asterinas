@@ -48,9 +48,10 @@ def _qemu_command(kernel: str, initramfs: str, memory: str, cpus: int) -> list[s
         "-cpu", "cortex-a53",
         "-smp", "4",
         "-m", "1G",
-        "-nographic",
+        "-display", "none",
         "-monitor", "none",
-        "-serial", "stdio",
+        "-serial", "null",
+        "-serial", "file:/tmp/qemu_serial.log",
         "-dtb", "/mnt/d/pi_sd/bcm2710-rpi-3-b.dtb",
         "-kernel", kernel,
         "-initrd", initramfs,
@@ -89,7 +90,7 @@ def qemu_start_tool(
     cpus: int = 1,
 ) -> str:
     """Start an interactive QEMU AArch64 virt instance."""
-    global _process, _output_history
+    global _process
     with _process_lock:
         if _process is not None and _process.poll() is None:
             return "QEMU ALREADY RUNNING"
@@ -97,27 +98,33 @@ def qemu_start_tool(
             return f"ERROR: kernel image not found: {kernel}"
         if not Path(initramfs).exists():
             return f"ERROR: initramfs not found: {initramfs}"
-        _drain_output()
-        with _output_lock:
-            _output_history = bytearray()
+        try:
+            os.remove("/tmp/qemu_serial.log")
+        except FileNotFoundError:
+            pass
         _process = subprocess.Popen(
             _qemu_command(kernel, initramfs, memory, cpus),
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
         )
-        threading.Thread(target=_reader, args=(_process,), daemon=True).start()
         return f"QEMU STARTED pid={_process.pid}"
 
 
 @mcp.tool
 def qemu_read_serial_tool(wait_seconds: float = 1.0, max_bytes: int = 20000) -> str:
-    """Read accumulated QEMU serial output, waiting briefly for new data."""
+    """Read accumulated QEMU serial output from log file."""
     deadline = time.monotonic() + max(0.0, wait_seconds)
-    data = _drain_output()
-    while not data and time.monotonic() < deadline:
-        time.sleep(0.05)
-        data = _drain_output()
+    data = b""
+    while time.monotonic() < deadline:
+        try:
+            with open("/tmp/qemu_serial.log", "rb") as f:
+                data = f.read()
+            if data:
+                break
+        except FileNotFoundError:
+            pass
+        time.sleep(0.1)
     if len(data) > max_bytes:
         data = data[-max_bytes:]
     status = "not running"
