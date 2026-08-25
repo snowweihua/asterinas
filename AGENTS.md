@@ -21,7 +21,7 @@
      - First call starts the build and returns "BUILD STARTED"
      - Poll repeatedly until result appears (returns "BUILD OK" or "BUILD FAILED")
    - `convert_kernel_tool(source_elf, output_img)` — objcopy ELF → raw binary
-     - For QEMU: output_img = `/tmp/qemu.bin`
+     - For QEMU: output_img = `/tmp/asterina.img`
      - For RPi3 hardware: output_img = `/tmp/asterina.img`
    - `deploy_kernel_tool(source_img, deploy_path)` — copy raw binary to SD card mount point
    - `build_and_deploy_tool(deploy_path)` — Start build, poll for result, then convert and deploy
