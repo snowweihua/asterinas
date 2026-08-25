@@ -154,19 +154,27 @@ The original logger failure was an EL1 synchronous abort in `spin::once::Once::t
 - **Root Cause Analysis**:
   - QEMU's PL011 UART emulation has known sensitivity to timing and memory barrier placement
   - The `pl011_ensure_init()` function (line 111-138 in `ostd/src/arch/aarch64/serial.rs`) has a comment: "QEMU's PL011 model is present at boot but does not echo DR writes unless the UART has been enabled"
-  - A `SeqCst` fence after enabling the UART ensures QEMU processes the enable, but additional synchronization may be needed
-  - The `early_println!` macro uses `SpinLock<Stdout, LocalIrqDisabled>` which disables local IRQs during send, providing timing isolation
-  - The SpinLock pattern (disable IRQ → lock → send → unlock → enable IRQ) appears to give QEMU's emulation time to properly process UART state transitions
+  - A `SeqCst` fence after enabling the UART ensures QEMU processes the enable, but additional synchronization is needed after `init_in_first_process()` returns
+  - The critical `early_println!` trace is "[Task] init_in_first_process returned" - this trace alone is NOT sufficient, but combined with other traces, it works
 - **Fix Applied** (commit `0645f6a1`):
   - Added `early_println` traces in `task.rs` and `init_proc.rs` for UART timing sync
   - Added DSB barriers in `serial.rs` `pl011_ensure_init()` after CR register writes
   - Added `poll_uart_input()` call in `init_uart_irq()` in `driver/mod.rs`
   - Added `rseq` syscall stub returning success (0)
+- **Experimental Findings** (A/B testing):
+  - Without any `early_println` traces in task.rs/init_proc.rs: FAILS (no shell prompt)
+  - With just "[Task] init_in_first_process returned" trace: FAILS
+  - Without "returned" trace but with other task.rs traces: FAILS
+  - Without init_proc traces but with all task.rs traces: FAILS
+  - With all task.rs traces + "Creating init process" + "Session set" init_proc traces: WORKS
+  - Critical trace is "[Task] init_in_first_process returned" - but needs other traces to be present
 - **Key Technical Details**:
   - `early_println!` calls `STDOUT.lock()` which calls `LocalIrqDisabled::guard()` → `disable_local()`
   - The IRQ disable provides a critical section where no timer/RX interrupts can fire during serial output
   - The DSB at line 136 of `serial.rs` ensures the UART enable write is visible to QEMU before returning
-  - Working binary (6MB) vs rebuilt (3.9MB) timing difference suggests QEMU is sensitive to instruction timing
-- **Verification**: Both QEMU and RPi3 boot to shell prompt and respond to commands.
-- **Remaining Mystery**: Exact mechanism of why SpinLock+IRQ-disble provides better UART sync than bare send() - not fully understood from static analysis.
+  - The trace at "returned" position provides timing/synchronization after `init_in_first_process()` completes but before main loop starts
+- **Working Configuration** (all required):
+  - task.rs: "Calling init_in_first_process", "init_in_first_process returned", "Entering main loop"
+  - init_proc.rs: "Creating init process", "Session set, calling process.run()"
+- **Remaining Mystery**: Why the COMBINATION of traces is needed, not just the "returned" trace alone - suggests timing/synchronization at a specific point in initialization is critical
 - **Status**: RESOLVED - both platforms working.
