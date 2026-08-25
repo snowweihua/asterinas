@@ -72,12 +72,11 @@ pub fn create_new_user_task(
         };
 
         if is_init_process {
-            ostd::early_println!("[Task] Calling init_in_first_process");
             crate::init_in_first_process(&ctx);
-            ostd::early_println!("[Task] init_in_first_process returned");
+            let burst = [0u8; 256];
+            ostd::arch::serial::send_burst_with_irq_disabled(&burst);
         }
 
-        ostd::early_println!("[Task] Entering main loop");
         while !current_thread.is_exited() {
             ctx.thread_local.fpu().activate();
             let return_reason = user_mode.execute(has_kernel_event_fn);

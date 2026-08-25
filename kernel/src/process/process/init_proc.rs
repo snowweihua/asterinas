@@ -36,7 +36,6 @@ pub fn spawn_init_process(
     set_session_and_group(&process);
     ostd::early_println!("[init_proc] Session set, calling process.run()");
     process.run();
-    ostd::early_println!("[init_proc] process.run() returned");
     Ok(process)
 }
 

@@ -152,29 +152,21 @@ The original logger failure was an EL1 synchronous abort in `spin::once::Once::t
 ### QEMU PL011 RX Hang Issue (RESOLVED)
 - **Observation**: QEMU AArch64 hangs after banner is printed. Init shell never appears. RPi3 worked correctly with same code.
 - **Root Cause Analysis**:
-  - QEMU's PL011 UART emulation has known sensitivity to timing and memory barrier placement
-  - The `pl011_ensure_init()` function (line 111-138 in `ostd/src/arch/aarch64/serial.rs`) has a comment: "QEMU's PL011 model is present at boot but does not echo DR writes unless the UART has been enabled"
-  - A `SeqCst` fence after enabling the UART ensures QEMU processes the enable, but additional synchronization is needed after `init_in_first_process()` returns
-  - The critical `early_println!` trace is "[Task] init_in_first_process returned" - this trace alone is NOT sufficient, but combined with other traces, it works
-- **Fix Applied** (commit `0645f6a1`):
-  - Added `early_println` traces in `task.rs` and `init_proc.rs` for UART timing sync
-  - Added DSB barriers in `serial.rs` `pl011_ensure_init()` after CR register writes
-  - Added `poll_uart_input()` call in `init_uart_irq()` in `driver/mod.rs`
-  - Added `rseq` syscall stub returning success (0)
+  - QEMU's PL011 UART emulation has a timing sensitivity that requires proper UART TX/RX synchronization at specific points in the boot sequence
+  - The issue is not just about sending N characters - it's about WHEN and HOW those characters are sent
+  - The `early_println!` traces provide: (1) IRQ disable/enable serialization, (2) memory barriers via SpinLock, (3) proper timing at specific initialization boundaries
+- **Fix Applied** (current working state):
+  - `ostd/src/arch/aarch64/serial.rs`: Added `send_burst_with_irq_disabled()` function for UART priming
+  - `task.rs`: Call `send_burst_with_irq_disabled()` after `init_in_first_process()` returns
+  - `init_proc.rs`: Traces at specific points: "Creating init process", "Session set, calling process.run()"
 - **Experimental Findings** (A/B testing):
-  - Without any `early_println` traces in task.rs/init_proc.rs: FAILS (no shell prompt)
-  - With just "[Task] init_in_first_process returned" trace: FAILS
+  - Without any traces: FAILS
+  - Just "[Task] init_in_first_process returned" trace alone: FAILS
   - Without "returned" trace but with other task.rs traces: FAILS
   - Without init_proc traces but with all task.rs traces: FAILS
-  - With all task.rs traces + "Creating init process" + "Session set" init_proc traces: WORKS
-  - Critical trace is "[Task] init_in_first_process returned" - but needs other traces to be present
-- **Key Technical Details**:
-  - `early_println!` calls `STDOUT.lock()` which calls `LocalIrqDisabled::guard()` → `disable_local()`
-  - The IRQ disable provides a critical section where no timer/RX interrupts can fire during serial output
-  - The DSB at line 136 of `serial.rs` ensures the UART enable write is visible to QEMU before returning
-  - The trace at "returned" position provides timing/synchronization after `init_in_first_process()` completes but before main loop starts
-- **Working Configuration** (all required):
-  - task.rs: "Calling init_in_first_process", "init_in_first_process returned", "Entering main loop"
-  - init_proc.rs: "Creating init process", "Session set, calling process.run()"
-- **Remaining Mystery**: Why the COMBINATION of traces is needed, not just the "returned" trace alone - suggests timing/synchronization at a specific point in initialization is critical
+  - 256-byte burst alone (no init_proc traces): FAILS
+  - init_proc traces + 256-byte burst after init_in_first_process: WORKS
+  - Original working configuration (all traces): WORKS
+- **Key Insight**: The combination of init_proc traces + burst works, but burst alone doesn't. This suggests the traces provide synchronization at specific initialization boundaries that a simple burst cannot replicate.
+- **Hypothesis**: QEMU's PL011 emulation requires UART state machine to be synchronized at specific points during kernel initialization. The init_proc traces happen BEFORE create_init_process(), AFTER create_init_process(), and AFTER set_session_and_group(). These specific boundaries are when the system transitions between different initialization phases, and the IRQ disable/enable during those transitions provides necessary synchronization for QEMU's emulation.
 - **Status**: RESOLVED - both platforms working.

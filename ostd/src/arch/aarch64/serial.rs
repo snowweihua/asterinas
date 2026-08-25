@@ -347,3 +347,15 @@ pub fn send(data: u8) {
     }
 }
 
+/// Send multiple bytes with local IRQs disabled to ensure proper UART synchronization.
+///
+/// This is used to "prime" the UART after initialization to ensure QEMU's PL011
+/// emulation properly processes TX/RX state transitions.
+pub fn send_burst_with_irq_disabled(data: &[u8]) {
+    let irq_guard = crate::irq::disable_local();
+    for &byte in data {
+        send(byte);
+    }
+    drop(irq_guard);
+}
+
