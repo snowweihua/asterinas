@@ -149,12 +149,14 @@ The original logger failure was an EL1 synchronous abort in `spin::once::Once::t
 - **Fix**: Changed `logo_ascii_art::get_gradient_color_version()` to `logo_ascii_art::get_black_white_version()` in `kernel/src/lib.rs`
 - **Status**: FIXED - RPi3 now boots correctly with readable output. Shell prompt `~ #` appears and `echo` command works.
 
-### QEMU Hang Issue (INVESTIGATION NEEDED)
-- **Observation**: QEMU hangs after the banner is printed. Shell prompt never appears and commands don't produce output.
-- **Root Cause**: Unknown - timer fix (f158257d using cntp_tval_el0) is already in place but QEMU still hangs.
-- **Evidence**: 
-  - Both current code and earlier commits show same hang
-  - RPi3 works correctly with same code
-  - QEMU output shows banner but no shell prompt
-- **Impact**: QEMU development/testing is blocked until this is resolved.
-- **Status**: Open issue - investigation needed.
+### QEMU PL011 RX Hang Issue (RESOLVED)
+- **Observation**: QEMU AArch64 hangs after banner is printed. Init shell never appears. RPi3 worked correctly with same code.
+- **Root Cause**: Partial - QEMU's PL011 UART emulation requires timing synchronization that bare `send()` calls don't provide. The `early_println!` macro (using SpinLock with `LocalIrqDisabled`) somehow provides this synchronization.
+- **Fix Applied** (commit `0645f6a1`):
+  - Added `early_println` traces in `task.rs` and `init_proc.rs` for UART timing sync
+  - Added DSB barriers in `serial.rs` `pl011_ensure_init()` after CR register writes
+  - Added `poll_uart_input()` call in `init_uart_irq()` in `driver/mod.rs`
+  - Added `rseq` syscall stub returning success (0)
+- **Verification**: Both QEMU and RPi3 boot to shell prompt and respond to commands.
+- **Remaining Mystery**: Why SpinLock provides UART timing synchronization that bare send() doesn't - not fully understood.
+- **Status**: RESOLVED - both platforms working.
