@@ -16,12 +16,15 @@
 
 1. **Code change** — Edit source files as needed
 2. **Build & Deploy** — Use the build MCP server:
-   - `build_kernel_tool(target="rpi3"|"qemu")` — Start Docker cargo osdk build (runs in background, ~2-5 min)
+   - `build_kernel_tool()` — Start Docker cargo osdk build (runs in background, ~2-5 min)
+     - Builds single binary for both RPi3 hardware and QEMU (uses aarch64-rpi3 scheme with cortex-a53)
      - First call starts the build and returns "BUILD STARTED"
      - Poll repeatedly until result appears (returns "BUILD OK" or "BUILD FAILED")
-   - `convert_kernel_tool(source_elf, output_img)` — objcopy ELF → raw binary (use `/tmp/asterina.img` as output_img for rpi3, `/tmp/qemu.bin` for qemu)
+   - `convert_kernel_tool(source_elf, output_img)` — objcopy ELF → raw binary
+     - For QEMU: output_img = `/tmp/qemu.bin`
+     - For RPi3 hardware: output_img = `/tmp/asterina.img`
    - `deploy_kernel_tool(source_img, deploy_path)` — copy raw binary to SD card mount point
-   - `build_and_deploy_tool(target="rpi3"|"qemu", deploy_path)` — Start build, poll for result, then convert and (for rpi3) deploy
+   - `build_and_deploy_tool(deploy_path)` — Start build, poll for result, then convert and deploy
 3. **Power cycle** — Use the power MCP server:
    - `power_power_off_tool` — Power OFF the RPi3B board
    - `power_power_on_tool` — Power ON the RPi3B board

@@ -201,3 +201,16 @@ The original logger failure was an EL1 synchronous abort in `spin::once::Once::t
 - The real RPi3 DTB configures UART at `0x3F20_1000` which matches the kernel's `PL011_BASE_PA_RPI3`
 - QEMU's raspi3b machine emulation properly initializes the PL011 when using the real DTB
 - No artificial UART "priming" needed
+
+### Simplified Build Process
+- **Single build**: `build_kernel_tool()` with no target parameter
+- Uses `aarch64-rpi3` scheme with `cortex-a53` target CPU
+- Same binary works on RPi3 hardware and QEMU (raspi3b machine type)
+- For QEMU: use `convert_kernel_tool()` to create `/tmp/qemu.bin`
+- For RPi3 hardware: use `deploy_kernel_tool()` to deploy to SD card
+
+### Verified Working Configurations
+| Platform | Machine Type | DTB | Binary |
+|----------|-------------|-----|--------|
+| RPi3 Hardware | N/A | N/A | asterina.img |
+| QEMU | raspi3b | bcm2710-rpi-3-b.dtb | qemu.bin |
