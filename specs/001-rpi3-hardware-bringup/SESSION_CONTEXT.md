@@ -158,15 +158,18 @@ The original logger failure was an EL1 synchronous abort in `spin::once::Once::t
 - **Fix Applied** (current working state):
   - `ostd/src/arch/aarch64/serial.rs`: Added `send_burst_with_irq_disabled()` function for UART priming
   - `task.rs`: Call `send_burst_with_irq_disabled()` after `init_in_first_process()` returns
-  - `init_proc.rs`: Traces at specific points: "Creating init process", "Session set, calling process.run()"
+  - `init_proc.rs`: Traces at specific points: "Creating init process", "Init process created, setting session", "Session set, calling process.run()"
 - **Experimental Findings** (A/B testing):
   - Without any traces: FAILS
   - Just "[Task] init_in_first_process returned" trace alone: FAILS
   - Without "returned" trace but with other task.rs traces: FAILS
   - Without init_proc traces but with all task.rs traces: FAILS
   - 256-byte burst alone (no init_proc traces): FAILS
+  - Memory fence in init_rx_irq() alone (no traces, no burst): FAILS
   - init_proc traces + 256-byte burst after init_in_first_process: WORKS
-  - Original working configuration (all traces): WORKS
-- **Key Insight**: The combination of init_proc traces + burst works, but burst alone doesn't. This suggests the traces provide synchronization at specific initialization boundaries that a simple burst cannot replicate.
+  - Single trace after create_init_process() + burst: WORKS
+  - Original working configuration (all traces + burst): WORKS
+- **Key Insight**: The combination of init_proc traces + burst works, but neither alone is sufficient. The traces provide synchronization at specific initialization boundaries that a simple burst cannot replicate.
 - **Hypothesis**: QEMU's PL011 emulation requires UART state machine to be synchronized at specific points during kernel initialization. The init_proc traces happen BEFORE create_init_process(), AFTER create_init_process(), and AFTER set_session_and_group(). These specific boundaries are when the system transitions between different initialization phases, and the IRQ disable/enable during those transitions provides necessary synchronization for QEMU's emulation.
+- **Note on TFTP**: RPi3 boots via TFTP from Windows. The TFTP root is `/srv/tftp/` on the Windows host (mapped via WSL). If RPi3 fails to boot, check if `/srv/tftp/asterina.img` has the correct size (3902592 bytes) vs the SD card version.
 - **Status**: RESOLVED - both platforms working.
