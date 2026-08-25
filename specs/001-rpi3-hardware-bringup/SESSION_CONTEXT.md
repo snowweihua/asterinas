@@ -171,5 +171,5 @@ The original logger failure was an EL1 synchronous abort in `spin::once::Once::t
   - Original working configuration (all traces + burst): WORKS
 - **Key Insight**: The combination of init_proc traces + burst works, but neither alone is sufficient. The traces provide synchronization at specific initialization boundaries that a simple burst cannot replicate.
 - **Hypothesis**: QEMU's PL011 emulation requires UART state machine to be synchronized at specific points during kernel initialization. The init_proc traces happen BEFORE create_init_process(), AFTER create_init_process(), and AFTER set_session_and_group(). These specific boundaries are when the system transitions between different initialization phases, and the IRQ disable/enable during those transitions provides necessary synchronization for QEMU's emulation.
-- **Note on TFTP**: RPi3 boots via TFTP from Windows. The TFTP root is `/srv/tftp/` on the Windows host (mapped via WSL). If RPi3 fails to boot, check if `/srv/tftp/asterina.img` has the correct size (3902592 bytes) vs the SD card version.
+- **Note on TFTP**: RPi3 boots via TFTP from Windows with root at `D:/pi_sd/` (mapped as `/mnt/d/pi_sd/`). `/srv/tftp` is NOT the TFTP root. Ensure `/mnt/d/pi_sd/asterina.img` has the correct size (3902592 bytes).
 - **Status**: RESOLVED - both platforms working.
