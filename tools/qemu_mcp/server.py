@@ -13,7 +13,7 @@ from pathlib import Path
 from fastmcp import FastMCP
 
 WORKSPACE = Path(__file__).resolve().parents[2]
-DEFAULT_KERNEL = Path("/tmp/qemu.bin")
+DEFAULT_KERNEL = Path("/tmp/asterina.img")
 DEFAULT_INITRAMFS = WORKSPACE / "test/build/initramfs.cpio"
 _process: subprocess.Popen[bytes] | None = None
 _output: queue.Queue[bytes] = queue.Queue()
