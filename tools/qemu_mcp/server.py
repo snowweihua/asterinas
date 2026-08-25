@@ -50,7 +50,8 @@ def _qemu_command(kernel: str, initramfs: str, memory: str, cpus: int) -> list[s
         "-m", "1G",
         "-display", "none",
         "-monitor", "none",
-        "-serial", "null",
+        "-chardev", "pipe,id=seriain,path=/tmp/qemu_serial_in",
+        "-serial", "chardev:seriain",
         "-serial", "file:/tmp/qemu_serial.log",
         "-dtb", "/mnt/d/pi_sd/bcm2710-rpi-3-b.dtb",
         "-kernel", kernel,
@@ -102,6 +103,11 @@ def qemu_start_tool(
             os.remove("/tmp/qemu_serial.log")
         except FileNotFoundError:
             pass
+        try:
+            os.remove("/tmp/qemu_serial_in")
+        except FileNotFoundError:
+            pass
+        os.mkfifo("/tmp/qemu_serial_in")
         _process = subprocess.Popen(
             _qemu_command(kernel, initramfs, memory, cpus),
             stdin=subprocess.DEVNULL,
@@ -138,13 +144,15 @@ def qemu_read_serial_tool(wait_seconds: float = 1.0, max_bytes: int = 20000) -> 
 @mcp.tool
 def qemu_write_serial_tool(input_text: str) -> str:
     """Send text to the interactive QEMU serial console."""
-    if _process is None or _process.poll() is not None or _process.stdin is None:
+    if _process is None or _process.poll() is not None:
         return "ERROR: QEMU is not running"
     try:
-        _process.stdin.write(input_text.encode())
-        _process.stdin.flush()
+        with open("/tmp/qemu_serial_in", "w") as f:
+            f.write(input_text)
     except BrokenPipeError:
         return "ERROR: QEMU serial input is closed"
+    except FileNotFoundError:
+        return "ERROR: QEMU serial input fifo not found"
     return f"SERIAL WRITE OK: {len(input_text)} characters"
 
 
