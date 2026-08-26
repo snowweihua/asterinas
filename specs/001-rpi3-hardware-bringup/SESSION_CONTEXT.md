@@ -215,44 +215,51 @@ The original logger failure was an EL1 synchronous abort in `spin::once::Once::t
 | RPi3 Hardware | N/A | N/A | asterina.img |
 | QEMU | raspi3b | bcm2710-rpi-3-b.dtb | qemu.bin |
 
-## QEMU Regression Issue (2026-08-26)
+## QEMU Regression Issue (2026-08-26) — RESOLVED OUTPUT, KNOWN INPUT ISSUE
 
-### Problem
-After rebuild at commit 572043e2, QEMU with raspi3b machine type produces **zero output** despite working previously at commit 11aca22d5b8b0f0d41a509fd4e68cf49e2b527f5.
+### Problem (RESOLVED)
+After rebuild at commit 572043e2, QEMU with raspi3b machine type produced **zero output** despite working previously at commit 11aca22.
 
-### Verified Behavior
-- **raspi3b + -initrd**: 0 bytes output, QEMU runs but produces no serial output
-- **raspi3b + -device loader**: 0 bytes output, same behavior
-- **virt + -device loader + initramfs at 0x58000000**: Bootlog appears but hangs at banner (no shell prompt)
-- **virt + -initrd**: Panics with "CPIO invalid magic" (kernel expects initramfs at hardcoded address)
+### Root Cause
+The `qemu_mcp/server.py` had been modified after commit 11aca22 with pipe-based serial (`-chardev pipe,id=seriain...`) which broke serial output capture.
 
-### Attempted Fixes
-- Rebuilt kernel at commit 11aca22 - same issue
-- Tried both -initrd and -device loader approaches
-- Tried with and without DTB file
-- Different serial configurations (stdio, file, telnet, unix socket)
+### Fix Applied
+- Changed server.py to use `-serial null -serial file:/tmp/qemu_serial.log` instead of pipe-based serial
+- Committed as `1473a668 qemu_mcp: use -serial null+file instead of pipe — fixes raspi3b output`
+- QEMU now boots correctly and produces serial output (2832 bytes with Asterinas banner and shell prompt `~ #`)
 
-### Key Findings
-- raspi3b machine type produces NO output at all in current QEMU 6.2.0 environment
-- virt machine type produces output but hangs after banner
-- The raspi3b issue is not a code problem - even kernel rebuilt at 11aca22 doesn't work
-- This suggests an environmental issue (QEMU version, DTB, initramfs mismatch)
-- CPU IS running when checked via QEMU monitor (PC=ffff0000001c0268)
-- DTB is correctly detected as "raspberrypi,3-model-b" with compatible string
-- Board type detection works correctly (is_rpi3() returns true)
-- Kernel uses mini-UART at 0x3F21_5000 for RPi3 (not PL011)
+### Verified Working Configuration
+- Machine: raspi3b
+- CPU: cortex-a53
+- Memory: 1G
+- SMP: 4
+- Serial: `-serial null -serial file:/tmp/qemu_serial.log`
+- DTB: /mnt/d/pi_sd/bcm2710-rpi-3-b.dtb
+- Kernel: /tmp/asterina.img (via -kernel)
+- Initramfs: /home/snow/asterinas/test/build/initramfs.cpio (via -initrd)
+- Command line: `init=/init console=ttyAMA0`
 
-### Analysis
-- QEMU's raspi3b machine type may not properly emulate mini-UART at 0x3F21_5000
-- Or the kernel is outputting to a UART address that QEMU doesn't emulate
-- The serial output appears to be going nowhere
+### Known Issue: QEMU Serial Input Not Working
+**Problem**: Cannot send commands to QEMU's serial console. All input approaches fail:
+
+| Approach | Result |
+|---------|--------|
+| FIFO pipe via -chardev pipe | QEMU blocks waiting for input |
+| Unix socket via -serial unix | Input doesn't reach guest |
+| Telnet via -serial telnet | Input doesn't reach guest |
+| PTY via script command | Output capture doesn't work |
+| /dev/null stdin | QEMU exits when shell needs input |
+| stdio subprocess pipes | No output captured |
+
+**Impact**: Cannot run interactive commands via QEMU serial. The kernel boots and shell is visible, but commands cannot be sent.
+
+**Workaround**:
+- Use RPi3 hardware for interactive shell testing
+- Or use QEMU for output-only observation (boot log capture)
+- MCP server works for read-only serial log monitoring
 
 ### Environment Details
 - QEMU version: 6.2.0 (Debian 1:6.2+dfsg-2ubuntu6.30)
 - DTB: bcm2710-rpi-3-b.dtb (34731 bytes, last modified Aug 17)
 - initramfs: test/build/initramfs.cpio (44051456 bytes)
-- Kernel: qemu.bin (3898256 bytes, ARM64 Image format)
-
-### Workaround
-- Direct QEMU testing with virt machine type works for observing boot output
-- MCP server bidirectional serial communication not working
+- Kernel: asterina.img (3898256 bytes)

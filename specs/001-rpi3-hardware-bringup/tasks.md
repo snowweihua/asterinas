@@ -71,6 +71,7 @@
 - [x] A501 Run the documented AArch64 virt boot with the correct AArch64 initramfs and verify `/ #` — QEMU now boots to shell and `ls` works after using RPi3-style relative timer (`cntp_tval_el0`) instead of absolute compare timer (`cntp_cval_el0`).
 - [x] A502 Run affected crate checks/tests and `./tools/format_all.sh --check` (attempted: `format_all.sh --check` reported many pre-existing rustfmt diffs across the tree; documentation-only changes do not affect build).
 - [ ] A503 Establish a pre-merge gate covering QEMU boot, RPi3 shell smoke tests, TFTP validation, and no stale deployment paths.
+- [x] A504 **Known Issue**: QEMU serial output works with raspi3b machine type (`-serial null -serial file:/tmp/qemu_serial.log`), but serial input does not work. Cannot send commands to QEMU shell. Use RPi3 hardware for interactive testing.
 
 ---
 
