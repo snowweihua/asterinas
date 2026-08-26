@@ -103,13 +103,14 @@
 
 **Approach**: Minimal first — get AP to at least start executing code. Success = AP prints a marker or reaches `init_on_ap()`. Then iterate to full function.
 
-- [ ] B401 Enable `boot_all_aps()` for RPi3 in `late_init_on_bsp()`. Change empty RPi3 branch to call `crate::boot::smp::boot_all_aps()` — this routes to spin-table via `boot/smp.rs:115-123`.
-- [ ] B402 Add early debug markers in `ap_boot.S` using UART putchar at fixed PA `0x3F201000` (PL011 DATA register). Add markers: at `ap_boot_entry` entry, after MMU enable, after BSS zero, before branching to `ap_early_entry`.
-- [ ] B403 Add AP-started marker in `smp_rpi3.rs` — have AP write to marker region at `0x41000` after it reads `hold_flag=1` and before branching to entry. Change BSP polling to check AP-written marker instead of BSP self-test write.
-- [ ] B404 Build, deploy, power cycle. Analyze serial output:
-  - If no AP marker: spin-table protocol not waking APs — check mailbox IRQ trigger or try simpler `dsb+sev` only.
-  - If AP starts but panics at `init_on_ap()`: first progress achieved — implement minimal `init_on_ap()`.
-  - If AP reaches online marker: major progress — proceed to B5.
+- [x] B401 Enable `boot_all_aps()` for RPi3 in `late_init_on_bsp()`. Done — spin-table bringup executes.
+- [x] B402 Add early debug markers in `ap_boot.S`. Done — markers at entry, MMU enable, BSS zero, before jump.
+- [x] B403 Add AP-started marker in `smp_rpi3.rs`. Done — BSP polls marker region at 0x41000.
+- [x] B404 Build, deploy, power cycle. Result: No AP markers appear. **APs do not wake up**.
+
+**B404 Key Finding**: Spin-table address bug found and fixed. DTB returns offsets (0xe0, 0xe8, 0xf0) not full addresses. Fixed by adding ARM_LOCAL_PA (0x4000_0000). But APs still don't wake after multiple wake mechanism attempts.
+
+**Current hypothesis**: Secondary CPUs on RPi3 may need GPU firmware to release them before spin-table wake works. VC firmware manages CPU power state; `sev` may not be sufficient to wake CPUs not in WFE.
 
 ### B5 — Implement minimal `init_on_ap()` (if B404 shows AP starts)
 
@@ -125,7 +126,7 @@
 
 ---
 
-**Phase B Summary**: Spin-table is connected but `boot_all_aps()` is not called for RPi3. `init_on_ap()` is `unimplemented!()`. Approach: minimal first — enable bringup, add debug markers, verify AP starts, then implement `init_on_ap()` incrementally.
+**Phase B Summary**: `boot_all_aps()` is now called for RPi3 and spin-table executes. Spin-table address bug fixed (offset vs full address). Debug markers confirm APs never reach boot stub entry. Secondary CPUs don't wake from `sev`. May need GPU firmware release mechanism or PSCI SMC instead of spin-table. Need further investigation before implementing `init_on_ap()`.
 
 ---
 
