@@ -68,6 +68,59 @@ For opencode, MCP servers are registered in `.opencode/opencode.json` and for De
 ```
 Example: `aarch64/cpu: replace spin::Once with SimpleOnce — fixes RPi3 boot hang at enable_cpu_features`
 
+## Testing
+
+### Smoke Test
+
+A smoke test verifies basic kernel functionality before committing AArch64 changes.
+
+**What it tests:**
+- Shell prompt (`~ #`) appears
+- `echo` command works
+- `ls /` command works
+
+**Running the smoke test:**
+```bash
+make smoke_test
+# or directly
+python3 test/rpi3/smoke_test.py
+```
+
+**Pre-commit hook:**
+- A git hook at `hooks/pre-commit` automatically runs the smoke test when AArch64-related files change
+- Files monitored: `ostd/src/arch/aarch64`, `kernel/src/arch/aarch64`, `test/rpi3`, `tools/qemu_mcp`, `specs/001-rpi3`
+
+**To skip the hook temporarily:**
+```bash
+git commit --no-verify -m "message"
+# or
+SKIP_SMOKE_TEST=1 git commit -m "message"
+```
+
+**Requirements:**
+- `/tmp/asterina.img` — kernel binary (build with `make build` in WSL2)
+- `/home/snow/asterinas/test/build/initramfs.cpio` — initramfs (build with `make build OSDK_TARGET_ARCH=aarch64`)
+
+### QEMU MCP Tools
+
+For interactive QEMU testing:
+```bash
+# Start QEMU in tmux
+qemu_start_tool()
+
+# Read serial output
+qemu_read_serial_tool(wait_seconds=1, max_lines=100)
+
+# Send command
+qemu_write_serial_tool("echo hello")
+
+# Stop QEMU
+qemu_stop_tool()
+
+# Or run one command and stop
+qemu_run_tool(command="echo test", boot_wait_seconds=8)
+```
+
 ## Development rules
 
 ### Skipping is not fixing, just avoiding, Don't treat skipping as fixing!
