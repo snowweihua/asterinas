@@ -1,0 +1,59 @@
+#!/bin/bash
+# pre-commit hook to run AArch64 smoke test
+#
+# This hook runs the QEMU smoke test if any AArch64-related files are changed.
+# To skip this hook temporarily, use: git commit --no-verify
+
+set -e
+
+# Only run for aarch64_support branch or when OSDK_TARGET_ARCH=aarch64
+BRANCH=$(git symbolic-ref --short HEAD 2>/dev/null || echo "")
+
+# Check if this is an AArch64-related change
+AARCH64_FILES=$(git diff --cached --name-only | grep -E "^(ostd/src/arch/aarch64|kernel/src/arch/aarch64|test/rpi3|tools/qemu_mcp|specs/001-rpi3)" || true)
+
+if [ -z "$AARCH64_FILES" ]; then
+    echo "No AArch64-related files changed, skipping smoke test."
+    exit 0
+fi
+
+echo "=== AArch64-related files changed: ==="
+echo "$AARCH64_FILES"
+echo ""
+
+# Check if smoke test is requested
+if [ "$SKIP_SMOKE_TEST" = "1" ]; then
+    echo "SKIP_SMOKE_TEST=1, skipping smoke test."
+    exit 0
+fi
+
+# Check if kernel exists
+if [ ! -f "/tmp/asterina.img" ]; then
+    echo "WARNING: /tmp/asterina.img not found."
+    echo "Build with: cargo osdk build --release --target-arch aarch64 --boot-method qemu-direct --scheme aarch64-rpi3"
+    echo "Skipping smoke test."
+    exit 0
+fi
+
+# Check if initramfs exists
+if [ ! -f "/home/snow/asterinas/test/build/initramfs.cpio" ]; then
+    echo "WARNING: initramfs not found."
+    echo "Build with: make build OSDK_TARGET_ARCH=aarch64"
+    echo "Skipping smoke test."
+    exit 0
+fi
+
+echo "=== Running AArch64 smoke test ==="
+echo ""
+
+# Run the smoke test
+if python3 test/rpi3/smoke_test.py; then
+    echo ""
+    echo "=== Smoke test PASSED ==="
+    exit 0
+else
+    echo ""
+    echo "=== Smoke test FAILED ==="
+    echo "To skip this hook temporarily, use: git commit --no-verify"
+    exit 1
+fi
