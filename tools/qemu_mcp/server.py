@@ -50,8 +50,7 @@ def _qemu_command(kernel: str, initramfs: str, memory: str, cpus: int) -> list[s
         "-m", "1G",
         "-display", "none",
         "-monitor", "none",
-        "-chardev", "pipe,id=seriain,path=/tmp/qemu_serial_in",
-        "-serial", "chardev:seriain",
+        "-serial", "null",
         "-serial", "file:/tmp/qemu_serial.log",
         "-dtb", "/mnt/d/pi_sd/bcm2710-rpi-3-b.dtb",
         "-kernel", kernel,
@@ -103,11 +102,6 @@ def qemu_start_tool(
             os.remove("/tmp/qemu_serial.log")
         except FileNotFoundError:
             pass
-        try:
-            os.remove("/tmp/qemu_serial_in")
-        except FileNotFoundError:
-            pass
-        os.mkfifo("/tmp/qemu_serial_in")
         _process = subprocess.Popen(
             _qemu_command(kernel, initramfs, memory, cpus),
             stdin=subprocess.DEVNULL,
