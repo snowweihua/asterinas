@@ -272,3 +272,40 @@ Three issues prevented PL011 from working on RPi3:
 - `echo hello` produces correct output
 - `ls` command is received and processed
 - `/bin/reboot -f` resets the board successfully
+
+## SMP Bringup Investigation (2026-08-26)
+
+### Key Findings
+
+**B401 Complete**: `boot_all_aps()` is now called for RPi3 in `late_init_on_bsp()`. The spin-table bringup executes but APs do not wake up.
+
+**Spin-table address bug found and fixed**:
+- The DTB cpu-release-addr returns offsets (0xe0, 0xe8, 0xf0), NOT full addresses
+- Full addresses are ARM_LOCAL_BASE (0x4000_0000) + offset = 0x400000e0, 0x400000e8, 0x400000f0
+- Before fix: wrote to 0xe0 (invalid) instead of 0x400000e0
+- After fix: writes to correct addresses but APs still don't wake
+
+**Debug markers added to ap_boot.S**:
+- Early markers at ap_boot_entry (0x41 0x50 = "AP"), after MMU enable (0x52 0x4D = "RM"), after BSS (0x42 0x53 = "BS"), before jump (0x44 0x54 = "DT")
+- No AP markers appear in serial output - APs never reach ap_boot_entry
+
+**Wake mechanism attempts**:
+1. `dsb ish` + `sev` + `isb` alone: APs don't wake
+2. Multiple `dsb sy` + `sev`: APs don't wake
+3. Mailbox write (0x88, 0x90, 0x98) + `dsb sy` + `sev`: APs don't wake
+
+### Hypothesis: Secondary CPUs Need GPU Firmware Release
+
+The RPi3 VideoCore (VC) firmware manages secondary CPU power-on. The secondary CPUs are held in a special state until the VC firmware releases them via ARM_LOCAL registers.
+
+Evidence:
+- The VC firmware loads `armstub8.bin` before U-Boot
+- "Booting 3 processors" message suggests kernel detects CPUs but can't wake them
+- Standard `sev` wake-up may not work because CPUs are not in WFE state
+
+### Next Steps for B404
+
+1. Investigate ARM_LOCAL core reset register (ARM_LOCAL + 0x00 or 0x10) to see if secondary CPUs need explicit reset deassertion
+2. Consider using PSCI SMC instead of spin-table (RPi3 DTB uses "smc" method for PSCI)
+3. Check if mailbox interrupt to secondary CPUs (via ARM_LOCAL + 0x84/0x88/0x8C) is needed to wake from WFI
+4. Research armstub8.bin role - does it need to be configured differently for kernel SMP boot?
