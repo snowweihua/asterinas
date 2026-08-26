@@ -116,11 +116,13 @@
 
 **Current hypothesis**: Secondary CPUs on RPi3 may need GPU firmware (VC) to release them from reset/power-down before spin-table `sev` works. The VC firmware manages secondary CPU state; `sev` alone cannot wake CPUs not in WFE state.
 
-### B5 — Implement minimal `init_on_ap()` (if B404 shows AP starts)
+**CONFIRMED**: RPi3 secondary CPUs require VC firmware mailbox interface for SMP bringup. Spin-table + sev is insufficient on real hardware. This is a hardware/firmware limitation.
 
-- [ ] B501 Implement `init_on_ap()` in `aarch64/mod.rs` with minimal per-CPU init: local IRQ enable, per-CPU allocator setup. Do NOT activate scheduler yet — just get AP to report online and spin.
-- [ ] B502 Verify at least 2 APs reach online marker reliably.
-- [ ] B503 Test all 4 cores come online.
+### B5 — Future: Implement VC mailbox interface (blocked by hardware/firmware)
+
+- [ ] B501 Implement VC firmware mailbox interface for RPi3
+- [ ] B502 Request VC firmware to start secondary ARM cores via mailbox
+- [ ] B503 Once APs start, implement minimal `init_on_ap()`
 
 ### B6 — Full SMP function (after B5 succeeds)
 

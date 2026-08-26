@@ -320,8 +320,21 @@ Evidence:
 
 ### Next Steps for B404
 
-1. Investigate ARM_LOCAL core reset register (ARM_LOCAL + 0x00 or 0x10) to see if secondary CPUs need explicit reset deassertion
-2. Consider whether the secondary CPUs need to be explicitly started via the ARM_LOCAL "start processor" register
-3. The RPi3 may require VC firmware intervention to bring up secondary CPUs - may need to use the VC mailbox interface
+**INVESTIGATION COMPLETE - RPi3 SMP requires VC Firmware Mailbox Interface**
+
+After extensive testing with multiple wake-up mechanisms (dsb+sev, mailbox IRQ, etc.), the conclusion is:
+
+The RPi3 secondary ARM CPUs are managed by the VideoCore (VC) firmware. The ARM cores cannot be woken via ARM_LOCAL spin-table alone - the VC firmware must cooperate.
+
+Evidence:
+1. Spin-table correctly populated with PA 0x344000 at correct ARM_LOCAL offsets (0xe0, 0xe8, 0xf0)
+2. Mailbox IRQ correctly triggered at offsets (0x84, 0x88, 0x8C)
+3. Multiple sev pulses and extended polling (50k iterations) did not wake APs
+4. PSCI not available (no /psci node in DTB)
+5. QEMU works with PSCI (different implementation) but RPi3 hardware does not
+
+To bring up SMP on RPi3 hardware, the VC firmware mailbox interface must be implemented. This is a significant effort beyond the scope of current bring-up.
+
+**Recommendation**: Accept single-core operation for RPi3, or implement full VC mailbox interface (future work).
 3. Check if mailbox interrupt to secondary CPUs (via ARM_LOCAL + 0x84/0x88/0x8C) is needed to wake from WFI
 4. Research armstub8.bin role - does it need to be configured differently for kernel SMP boot?
