@@ -108,9 +108,13 @@
 - [x] B403 Add AP-started marker in `smp_rpi3.rs`. Done — BSP polls marker region at 0x41000.
 - [x] B404 Build, deploy, power cycle. Result: No AP markers appear. **APs do not wake up**.
 
-**B404 Key Finding**: Spin-table address bug found and fixed. DTB returns offsets (0xe0, 0xe8, 0xf0) not full addresses. Fixed by adding ARM_LOCAL_PA (0x4000_0000). But APs still don't wake after multiple wake mechanism attempts.
+**B404 Key Findings**:
+1. Spin-table address bug fixed — was writing VA `0xffff000000377b4c` instead of PA `0x344000`
+2. DTB returns offsets (0xe0, 0xe8, 0xf0) not full addresses — now adding ARM_LOCAL_PA correctly
+3. PSCI not available on this RPi3 (no /psci node in DTB)
+4. APs still don't wake after trying: spin-table + mailbox IRQ + `dsb sy` + `sev`
 
-**Current hypothesis**: Secondary CPUs on RPi3 may need GPU firmware to release them before spin-table wake works. VC firmware manages CPU power state; `sev` may not be sufficient to wake CPUs not in WFE.
+**Current hypothesis**: Secondary CPUs on RPi3 may need GPU firmware (VC) to release them from reset/power-down before spin-table `sev` works. The VC firmware manages secondary CPU state; `sev` alone cannot wake CPUs not in WFE state.
 
 ### B5 — Implement minimal `init_on_ap()` (if B404 shows AP starts)
 

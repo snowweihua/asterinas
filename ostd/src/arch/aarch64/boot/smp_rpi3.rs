@@ -58,6 +58,40 @@ const CPU_SPIN_TABLE_OFFSETS: [usize; 4] = [
     0x0F0, // CPU 3
 ];
 
+/// PSCI function IDs for RPi3 (using SMC conduit)
+const PSCI_CPU_ON: u64 = 0x84000001;
+const PSCI_SUCCESS: u64 = 0;
+
+/// Read the MPIDR_EL1 for a given CPU index from the DTB.
+fn get_mpidr(cpu_index: u32) -> Option<u64> {
+    let fdt = DEVICE_TREE.get()?;
+    let cpus = fdt.find_node("/cpus")?;
+    let mut current_cpu: u32 = 0;
+    for child in cpus.children() {
+        if child.reg().is_some() {
+            if current_cpu == cpu_index {
+                if let Some(prop) = child.property("reg") {
+                    let v = prop.value;
+                    if v.len() >= 8 {
+                        return Some(u64::from_le_bytes(v[0..8].try_into().ok()?));
+                    }
+                }
+            }
+            current_cpu += 1;
+        }
+    }
+    None
+}
+
+/// Check if PSCI is available by looking for /psci node in DTB.
+fn is_psci_available() -> bool {
+    let fdt = match DEVICE_TREE.get() {
+        Some(f) => f,
+        None => return false,
+    };
+    fdt.find_node("/psci").is_some()
+}
+
 /// Read the `cpu-release-addr` property from the DTB for the given logical CPU index.
 fn get_cpu_release_addr(cpu_index: u32) -> Option<u64> {
     let fdt = match DEVICE_TREE.get() {
@@ -103,6 +137,24 @@ fn get_cpu_release_addr(cpu_index: u32) -> Option<u64> {
     None
 }
 
+fn smc_call(func: u64, arg0: u64, arg1: u64, arg2: u64) -> u64 {
+    let result: u64;
+    unsafe {
+        core::arch::asm!(
+            "smc #0",
+            inout("x0") func => result,
+            in("x1") arg0,
+            in("x2") arg1,
+            in("x3") arg2,
+        );
+    }
+    result
+}
+
+unsafe extern "C" {
+    fn ap_boot_entry();
+}
+
 pub(crate) unsafe fn bringup_all_aps_rpi3(
     info_ptr: *const PerApRawInfo,
     pt_ptr: Paddr,
@@ -125,7 +177,6 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
     // Copy boot stub to PA 0x40000
     unsafe {
         core::ptr::copy_nonoverlapping(ap_boot_src, ap_boot_dst_va as *mut u8, ap_boot_size);
-        // Clean entire copied region to point of coherency
         for offset in (0..ap_boot_size).step_by(64) {
             core::arch::asm!(
                 "dc cvac, {addr}",
@@ -144,9 +195,7 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
             core::ptr::write_volatile(0x41000 as *mut u8, marker_test);
             core::arch::asm!("dsb ish");
             let readback = core::ptr::read_volatile(0x41000 as *const u8);
-            // Clear marker
             core::ptr::write_volatile(0x41000 as *mut u8, 0x55);
-            // Result read via AP boot marker region
             let _ = readback;
         }
     }
@@ -156,28 +205,60 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
 
     let ap_entry_paddr = AP_BOOT_DEST_PA as u64;
 
+    // Clear marker region before waking APs
+    unsafe {
+        core::ptr::write_volatile(0x41000 as *mut u8, 0x55);
+    }
+
+    // Try PSCI via SMC first
+    #[cfg(target_arch = "aarch64")]
+    if is_psci_available() {
+        log::info!("[a2-smp] rpi3: PSCI available, trying SMC CPU_ON");
+        for cpu_id in 1..num_cpus {
+            let mpidr = match get_mpidr(cpu_id) {
+                Some(m) => m,
+                None => {
+                    log::info!("[a2-smp] rpi3: no MPIDR for CPU {}", cpu_id);
+                    continue;
+                }
+            };
+            let info = &*info_ptr.add(cpu_id as usize - 1);
+            let stack_top = info.stack_top as u64;
+
+            log::info!("[a2-smp] rpi3: PSCI CPU_ON cpu={} mpidr={:#x} entry={:#x} stack={:#x}",
+                cpu_id, mpidr, ap_entry_paddr, stack_top);
+
+            let result = smc_call(PSCI_CPU_ON, mpidr, ap_entry_paddr, stack_top);
+            log::info!("[a2-smp] rpi3: PSCI result={:#x}", result);
+
+            // Small delay
+            for _ in 0..1000 { core::hint::spin_loop(); }
+
+            let val = unsafe { core::ptr::read_volatile(0x41000 as *const u8) };
+            if val != 0x55 && val != 0 {
+                log::info!("[a2-smp] rpi3: AP {} started via PSCI!", cpu_id);
+            }
+        }
+    } else {
+        log::info!("[a2-smp] rpi3: PSCI not available, using spin-table");
+    }
+
+    // Fall back to spin-table if PSCI didn't work
     for cpu_id in 1..num_cpus {
         let release_addr = match get_cpu_release_addr(cpu_id) {
             Some(addr) => addr,
             None => {
                 #[cfg(target_arch = "aarch64")]
-                log::info!("[a2-smp] rpi3: no release addr for CPU {}, skipping", cpu_id);
+                log::info!("[a2-smp] rpi3: no release addr for CPU {}", cpu_id);
                 continue;
             }
         };
         #[cfg(target_arch = "aarch64")]
-        log::info!("[a2-smp] rpi3: CPU {} release_addr={:#x}", cpu_id, release_addr);
+        log::info!("[a2-smp] rpi3: CPU {} spin-table@{:#x}", cpu_id, release_addr);
 
-        // Validate the spin-table address before writing to it
-        // Two-phase protocol:
-        // Phase 1: BSP writes __aps_entry, __aps_hold_flag, pt_root, info_array to AP_INFO_BASE
-        // Phase 2: BSP triggers mailbox IRQ, AP reads hold_flag, then entry, and branches
-        let info_base_va = AP_INFO_BASE; // identity-mapped PA
+        let info_base_va = AP_INFO_BASE;
 
-        // Write all info region values with proper cache maintenance
-        // Order: entry (0x08), then flag (0x00), then pt_root (0x10), then info_array (0x18)
         unsafe {
-            // Write __aps_entry at offset 0x08
             core::arch::asm!(
                 "dsb ishst",
                 "str {val}, [{addr}, #8]",
@@ -187,7 +268,6 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
                 options(nostack, preserves_flags)
             );
 
-            // Write __aps_hold_flag at offset 0x00 = 1
             core::arch::asm!(
                 "dsb ishst",
                 "str {val}, [{addr}]",
@@ -197,7 +277,6 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
                 options(nostack, preserves_flags)
             );
 
-            // Write __boot_pt_root at offset 0x10
             core::arch::asm!(
                 "dsb ishst",
                 "str {val}, [{addr}, #16]",
@@ -207,7 +286,6 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
                 options(nostack, preserves_flags)
             );
 
-            // Write __info_array at offset 0x18
             core::arch::asm!(
                 "dsb ishst",
                 "str {val}, [{addr}, #24]",
@@ -219,7 +297,6 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
             );
         }
 
-        // Write spin-table value to DTB release address (BCM2836 spin-table)
         #[cfg(target_arch = "aarch64")]
         {
             let spin_table_va = crate::mm::paddr_to_vaddr(release_addr as Paddr);
@@ -258,7 +335,7 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
         for _ in 0..10000 {
             let val = unsafe { core::ptr::read_volatile(0x41000 as *const u8) };
             if val != 0x55 && val != 0 {
-                log::info!("[a2-smp] rpi3: AP started!");
+                log::info!("[a2-smp] rpi3: AP {} started via spin-table!", cpu_id);
                 break;
             }
         }
