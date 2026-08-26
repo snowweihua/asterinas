@@ -237,6 +237,21 @@ After rebuild at commit 572043e2, QEMU with raspi3b machine type produces **zero
 - virt machine type produces output but hangs after banner
 - The raspi3b issue is not a code problem - even kernel rebuilt at 11aca22 doesn't work
 - This suggests an environmental issue (QEMU version, DTB, initramfs mismatch)
+- CPU IS running when checked via QEMU monitor (PC=ffff0000001c0268)
+- DTB is correctly detected as "raspberrypi,3-model-b" with compatible string
+- Board type detection works correctly (is_rpi3() returns true)
+- Kernel uses mini-UART at 0x3F21_5000 for RPi3 (not PL011)
+
+### Analysis
+- QEMU's raspi3b machine type may not properly emulate mini-UART at 0x3F21_5000
+- Or the kernel is outputting to a UART address that QEMU doesn't emulate
+- The serial output appears to be going nowhere
+
+### Environment Details
+- QEMU version: 6.2.0 (Debian 1:6.2+dfsg-2ubuntu6.30)
+- DTB: bcm2710-rpi-3-b.dtb (34731 bytes, last modified Aug 17)
+- initramfs: test/build/initramfs.cpio (44051456 bytes)
+- Kernel: qemu.bin (3898256 bytes, ARM64 Image format)
 
 ### Workaround
 - Direct QEMU testing with virt machine type works for observing boot output
