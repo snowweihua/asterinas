@@ -17,6 +17,12 @@
 
 .global ap_boot_entry
 ap_boot_entry:
+    /* AP early marker - AP started */
+    mov     x0, #0x41
+    bl      ap_putchar
+    mov     x0, #0x50
+    bl      ap_putchar
+
     /* Save x0 (context ID / PerApRawInfo pointer) to x19 */
     mov     x19, x0
 
@@ -45,6 +51,12 @@ ap_boot_entry:
     msr     sctlr_el1, x0
     isb
 
+    /* AP early marker - after MMU enable */
+    mov     x0, #0x52
+    bl      ap_putchar
+    mov     x0, #0x4D
+    bl      ap_putchar
+
     /* Set up stack from PerApRawInfo.stack_top (x19 + 0) */
     ldr     x0, [x19, #0]            /* Load stack_top */
     mov     sp, x0
@@ -72,9 +84,20 @@ ap_boot_entry:
     cmp     x0, x1
     blt     1b
 2:
+    /* AP early marker - after BSS zero */
+    mov     x0, #0x42
+    bl      ap_putchar
+    mov     x0, #0x53
+    bl      ap_putchar
 
     /* x19 still has PerApRawInfo pointer - pass it as argument to ap_early_entry */
     mov     x0, x19
+
+    /* AP early marker - before jump to Rust */
+    mov     x0, #0x44
+    bl      ap_putchar
+    mov     x0, #0x54
+    bl      ap_putchar
 
     /* Jump to Rust ap_early_entry (now using VA) */
     ldr     x1, =ap_early_entry
@@ -140,3 +163,12 @@ ap_flush_dcache_level:
 .align 8
 __boot_page_table_pointer:
     .quad   0
+
+/* Simple UART putchar for AP early debug - writes to PL011 at PA 0x3F201000 */
+ap_putchar:
+    /* x0 = character to print */
+    /* PL011 UART DATA register at PA 0x3F201000 */
+    ldr     x1, =0x3F201000
+    /* Write character to UART DATA register */
+    str     x0, [x1]
+    ret

@@ -81,13 +81,17 @@ fn get_cpu_release_addr(cpu_index: u32) -> Option<u64> {
             if current_cpu == cpu_index {
                 if let Some(prop) = child.property("cpu-release-addr") {
                     let v = prop.value;
-                    if v.len() >= 8 {
-                        let addr = u64::from_be_bytes(v[0..8].try_into().ok()?);
-                        return Some(addr);
+                    let offset = if v.len() >= 8 {
+                        u64::from_be_bytes(v[0..8].try_into().ok()?)
                     } else if v.len() >= 4 {
-                        let addr = u32::from_be_bytes(v[0..4].try_into().ok()?) as u64;
-                        return Some(addr);
-                    }
+                        u32::from_be_bytes(v[0..4].try_into().ok()?) as u64
+                    } else {
+                        log::info!("[a2-smp] rpi3: cpu-release-addr too short");
+                        return None;
+                    };
+                    // DTB returns offset within ARM_LOCAL peripheral, not full address
+                    // BCM2836 ARM_LOCAL base is 0x4000_0000
+                    return Some(ARM_LOCAL_PA as u64 + offset);
                 }
                 log::info!("[a2-smp] rpi3: no cpu-release-addr prop");
                 return None;
@@ -157,10 +161,12 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
             Some(addr) => addr,
             None => {
                 #[cfg(target_arch = "aarch64")]
-                log::info!("[a2-smp] rpi3: no release addr, skipping");
+                log::info!("[a2-smp] rpi3: no release addr for CPU {}, skipping", cpu_id);
                 continue;
             }
         };
+        #[cfg(target_arch = "aarch64")]
+        log::info!("[a2-smp] rpi3: CPU {} release_addr={:#x}", cpu_id, release_addr);
 
         // Validate the spin-table address before writing to it
         // Two-phase protocol:
@@ -228,18 +234,25 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
                     options(nostack, preserves_flags)
                 );
             }
+            log::info!("[a2-smp] rpi3: wrote spin-table@{:#x}={:#x}", release_addr, ap_entry_paddr);
         }
 
         unsafe {
             let mailbox_va = crate::mm::paddr_to_vaddr(0x4000_0000 as crate::mm::Paddr);
             let offset = match cpu_id {
-                1 => 0x84usize,
-                2 => 0x88,
-                3 => 0x8C,
-                _ => 0x84,
+                1 => 0x88usize,
+                2 => 0x90,
+                3 => 0x98,
+                _ => 0x88,
             };
-            core::ptr::write_volatile((mailbox_va + offset) as *mut u32, 1);
-            core::arch::asm!("dsb sy", "sev", "isb", options(nostack));
+            core::ptr::write_volatile((mailbox_va + offset) as *mut u32, 0x1);
+            core::arch::asm!(
+                "dsb sy",
+                "sev",
+                "dsb sy",
+                "isb",
+                options(nostack)
+            );
         }
 
         for _ in 0..10000 {

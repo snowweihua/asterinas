@@ -41,6 +41,7 @@ pub(crate) unsafe fn late_init_on_bsp() {
     }
     let io_mem_builder = io::construct_io_mem_allocator_builder();
     if crate::arch::board::BoardType::cached() == 2 {
+        unsafe { crate::boot::smp::boot_all_aps() };
     } else {
         unsafe { crate::boot::smp::boot_all_aps() };
     }
