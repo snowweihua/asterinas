@@ -81,7 +81,7 @@ impl IoMemAllocatorBuilder {
     ///
     /// User must ensure the range doesn't belong to physical memory.
     pub(crate) unsafe fn new(ranges: Vec<Range<usize>>) -> Self {
-        info!(
+        debug!(
             "Creating new I/O memory allocator builder, ranges: {:#x?}",
             ranges
         );
