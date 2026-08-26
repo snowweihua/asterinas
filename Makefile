@@ -380,6 +380,11 @@ check: initramfs $(CARGO_OSDK)
 	@# Check typos
 	@typos
 
+.PHONY: smoke_test
+smoke_test:
+	@echo "Running AArch64 smoke test on QEMU..."
+	@python3 test/rpi3/smoke_test.py
+
 .PHONY: clean
 clean:
 	@echo "Cleaning up Asterinas workspace target files"
