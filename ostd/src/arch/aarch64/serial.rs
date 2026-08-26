@@ -3,9 +3,8 @@
 //! AArch64 console I/O.
 //!
 //! On QEMU the PL011 at 0x0900_0000 is used.  On the Raspberry Pi 3 the
-//! firmware and U-Boot bring up the mini-UART (AUX UART1) at GPIO 14/15,
-//! which is what the serial capture sees.  Route runtime console output to
-//! the mini-UART on RPi3 and keep the PL011 path for QEMU.
+//! PL011 UART at GPIO 14/15 ALT0 is used for serial console.  The mini-UART
+//! (AUX UART1) at GPIO 14/15 ALT5 is not used.
 //!
 //! All runtime MMIO is done through the kernel high-half mapping
 //! (crate::mm::kspace::KERNEL_BASE_VADDR) so that the peripheral pages are
@@ -61,6 +60,8 @@ const FR_RXFE: u32 = 1 << 4;
 const IM_RXIM: u32 = 1 << 4;
 /// PL011 IMSC (Interrupt Mask Set/Clear) is at offset 0x038, not 0x004 (which is RSR/ECR).
 const PL011_IMSC_OFFSET: usize = 0x038;
+/// PL011 ICR (Interrupt Clear Register) is at offset 0x044.
+const PL011_ICR_OFFSET: usize = 0x044;
 // PL011 line control and control register offsets.
 const PL011_IBRD_OFFSET: usize = 0x024;
 const PL011_FBRD_OFFSET: usize = 0x028;
@@ -73,6 +74,76 @@ const PL011_LCR_H_WLEN_8: u32 = 3 << 5;
 const PL011_LCR_H_FEN: u32 = 1 << 4;
 
 static PL011_INITIALIZED: AtomicBool = AtomicBool::new(false);
+static PL011_INIT_DONE: AtomicBool = AtomicBool::new(false);
+
+fn pl011_gpio_base_va() -> usize {
+    GPIO_BASE_PA + KERNEL_BASE_VADDR
+}
+
+fn pl011_gpio_init() {
+    let gpio_base = pl011_gpio_base_va();
+    let gpfsel1 = (gpio_base + GPIO_GPFSEL1_OFFSET) as *mut u32;
+    let mut val = unsafe { core::ptr::read_volatile(gpfsel1) };
+    val &= !((7 << 12) | (7 << 15));
+    val |= (4 << 12) | (4 << 15);
+    unsafe { core::ptr::write_volatile(gpfsel1, val) };
+
+    unsafe { core::ptr::write_volatile((gpio_base + GPIO_GPPUD_OFFSET) as *mut u32, 0) };
+    for _ in 0..150 {
+        unsafe { core::arch::asm!("nop", options(nomem, nostack, preserves_flags)) };
+    }
+    unsafe {
+        core::ptr::write_volatile(
+            (gpio_base + GPIO_GPPUDCLK0_OFFSET) as *mut u32,
+            GPIO_PIN_14 | GPIO_PIN_15,
+        )
+    };
+    for _ in 0..150 {
+        unsafe { core::arch::asm!("nop", options(nomem, nostack, preserves_flags)) };
+    }
+    unsafe { core::ptr::write_volatile((gpio_base + GPIO_GPPUD_OFFSET) as *mut u32, 0) };
+    unsafe { core::ptr::write_volatile((gpio_base + GPIO_GPPUDCLK0_OFFSET) as *mut u32, 0) };
+}
+
+fn pl011_init() {
+    if PL011_INIT_DONE.load(Ordering::Relaxed) {
+        return;
+    }
+    PL011_INIT_DONE.store(true, Ordering::Relaxed);
+
+    pl011_gpio_init();
+
+    unsafe {
+        let aux_base = miniuart_base_va();
+        let aux_en = core::ptr::read_volatile(
+            (aux_base + MINIUART_AUX_ENABLES_OFFSET) as *const u32,
+        );
+        core::ptr::write_volatile(
+            (aux_base + MINIUART_AUX_ENABLES_OFFSET) as *mut u32,
+            aux_en & !MINIUART_AUX_ENABLES_MINIUART,
+        );
+        for _ in 0..150 {
+            core::arch::asm!("nop", options(nomem, nostack, preserves_flags));
+        }
+        core::ptr::write_volatile(
+            (aux_base + MINIUART_AUX_ENABLES_OFFSET) as *mut u32,
+            aux_en,
+        );
+    }
+
+    pl011_ensure_init();
+
+    unsafe {
+        let base = pl011_base_va();
+        core::ptr::write_volatile(
+            (base + PL011_ICR_OFFSET) as *mut u32,
+            0x7FF,
+        );
+        set_im(IM_RXIM);
+        crate::arch::bcm2836_irq::enable_uart_irq();
+    }
+    core::sync::atomic::fence(Ordering::SeqCst);
+}
 
 fn is_rpi3() -> bool {
     crate::arch::board::BoardType::cached() == 2
@@ -118,9 +189,9 @@ fn pl011_ensure_init() {
         let base = pl011_base_va();
         // Disable the UART before configuring it.
         core::ptr::write_volatile((base + PL011_CR_OFFSET) as *mut u32, 0);
-        // Divisor for 115200-ish baud (QEMU ignores the exact value).
-        core::ptr::write_volatile((base + PL011_IBRD_OFFSET) as *mut u32, 1);
-        core::ptr::write_volatile((base + PL011_FBRD_OFFSET) as *mut u32, 0);
+        // Divisor for ~115200 baud.
+        core::ptr::write_volatile((base + PL011_IBRD_OFFSET) as *mut u32, 26);
+        core::ptr::write_volatile((base + PL011_FBRD_OFFSET) as *mut u32, 3);
         // 8N1 with FIFOs enabled.
         core::ptr::write_volatile(
             (base + PL011_LCR_H_OFFSET) as *mut u32,
@@ -196,15 +267,19 @@ fn miniuart_read() -> u8 {
     unsafe { (core::ptr::read_volatile(miniuart_io_va() as *const u32) & 0xff) as u8 }
 }
 
-pub(crate) fn init() {}
+pub(crate) fn init() {
+    if is_rpi3() {
+        pl011_init();
+    }
+}
 
 /// Returns the hardware IRQ number used by the runtime serial console.
 ///
-/// - RPi3: GPU IRQ 29 (AUX mini-UART).
+/// - RPi3: GPU IRQ 57 (PL011 UART).
 /// - QEMU `virt`: SPI 33 (PL011).
 pub fn irq_num() -> u8 {
     if is_rpi3() {
-        crate::arch::bcm2836_irq::MINIUART_IRQ_NUM as u8
+        crate::arch::bcm2836_irq::UART_IRQ_NUM as u8
     } else {
         33
     }
@@ -212,100 +287,22 @@ pub fn irq_num() -> u8 {
 
 pub fn init_rx_irq() {
     if is_rpi3() {
-        unsafe {
-            const MINIUART_IIR_OFFSET: usize = 0x48;
-            const MINIUART_LCR_OFFSET: usize = 0x4C;
-            const MINIUART_MCR_OFFSET: usize = 0x50;
-            const MINIUART_BAUD_OFFSET: usize = 0x68;
-
-            let base = miniuart_base_va();
-
-            // Preserve the baud rate U-Boot chose; reset modem control to a
-            // known value (RTS high, no flow control).
-            let aux_en_before =
-                core::ptr::read_volatile((base + MINIUART_AUX_ENABLES_OFFSET) as *const u32);
-            let baud_before =
-                core::ptr::read_volatile((base + MINIUART_BAUD_OFFSET) as *const u32) & 0xffff;
-
-            // Re-initialise the mini-UART from a known-good sequence. Disable
-            // RX/TX while configuring so the IER/FIFO setup is not raced by
-            // incoming data.
-            core::ptr::write_volatile(
-                (base + MINIUART_AUX_ENABLES_OFFSET) as *mut u32,
-                aux_en_before | MINIUART_AUX_ENABLES_MINIUART,
-            );
-            core::ptr::write_volatile((base + MINIUART_CNTL_OFFSET) as *mut u32, 0);
-
-            // 8-bit mode and clear DLAB so IER is the interrupt enable register.
-            core::ptr::write_volatile((base + MINIUART_LCR_OFFSET) as *mut u32, 3);
-            // RTS high, no auto flow control.
-            core::ptr::write_volatile((base + MINIUART_MCR_OFFSET) as *mut u32, 0);
-            core::ptr::write_volatile((base + MINIUART_BAUD_OFFSET) as *mut u32, baud_before);
-
-            // Clear the FIFOs and any pending interrupt state.
-            core::ptr::write_volatile(
-                (base + MINIUART_IIR_OFFSET) as *mut u32,
-                0xC6, // clear receive and transmit FIFOs, keep FIFO enable bits
-            );
-
-            // Enable RX interrupts so input is driven by the AUX IRQ path.
-            // The AUX enable bit in the peripheral controller is set separately
-            // by the kernel driver; the timer tick still re-enables it as a
-            // fallback if the firmware clears it.
-            core::ptr::write_volatile((base + MINIUART_IER_OFFSET) as *mut u32, MINIUART_IER_RX);
-
-            // Re-route GPIO 14/15 to mini-UART (alt5) and disable pull-up/down.
-            // The firmware or U-Boot may leave these pins configured for a
-            // different function, which can make RX input appear dead even
-            // though TX output works.
-            let gpio_base = miniuart_gpio_base_va();
-            let gpfsel1 = (gpio_base + GPIO_GPFSEL1_OFFSET) as *mut u32;
-            let mut gpfsel1_val = core::ptr::read_volatile(gpfsel1);
-            gpfsel1_val &= !((7 << 12) | (7 << 15));
-            gpfsel1_val |= (2 << 12) | (2 << 15);
-            core::ptr::write_volatile(gpfsel1, gpfsel1_val);
-
-            core::ptr::write_volatile(
-                (gpio_base + GPIO_GPPUD_OFFSET) as *mut u32,
-                0,
-            );
-            for _ in 0..150 {
-                core::arch::asm!("nop", options(nomem, nostack, preserves_flags));
-            }
-            core::ptr::write_volatile(
-                (gpio_base + GPIO_GPPUDCLK0_OFFSET) as *mut u32,
-                GPIO_PIN_14 | GPIO_PIN_15,
-            );
-            for _ in 0..150 {
-                core::arch::asm!("nop", options(nomem, nostack, preserves_flags));
-            }
-            core::ptr::write_volatile((gpio_base + GPIO_GPPUD_OFFSET) as *mut u32, 0);
-            core::ptr::write_volatile((gpio_base + GPIO_GPPUDCLK0_OFFSET) as *mut u32, 0);
-
-            // Re-enable RX and TX.
-            core::ptr::write_volatile(
-                (base + MINIUART_CNTL_OFFSET) as *mut u32,
-                MINIUART_CNTL_RX_ENABLE | MINIUART_CNTL_TX_ENABLE,
-            );
-        }
+        set_im(IM_RXIM);
     } else {
         set_im(IM_RXIM);
     }
 }
 
-/// Re-enable the mini-UART RX interrupt at the peripheral interrupt controller.
-///
-/// The VideoCore firmware can overwrite ENABLE_IRQS_1 while managing its own
-/// interrupts, so the AUX enable bit may need to be set again after init.
+
 pub fn reenable_rx_irq() {
     if is_rpi3() {
-        crate::arch::bcm2836_irq::reenable_miniuart_irq();
+        crate::arch::bcm2836_irq::enable_uart_irq();
     }
 }
 
 pub fn has_data() -> bool {
     if is_rpi3() {
-        (miniuart_read_lsr() & MINIUART_LSR_RX_READY) != 0
+        (read_fr() & FR_RXFE) == 0
     } else {
         (read_fr() & FR_RXFE) == 0
     }
@@ -313,34 +310,24 @@ pub fn has_data() -> bool {
 
 pub fn receive() -> u8 {
     if is_rpi3() {
-        while (miniuart_read_lsr() & MINIUART_LSR_RX_READY) == 0 {}
-        miniuart_read()
+        while read_fr() & FR_RXFE != 0 {}
+        (read_dr() & 0xff) as u8
     } else {
-        while (read_fr() & FR_RXFE) != 0 {}
+        while read_fr() & FR_RXFE != 0 {}
         (read_dr() & 0xff) as u8
     }
 }
 
 pub fn send(data: u8) {
     if is_rpi3() {
-        // In interrupt context the UART RX handler calls back into the console
-        // to echo input.  If the TX FIFO is full we must not spin waiting for
-        // the host to drain it, because that would block the interrupt handler
-        // and lose incoming bytes.  In process context local IRQs are enabled,
-        // so blocking until space is available remains safe.
-        if !FORCE_BLOCKING_SEND.load(Ordering::Relaxed)
-            && !crate::arch::irq::is_local_enabled()
-        {
-            if (miniuart_read_stat() & MINIUART_STAT_TX_SPACE) != 0 {
-                miniuart_write(data);
-            }
-            return;
+        pl011_ensure_init();
+        while read_fr() & FR_TXFF != 0 {}
+        unsafe {
+            core::ptr::write_volatile((pl011_base_va() + 0x000) as *mut u32, data as u32);
         }
-        while (miniuart_read_stat() & MINIUART_STAT_TX_SPACE) == 0 {}
-        miniuart_write(data);
     } else {
         pl011_ensure_init();
-        while (read_fr() & FR_TXFF) != 0 {}
+        while read_fr() & FR_TXFF != 0 {}
         unsafe {
             core::ptr::write_volatile((pl011_base_va() + 0x000) as *mut u32, data as u32);
         }
