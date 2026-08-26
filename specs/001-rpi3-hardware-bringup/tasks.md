@@ -93,17 +93,39 @@
 - [x] B203 **BLOCKED**: Cannot validate cache/barriers because PSCI doesn't work on RPi3 and spin-table path is not connected (dead code).
 - [x] B204 **BLOCKED**: Cannot remove probes because SMP never starts — failure boundary never reached.
 
-### B3 — AP initialization
+### B3 — Connect spin-table to boot flow
 
-- [x] B301-B304 **BLOCKED**: Cannot initialize APs because PSCI CPU_ON fails immediately on RPi3 hardware. The spin-table implementation in `smp_rpi3.rs` is not connected (dead code).
+- [x] B301 Trace `smp_rpi3.rs`, `ap_boot.S`, `boot/smp.rs`, and `aarch64/mod.rs` end-to-end.
+- [x] B302 Found: spin-table is connected in module tree (`boot/mod.rs` includes `smp_rpi3`), but `boot_all_aps()` is never called for RPi3 — the RPi3 branch in `late_init_on_bsp()` is empty.
+- [x] B303 Found: `init_on_ap()` in `aarch64/mod.rs` is `unimplemented!()` — AP would panic even if it started.
 
-### B4 — SMP validation
+### B4 — Minimal AP bringup (first progress)
 
-- [x] B401-B404 **BLOCKED**: Cannot validate SMP bringup because the implementation doesn't work. PSCI path fails silently; spin-table path is not integrated.
+**Approach**: Minimal first — get AP to at least start executing code. Success = AP prints a marker or reaches `init_on_ap()`. Then iterate to full function.
+
+- [ ] B401 Enable `boot_all_aps()` for RPi3 in `late_init_on_bsp()`. Change empty RPi3 branch to call `crate::boot::smp::boot_all_aps()` — this routes to spin-table via `boot/smp.rs:115-123`.
+- [ ] B402 Add early debug markers in `ap_boot.S` using UART putchar at fixed PA `0x3F201000` (PL011 DATA register). Add markers: at `ap_boot_entry` entry, after MMU enable, after BSS zero, before branching to `ap_early_entry`.
+- [ ] B403 Add AP-started marker in `smp_rpi3.rs` — have AP write to marker region at `0x41000` after it reads `hold_flag=1` and before branching to entry. Change BSP polling to check AP-written marker instead of BSP self-test write.
+- [ ] B404 Build, deploy, power cycle. Analyze serial output:
+  - If no AP marker: spin-table protocol not waking APs — check mailbox IRQ trigger or try simpler `dsb+sev` only.
+  - If AP starts but panics at `init_on_ap()`: first progress achieved — implement minimal `init_on_ap()`.
+  - If AP reaches online marker: major progress — proceed to B5.
+
+### B5 — Implement minimal `init_on_ap()` (if B404 shows AP starts)
+
+- [ ] B501 Implement `init_on_ap()` in `aarch64/mod.rs` with minimal per-CPU init: local IRQ enable, per-CPU allocator setup. Do NOT activate scheduler yet — just get AP to report online and spin.
+- [ ] B502 Verify at least 2 APs reach online marker reliably.
+- [ ] B503 Test all 4 cores come online.
+
+### B6 — Full SMP function (after B5 succeeds)
+
+- [ ] B601 Wire APs into scheduler: per-CPU runqueue, idle task, timer per CPU.
+- [ ] B602 Verify SMP scheduler smoke tests (`fork`, `yield`, `sleep` across CPUs).
+- [ ] B603 Run SMP stress tests and single-core fallback validation.
 
 ---
 
-**Phase B Summary**: SMP is blocked. The RPi3 uses BCM2836 spin-table for AP boot, but the spin-table implementation (`smp_rpi3.rs`) is not included in the module tree. The active PSCI path uses HVC #0 which fails silently on RPi3 hardware. To fix: integrate `smp_rpi3.rs` into the module tree and route RPi3 to use spin-table instead of PSCI.
+**Phase B Summary**: Spin-table is connected but `boot_all_aps()` is not called for RPi3. `init_on_ap()` is `unimplemented!()`. Approach: minimal first — enable bringup, add debug markers, verify AP starts, then implement `init_on_ap()` incrementally.
 
 ---
 
