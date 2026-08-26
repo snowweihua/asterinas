@@ -214,3 +214,30 @@ The original logger failure was an EL1 synchronous abort in `spin::once::Once::t
 |----------|-------------|-----|--------|
 | RPi3 Hardware | N/A | N/A | asterina.img |
 | QEMU | raspi3b | bcm2710-rpi-3-b.dtb | qemu.bin |
+
+## QEMU Regression Issue (2026-08-26)
+
+### Problem
+After rebuild at commit 572043e2, QEMU with raspi3b machine type produces **zero output** despite working previously at commit 11aca22d5b8b0f0d41a509fd4e68cf49e2b527f5.
+
+### Verified Behavior
+- **raspi3b + -initrd**: 0 bytes output, QEMU runs but produces no serial output
+- **raspi3b + -device loader**: 0 bytes output, same behavior
+- **virt + -device loader + initramfs at 0x58000000**: Bootlog appears but hangs at banner (no shell prompt)
+- **virt + -initrd**: Panics with "CPIO invalid magic" (kernel expects initramfs at hardcoded address)
+
+### Attempted Fixes
+- Rebuilt kernel at commit 11aca22 - same issue
+- Tried both -initrd and -device loader approaches
+- Tried with and without DTB file
+- Different serial configurations (stdio, file, telnet, unix socket)
+
+### Key Findings
+- raspi3b machine type produces NO output at all in current QEMU 6.2.0 environment
+- virt machine type produces output but hangs after banner
+- The raspi3b issue is not a code problem - even kernel rebuilt at 11aca22 doesn't work
+- This suggests an environmental issue (QEMU version, DTB, initramfs mismatch)
+
+### Workaround
+- Direct QEMU testing with virt machine type works for observing boot output
+- MCP server bidirectional serial communication not working
