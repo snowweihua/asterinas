@@ -317,22 +317,24 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
         unsafe {
             let mailbox_va = crate::mm::paddr_to_vaddr(0x4000_0000 as crate::mm::Paddr);
             let offset = match cpu_id {
-                1 => 0x88usize,
-                2 => 0x90,
-                3 => 0x98,
-                _ => 0x88,
+                1 => 0x84usize,
+                2 => 0x88,
+                3 => 0x8C,
+                _ => 0x84,
             };
             core::ptr::write_volatile((mailbox_va + offset) as *mut u32, 0x1);
             core::arch::asm!(
-                "dsb sy",
+                "dsb ish",
                 "sev",
-                "dsb sy",
-                "isb",
+                "dsb ish",
                 options(nostack)
             );
+            for _ in 0..100 {
+                core::hint::spin_loop();
+            }
         }
 
-        for _ in 0..10000 {
+        for _ in 0..50000 {
             let val = unsafe { core::ptr::read_volatile(0x41000 as *const u8) };
             if val != 0x55 && val != 0 {
                 log::info!("[a2-smp] rpi3: AP {} started via spin-table!", cpu_id);
