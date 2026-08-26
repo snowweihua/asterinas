@@ -215,48 +215,32 @@ The original logger failure was an EL1 synchronous abort in `spin::once::Once::t
 | RPi3 Hardware | N/A | N/A | asterina.img |
 | QEMU | raspi3b | bcm2710-rpi-3-b.dtb | qemu.bin |
 
-## QEMU Regression Issue (2026-08-26) — RESOLVED OUTPUT, KNOWN INPUT ISSUE
+## QEMU Serial I/O — RESOLVED (2026-08-26)
 
-### Problem (RESOLVED)
-After rebuild at commit 572043e2, QEMU with raspi3b machine type produced **zero output** despite working previously at commit 11aca22.
+### Problem
+QEMU serial input via pipe/FIFO approaches didn't work. Commands couldn't be sent to the guest.
 
-### Root Cause
-The `qemu_mcp/server.py` had been modified after commit 11aca22 with pipe-based serial (`-chardev pipe,id=seriain...`) which broke serial output capture.
-
-### Fix Applied
-- Changed server.py to use `-serial null -serial file:/tmp/qemu_serial.log` instead of pipe-based serial
-- Committed as `1473a668 qemu_mcp: use -serial null+file instead of pipe — fixes raspi3b output`
-- QEMU now boots correctly and produces serial output (2832 bytes with Asterinas banner and shell prompt `~ #`)
+### Solution
+Use **tmux** for proper stdio serial I/O:
+- QEMU runs in tmux session with `-nographic` 
+- `qemu_read_serial_tool` captures pane output via `tmux capture-pane`
+- `qemu_write_serial_tool` sends keys via `tmux send-keys`
 
 ### Verified Working Configuration
 - Machine: raspi3b
-- CPU: cortex-a53
+- CPU: cortex-a53  
 - Memory: 1G
 - SMP: 4
-- Serial: `-serial null -serial file:/tmp/qemu_serial.log`
+- Serial: `-nographic` (stdio via tmux)
 - DTB: /mnt/d/pi_sd/bcm2710-rpi-3-b.dtb
-- Kernel: /tmp/asterina.img (via -kernel)
-- Initramfs: /home/snow/asterinas/test/build/initramfs.cpio (via -initrd)
-- Command line: `init=/init console=ttyAMA0`
+- Kernel: /tmp/asterina.img
+- Initramfs: /home/snow/asterinas/test/build/initramfs.cpio
+- Command: `init=/init console=ttyAMA0`
 
-### Known Issue: QEMU Serial Input Not Working
-**Problem**: Cannot send commands to QEMU's serial console. All input approaches fail:
-
-| Approach | Result |
-|---------|--------|
-| FIFO pipe via -chardev pipe | QEMU blocks waiting for input |
-| Unix socket via -serial unix | Input doesn't reach guest |
-| Telnet via -serial telnet | Input doesn't reach guest |
-| PTY via script command | Output capture doesn't work |
-| /dev/null stdin | QEMU exits when shell needs input |
-| stdio subprocess pipes | No output captured |
-
-**Impact**: Cannot run interactive commands via QEMU serial. The kernel boots and shell is visible, but commands cannot be sent.
-
-**Workaround**:
-- Use RPi3 hardware for interactive shell testing
-- Or use QEMU for output-only observation (boot log capture)
-- MCP server works for read-only serial log monitoring
+### Verification
+- `echo TMUX_WORKS` → output shows "TMUX_WORKS" ✓
+- `ls /` → shows root directory ✓
+- `echo hello world` → output shows "hello world" ✓
 
 ### Environment Details
 - QEMU version: 6.2.0 (Debian 1:6.2+dfsg-2ubuntu6.30)
