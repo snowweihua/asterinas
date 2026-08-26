@@ -3,7 +3,7 @@
 ## Issue 1: Enable PL011 UART
 **Description**: The bring-up currently uses the mini-UART for the serial console. PL011 is the more capable UART on RPi3 and is the long-term target.
 **Impact**: None for v1.1 — mini-UART is functional and satisfies the current shell/serial requirements.
-**Status**: Deferred to a later phase; migration would be behind the existing board/serial abstraction and must re-test TX, RX, IRQ acknowledgement, and interactive shell behavior.
+**Status**: Resolved (2026-08-26) — PL011 UART at GPIO 14/15 ALT0 is now the active serial console on RPi3. GPIO alt0 configuration, AUX peripheral management, and IRQ routing are implemented. Shell prompt and interactive commands work on PL011.
 
 ## Issue 2: SimpleOnce vs `spin::Once` on RPi3
 **Description**: `ostd::sync::Once` dispatches to `boot::SimpleOnce` on RPi3 to avoid Cortex-A53 exclusive-atomic (`LDXR`/`STXR`) issues during single-core bring-up.

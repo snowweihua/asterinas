@@ -64,7 +64,7 @@
 
 - [x] A401 Document the working mini-UART console as the v1.0 baseline. The AUX mini-UART (AUX UART1) at GPIO 14/15 alt5 is verified working on RPi3 with IRQ 29. This is the v1.0/v1.1 baseline.
 - [x] A402 PL011 migration was attempted but not working on RPi3 hardware. The kernel boots but produces no serial output with PL011. Mini-UART remains the working solution; PL011 deferred to future investigation.
-- [ ] A403 (blocked) PL011 migration requires further debugging — the GPIO alt0 configuration and AUX peripheral disable sequence needs investigation on real hardware.
+- [x] A403 PL011 migration completed: GPIO 14/15 configured to ALT0, AUX peripheral temporarily disabled during init, PL011 initialized at ~115200 baud (IBRD=26, FBRD=3), RX interrupt routed to GPU IRQ 57 via BCM2836. RPi3 boots to shell prompt on PL011 and interactive commands work.
 
 ### A5 — QEMU and code gates
 

@@ -263,3 +263,28 @@ The `qemu_mcp/server.py` had been modified after commit 11aca22 with pipe-based 
 - DTB: bcm2710-rpi-3-b.dtb (34731 bytes, last modified Aug 17)
 - initramfs: test/build/initramfs.cpio (44051456 bytes)
 - Kernel: asterina.img (3898256 bytes)
+
+## PL011 UART on RPi3 — A403 Resolved (2026-08-26)
+
+### Problem
+RPi3 was using mini-UART (AUX UART1) at GPIO 14/15 ALT5 for serial console. PL011 UART at GPIO 14/15 ALT0 was not working despite having the PL011_BASE_PA_RPI3 address defined.
+
+### Root Cause
+Three issues prevented PL011 from working on RPi3:
+1. **GPIO not configured**: Pins 14/15 were left in mini-UART ALT5 mode instead of PL011 ALT0 mode
+2. **AUX peripheral conflict**: The AUX mini-UART was still enabled, controlling GPIO 14/15
+3. **Wrong IRQ number**: `irq_num()` returned mini-UART IRQ (29) instead of PL011 IRQ (57)
+4. **Wrong baud divisor**: IBRD=1, FBRD=0 gave ~3MHz baud instead of 115200
+
+### Solution
+- Added `pl011_gpio_init()` to configure GPIO 14/15 to ALT0 (PL011) and disable pull-ups
+- Added `pl011_init()` sequence: GPIO setup → disable AUX mini-UART → PL011 init → enable RX interrupt → route to BCM2836 IRQ 57
+- Changed `send()`/`receive()`/`has_data()` to use PL011 registers on RPi3
+- Changed `irq_num()` to return `UART_IRQ_NUM` (57) on RPi3
+- Changed baud divisor to IBRD=26, FBRD=3 for ~115200 baud
+
+### Verification
+- RPi3 boots to `~ #` shell prompt on PL011 UART
+- `echo hello` produces correct output
+- `ls` command is received and processed
+- `/bin/reboot -f` resets the board successfully
