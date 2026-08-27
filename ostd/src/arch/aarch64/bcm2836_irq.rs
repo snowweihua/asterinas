@@ -84,7 +84,7 @@ pub const MINIUART_IRQ_NUM: usize = 29;
 /// Abstract IRQ number returned by `acknowledge_interrupt()` for the PL011 UART.
 pub const UART_IRQ_NUM: usize = 57;
 
-fn local_ic_base_va() -> usize {
+pub fn local_ic_base_va() -> usize {
     // Use the kernel linear mapping: the ARM-local registers stay accessible
     // after TTBR0 is switched to a user page table.
     crate::mm::kspace::paddr_to_vaddr(LOCAL_IC_BASE_PA)
@@ -289,6 +289,13 @@ const CORE1_MAILBOX0_SET: usize = 0x84;
 const CORE2_MAILBOX0_SET: usize = 0x88;
 const CORE3_MAILBOX0_SET: usize = 0x8C;
 
+/// Mailbox 3 IRQ set register offsets (used for SMP boot in Linux).
+/// These are at 0x08C, 0x09C, 0x0AC, 0x0BC (stride 0x10).
+pub const CORE0_MAILBOX3_SET: usize = 0x8C;
+pub const CORE1_MAILBOX3_SET: usize = 0x9C;
+pub const CORE2_MAILBOX3_SET: usize = 0xAC;
+pub const CORE3_MAILBOX3_SET: usize = 0xBC;
+
 /// Trigger a mailbox IRQ to wake up the given core from WFE.
 pub unsafe fn trigger_mailbox_irq(core_id: u32) {
     let offset = match core_id {
@@ -302,6 +309,22 @@ pub unsafe fn trigger_mailbox_irq(core_id: u32) {
     unsafe {
         core::ptr::write_volatile((reg_addr) as *mut u32, 1);
         core::arch::asm!("dsb ish", "sev", "isb", options(nostack, preserves_flags));
+    }
+}
+
+/// Trigger mailbox 3 IRQ to wake secondary cores from WFE (Linux method).
+pub unsafe fn trigger_mailbox3_irq(core_id: u32) {
+    let offset = match core_id {
+        1 => CORE1_MAILBOX3_SET,
+        2 => CORE2_MAILBOX3_SET,
+        3 => CORE3_MAILBOX3_SET,
+        _ => return,
+    };
+    let base_va = local_ic_base_va();
+    let reg_addr = base_va + offset;
+    unsafe {
+        core::ptr::write_volatile((reg_addr) as *mut u32, 1);
+        core::arch::asm!("dsb sy", "sev", "dsb sy", options(nostack));
     }
 }
 

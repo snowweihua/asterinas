@@ -195,8 +195,8 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
             core::ptr::write_volatile(0x41000 as *mut u8, marker_test);
             core::arch::asm!("dsb ish");
             let readback = core::ptr::read_volatile(0x41000 as *const u8);
+            log::info!("[a2-smp] marker test: wrote={:#x}, read={:#x}", marker_test, readback);
             core::ptr::write_volatile(0x41000 as *mut u8, 0x55);
-            let _ = readback;
         }
     }
 
@@ -299,38 +299,23 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
 
         #[cfg(target_arch = "aarch64")]
         {
-            let spin_table_va = crate::mm::paddr_to_vaddr(release_addr as Paddr);
+            use crate::arch::bcm2836_irq::CORE1_MAILBOX3_SET;
+            let base_va = crate::arch::bcm2836_irq::local_ic_base_va();
+            let mailbox_offset = CORE1_MAILBOX3_SET + 16 * (cpu_id as usize - 1);
             unsafe {
-                core::arch::asm!(
-                    "dsb ishst",
-                    "str {val}, [{addr}]",
-                    "dc cvac, {addr}",
-                    "dsb ish",
-                    addr = in(reg) spin_table_va,
-                    val = in(reg) ap_entry_paddr,
-                    options(nostack, preserves_flags)
-                );
+                core::ptr::write_volatile((base_va + mailbox_offset) as *mut u32, ap_entry_paddr as u32);
+                core::arch::asm!("dsb sy", "sev", options(nostack, preserves_flags));
+                let readback: u32 = core::ptr::read_volatile((base_va + mailbox_offset) as *const u32);
+                log::info!("[a2-smp] rpi3: wrote mailbox@{:#x}={:#x}, readback={:#x}", mailbox_offset, ap_entry_paddr as u32, readback);
             }
-            log::info!("[a2-smp] rpi3: wrote spin-table@{:#x}={:#x}", release_addr, ap_entry_paddr);
         }
 
-        unsafe {
-            let mailbox_va = crate::mm::paddr_to_vaddr(0x4000_0000 as crate::mm::Paddr);
-            let offset = match cpu_id {
-                1 => 0x84usize,
-                2 => 0x88,
-                3 => 0x8C,
-                _ => 0x84,
-            };
-            core::ptr::write_volatile((mailbox_va + offset) as *mut u32, 0x1);
-            core::arch::asm!(
-                "dsb ish",
-                "sev",
-                "dsb ish",
-                options(nostack)
-            );
-            for _ in 0..100 {
-                core::hint::spin_loop();
+        #[cfg(target_arch = "aarch64")]
+        {
+            let spin_table_va = crate::mm::paddr_to_vaddr(release_addr as Paddr);
+            unsafe {
+                let readback: u64 = core::ptr::read_volatile(spin_table_va as *const u64);
+                log::info!("[a2-smp] rpi3: spin-table@{:#x} current={:#x}", release_addr, readback);
             }
         }
 

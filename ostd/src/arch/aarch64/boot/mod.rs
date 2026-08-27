@@ -20,7 +20,7 @@ use crate::{
 };
 
 global_asm!(include_str!("boot.S"));
-global_asm!(include_str!("ap_boot.S"));
+global_asm!(".section .ap_boot,\"axG\",@progbits,8", include_str!("ap_boot.S"));
 
 
 /// The Flattened Device Tree of the platform.
