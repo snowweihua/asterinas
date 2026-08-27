@@ -1,0 +1,373 @@
+This is actually **much closer**. I would **not accept single-core**, and I would **not modify U-Boot to call `PSCI_CPU_ON`**.
+
+The new result gives us a very strong clue:
+
+```text
+early PSCI_CPU_ON       -> SUCCESS
+bringup PSCI_CPU_ON     -> DENIED
+```
+
+That means **PSCI itself is working**. The problem is almost certainly **CPU state / sequencing**, not lack of firmware support.
+
+## The most important thing now
+
+Don't do another broad investigation. Have OpenCode find **what changes between the successful diagnostic `CPU_ON` and the denied bring-up `CPU_ON`.**
+
+`PSCI_E_DENIED (-3)` / `DENIED` is fundamentally different from `NOT_SUPPORTED` or `INVALID_PARAMETERS`.
+
+The firmware is saying, in effect:
+
+> "I understand this request, but I won't perform it in the current state."
+
+So I would investigate this exact transition:
+
+```text
+Asterinas startup
+     │
+     ├── diagnostic CPU_ON(CPU1)
+     │       │
+     │       └── SUCCESS
+     │
+     │       ????
+     │
+     ├── SMP initialization
+     │       │
+     │       ├── GIC?
+     │       ├── MMU?
+     │       ├── exception vectors?
+     │       ├── cache?
+     │       ├── CPU state?
+     │       └── something else?
+     │
+     └── CPU_ON(CPU1)
+             │
+             └── DENIED
+```
+
+### This is the experiment I'd prioritize.
+
+Have OpenCode move the **same diagnostic `PSCI_CPU_ON` call** progressively later, while logging:
+
+```text
+CPU0:
+  PSCI_CPU_ON(CPU1) -> ?
+  PSCI_AFFINITY_INFO(CPU1) -> ?
+```
+
+For example:
+
+```text
+1. immediately after kernel entry
+2. after MMU enabled
+3. after exception vectors installed
+4. after GIC initialization
+5. immediately before normal SMP bringup
+6. inside normal SMP bringup
+```
+
+The first point where:
+
+```text
+SUCCESS → DENIED
+```
+
+is observed is extremely valuable.
+
+---
+
+# There is an even better diagnostic
+
+After the **successful** diagnostic:
+
+```text
+PSCI_CPU_ON(CPU1, ...)
+    -> SUCCESS
+```
+
+immediately call:
+
+```text
+PSCI_AFFINITY_INFO(CPU1)
+```
+
+and see what TF-A reports.
+
+If it says:
+
+```text
+CPU1 = ON
+```
+
+then you've discovered something crucial.
+
+Your diagnostic test has already **consumed CPU1**.
+
+Then later:
+
+```text
+PSCI_CPU_ON(CPU1)
+```
+
+can legitimately return:
+
+```text
+DENIED
+```
+
+because CPU1 is already online.
+
+That would make the "mystery" completely straightforward.
+
+So the exact sequence should be:
+
+```text
+CPU_ON CPU1
+   ↓
+SUCCESS
+   ↓
+AFFINITY_INFO CPU1
+   ↓
+?????
+```
+
+If:
+
+```text
+AFFINITY_INFO = ON
+```
+
+then the next question becomes:
+
+> **Where did CPU1 go after successful `CPU_ON`?**
+
+And that is much more interesting than the second `CPU_ON` failure.
+
+---
+
+# I strongly suspect your diagnostic test is interfering with the real test
+
+Look at your table:
+
+```text
+PSCI_CPU_ON (diagnostic)   SUCCESS
+PSCI_CPU_ON (bringup)      DENIED
+```
+
+This is exactly the sort of result I'd expect if the first call actually brought CPU1 online.
+
+For example:
+
+```text
+CPU0
+ │
+ ├── PSCI_CPU_ON(CPU1)
+ │        │
+ │        └── CPU1 starts executing 0x344000
+ │
+ │
+ └── later SMP:
+          PSCI_CPU_ON(CPU1)
+               ↓
+             DENIED
+```
+
+You therefore need to know what CPU1 does at `0x344000`.
+
+If `0x344000` is your normal AP entrypoint, **the diagnostic CPU_ON may already be starting the AP**.
+
+---
+
+# Do this experiment
+
+Make the diagnostic entrypoint ridiculously simple:
+
+```text
+CPU1 entry:
+    write "CPU1-ALIVE" to UART
+    write some magic value to shared memory
+    spin forever
+```
+
+Then:
+
+```text
+CPU0:
+    PSCI_CPU_ON(CPU1, CPU1_TEST_ENTRY)
+    print result
+    PSCI_AFFINITY_INFO(CPU1)
+```
+
+Expected:
+
+```text
+CPU0: CPU_ON -> SUCCESS
+CPU1: CPU1-ALIVE
+CPU0: AFFINITY_INFO -> ON
+```
+
+If you see that, **PSCI CPU startup is solved.**
+
+Then your remaining problem is just:
+
+> How does Asterinas integrate that working PSCI startup into its SMP framework?
+
+That's a much smaller problem.
+
+---
+
+# About the Trusted Mailbox
+
+I would stop experimenting with it for now.
+
+You have:
+
+```text
+PSCI_CPU_ON -> SUCCESS
+```
+
+That is the clean firmware interface.
+
+There's no reason to make Asterinas directly manipulate TF-A's internal mailbox unless we're forced to.
+
+The fact that:
+
+```text
+Trusted Mailbox write
+    -> readback correct
+    -> AP doesn't wake
+```
+
+isn't surprising.
+
+A mailbox write being visible doesn't establish that the corresponding CPU is currently waiting on that mailbox.
+
+And that's exactly the problem we've been running into repeatedly:
+
+> **We know the memory/register write works; we don't know what state CPU1–3 are actually in.**
+
+---
+
+# About the DTB result
+
+This is also good news:
+
+```text
+cpu-release-addr:
+CPU1 -> 0xe0
+CPU2 -> 0xe8
+CPU3 -> 0xf0
+```
+
+If U-Boot really isn't modifying it, then we can stop chasing that hypothesis.
+
+So I'd update our mental model to:
+
+```text
+DTB
+ └── spin-table = original armstub addresses
+                 ↓
+                 correct
+
+PSCI
+ └── available
+ └── CPU_ON works
+                 ↓
+                 correct
+
+Remaining problem
+ └── CPU lifecycle / handoff / SMP sequencing
+```
+
+That's considerably narrower.
+
+---
+
+# I would choose neither 1, 2 nor 3 yet
+
+OpenCode's three options are premature.
+
+### Option 1 — single core
+
+❌ No.
+
+We now have evidence that:
+
+```text
+PSCI_CPU_ON -> SUCCESS
+```
+
+So we know the platform can start an AP through TF-A.
+
+### Option 3 — modify U-Boot
+
+❌ No.
+
+U-Boot shouldn't become the owner of your kernel's SMP startup unless there's a very specific reason.
+
+### Option 2 — `RPI3_DIRECT_LINUX_BOOT=1`
+
+🟡 Potentially useful later, but **not yet**.
+
+First let's prove that your existing TF-A + Asterinas combination can do:
+
+```text
+CPU0
+ ↓
+PSCI_CPU_ON
+ ↓
+CPU1
+ ↓
+Asterinas AP entry
+```
+
+You've basically already demonstrated that the first half works.
+
+---
+
+# The experiment I'd give OpenCode now
+
+Send it this exact task:
+
+> **Do not change the SMP implementation. Investigate the difference between the successful diagnostic `PSCI_CPU_ON` and the denied bring-up `PSCI_CPU_ON`. After the diagnostic CPU_ON succeeds, immediately call `PSCI_AFFINITY_INFO` for that CPU and determine whether TF-A reports it as ON. Make the diagnostic CPU entrypoint print a unique UART marker so we can prove whether CPU1 actually executes. If CPU1 becomes ON, determine where it executes and whether the diagnostic call is consuming CPU1 before the normal SMP bring-up. Also trace the exact point in Asterinas initialization where the second CPU_ON changes from SUCCESS to DENIED.`
+
+That's the investigation I would do **before rebuilding anything**.
+
+---
+
+## What I expect we'll discover
+
+My current probability ranking would be roughly:
+
+```text
+Diagnostic CPU_ON starts CPU1 and leaves it ON
+             ████████████████████  highest
+
+Asterinas SMP sequence changes CPU state
+             █████████████
+
+Target MPIDR / state mismatch
+             ███████
+
+TF-A RPi3 configuration problem
+             ████
+
+Need VC mailbox
+             █
+```
+
+The fact that **the exact same PSCI call succeeds early** is the strongest clue we've had so far.
+
+We're no longer trying to answer:
+
+> "How can we wake the RPi3 AP?"
+
+We have essentially answered that:
+
+> **TF-A can wake an RPi3 AP through PSCI.**
+
+Now the question is:
+
+> **What happens to that AP after `PSCI_CPU_ON()` succeeds, and why does the later Asterinas SMP path think it needs to call `CPU_ON` again?**
+
+That is where I'd focus.
+

@@ -189,6 +189,20 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
             let result = smc_call(PSCI_CPU_ON, mpidr, AP_BOOT_DEST_PA as u64, 0u64);
             log::info!("[a2-smp] rpi3: PSCI_CPU_ON(cpu={}, mpidr={:#x}, entry={:#x})={:#x}",
                 cpu_id, mpidr, AP_BOOT_DEST_PA as u64, result);
+            // Immediately check AFFINITY_INFO after CPU_ON to see if TF-A reports ON
+            let aff_info = smc_call(PSCI_AFFINITY_INFO, mpidr, 0, 0);
+            log::info!("[a2-smp] rpi3: PSCI_AFFINITY_INFO after CPU_ON(cpu={})={:#x}", cpu_id, aff_info);
+        }
+
+        // Wait and re-check AFFINITY_INFO to see if CPUs eventually come online
+        log::info!("[a2-smp] rpi3: --- waiting 1 second for CPUs to boot ---");
+        for _ in 0..1000 {
+            core::hint::spin_loop();
+        }
+        for cpu_id in 1..4u32 {
+            let mpidr = 0x80000000u64 | (cpu_id as u64);
+            let aff_info = smc_call(PSCI_AFFINITY_INFO, mpidr, 0, 0);
+            log::info!("[a2-smp] rpi3: PSCI_AFFINITY_INFO after delay(cpu={})={:#x}", cpu_id, aff_info);
         }
     }
 
@@ -285,6 +299,10 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
                     continue;
                 }
             };
+            // Check AFFINITY_INFO BEFORE bringup CPU_ON to see current state
+            let aff_info_before = smc_call(PSCI_AFFINITY_INFO, mpidr, 0, 0);
+            log::info!("[a2-smp] rpi3: PSCI_AFFINITY_INFO before bringup CPU_ON(cpu={})={:#x}", cpu_id, aff_info_before);
+
             let info = &*info_ptr.add(cpu_id as usize - 1);
             let stack_top = info.stack_top as u64;
 
