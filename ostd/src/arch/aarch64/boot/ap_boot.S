@@ -17,9 +17,9 @@
 
 .global ap_boot_entry
 ap_boot_entry:
-    /* Write marker to confirm AP reached this code at 0x344000 */
+    /* Write marker to confirm AP reached this code - use 0x41000 where BSP expects it */
     mov     x0, #0xABCD
-    ldr     x1, =0x3F001000
+    ldr     x1, =0x41000
     str     x0, [x1]
 
     /* AP unique marker - AP has entered boot stub (distinguish from BSP) */

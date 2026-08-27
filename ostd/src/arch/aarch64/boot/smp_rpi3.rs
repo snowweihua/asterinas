@@ -46,19 +46,18 @@ const AP_BOOT_DEST_PA: usize = 0x3_44000;
 const AP_INFO_BASE: usize = 0x5_0000;
 
 /// ARM_LOCAL peripheral base PA on RPi3.
-/// The BCM2836 spin-table addresses are offsets within this peripheral.
-/// Based on testing, spin-table readback shows garbage at both 0x3F000000 and
-/// 0x400000000, suggesting ARM_LOCAL might be at yet another address or
-/// the spin-table mechanism is not working as expected on this RPi3B.
-const ARM_LOCAL_PA: usize = 0x4000_0000;
+/// Mailbox doorbell writes work at 0x3F000000 (readback 0x344000 for CPU2/CPU3).
+/// Spin-table offsets are likely at a different location within ARM_LOCAL.
+const ARM_LOCAL_PA: usize = 0x3F00_0000;
 
 /// BCM2836 spin-table offsets per CPU (within ARM_LOCAL peripheral space).
-/// These are the addresses where the DTB's cpu-release-addr values should point.
+/// These are the actual spin-table addresses within ARM_LOCAL - NOT the mailbox addresses.
+/// The mailbox is at 0x9C/0xAC/0xBC, but the spin-table is at 0x100/0x108/0x110.
 const CPU_SPIN_TABLE_OFFSETS: [usize; 4] = [
-    0x0D8, // CPU 0
-    0x0E0, // CPU 1
-    0x0E8, // CPU 2
-    0x0F0, // CPU 3
+    0x100, // CPU 0
+    0x108, // CPU 1
+    0x110, // CPU 2
+    0x118, // CPU 3
 ];
 
 /// PSCI function IDs for RPi3 (using SMC conduit)
@@ -268,19 +267,16 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
 
     // Fall back to spin-table if PSCI didn't work
     for cpu_id in 1..num_cpus {
-        let release_addr = match get_cpu_release_addr(cpu_id) {
-            Some(addr) => addr,
-            None => {
-                #[cfg(target_arch = "aarch64")]
-                log::info!("[a2-smp] rpi3: no release addr for CPU {}", cpu_id);
-                continue;
-            }
-        };
-        // DTB cpu-release-addr is an OFFSET within ARM_LOCAL peripheral space,
-        // not an absolute address. ARM_LOCAL is at PA 0x40000000.
-        let spin_table_addr = ARM_LOCAL_PA + release_addr as usize;
+        // Use BCM2836 spin-table offsets directly, not from DTB
+        // DTB values may have been modified by U-Boot's spin_table_update_dt()
+        let cpu_idx = cpu_id as usize;
+        if cpu_idx >= CPU_SPIN_TABLE_OFFSETS.len() {
+            log::info!("[a2-smp] rpi3: CPU {} out of range", cpu_id);
+            continue;
+        }
+        let spin_table_addr = ARM_LOCAL_PA + CPU_SPIN_TABLE_OFFSETS[cpu_idx];
         #[cfg(target_arch = "aarch64")]
-        log::info!("[a2-smp] rpi3: CPU {} spin-table@{:#x} (release_addr={:#x})", cpu_id, spin_table_addr, release_addr);
+        log::info!("[a2-smp] rpi3: CPU {} spin-table@{:#x} (BCM2836 offset={:#x})", cpu_id, spin_table_addr, CPU_SPIN_TABLE_OFFSETS[cpu_idx]);
 
         let info_base_va = AP_INFO_BASE;
 
@@ -359,10 +355,10 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
     #[cfg(target_arch = "aarch64")]
     log::info!("[a2-smp] rpi3: SMP bringup done");
 
-    // Check if AP boot marker was written (at 0x3F001000 from ap_boot.S)
+    // Check if AP boot marker was written (at 0x41000 from ap_boot.S)
     #[cfg(target_arch = "aarch64")]
     {
-        let ap_marker = unsafe { core::ptr::read_volatile(0x3F001000 as *const u64) };
-        log::info!("[a2-smp] rpi3: AP boot marker @0x3F001000={:#x} (should be 0xABCD if AP reached boot code)", ap_marker);
+        let ap_marker = unsafe { core::ptr::read_volatile(0x41000 as *const u64) };
+        log::info!("[a2-smp] rpi3: AP boot marker @0x41000={:#x} (should be 0xABCD if AP reached boot code)", ap_marker);
     }
 }
