@@ -1,0 +1,693 @@
+My question:
+my project has stuck now, i need help, my project use rpi3b board, run start.elf->armstub8.bin->u-boot.bin->my kernel (asterina kernel with aarch64 support), now stuck on SMP bringup. it seems i can't wake up the secondary cpus through spin table. could you help me find some reference code/project?
+
+
+ChatGPT answer:
+
+
+Yes. In fact, the Raspberry Pi 3B is a very good case for debugging this because the Raspberry Pi firmware + `armstub8.bin` implementation gives us a concrete reference for exactly how the secondary CPUs are supposed to wake up.
+
+Your boot chain is:
+
+```text
+start.elf
+   │
+   ▼
+armstub8.bin
+   │
+   ▼
+u-boot.bin
+   │
+   ▼
+Asterinas AArch64 kernel
+   │
+   ▼
+SMP bring-up
+   └── CPU1/2/3 stuck
+```
+
+The first thing I would investigate is **not Asterinas' SMP code itself**, but the contract between **`armstub8.bin` ↔ U-Boot ↔ Asterinas DTB**.
+
+### 1. The most important reference: Raspberry Pi's own `armstub8.S`
+
+Raspberry Pi's official `armstub8.S` contains almost exactly the mechanism you're trying to implement:
+
+[Raspberry Pi `armstub8.S`](https://github.com/raspberrypi/tools/blob/master/armstubs/armstub8.S?utm_source=chatgpt.com)
+
+The critical part is:
+
+```asm
+mrs x6, MPIDR_EL1
+and x6, x6, #0x3
+cbz x6, primary_cpu
+
+adr x5, spin_cpu0
+
+secondary_spin:
+    wfe
+    ldr x4, [x5, x6, lsl #3]
+    cbz x4, secondary_spin
+
+    mov x0, #0
+    b boot_kernel
+```
+
+and then:
+
+```asm
+.org 0xd8
+spin_cpu0:
+.quad 0
+
+.org 0xe0
+spin_cpu1:
+.quad 0
+
+.org 0xe8
+spin_cpu2:
+.quad 0
+
+.org 0xf0
+spin_cpu3:
+```
+
+So for the Pi 3:
+
+```text
+CPU0 release address = 0xd8
+CPU1 release address = 0xe0
+CPU2 release address = 0xe8
+CPU3 release address = 0xf0
+```
+
+This is extremely important.
+
+The Pi firmware's armstub isn't merely some generic bootloader. **It is itself the piece that parks the secondary CPUs and waits for those addresses to become non-zero.** ([GitHub][1])
+
+---
+
+# 2. Linux uses exactly this mechanism on Raspberry Pi
+
+The Linux DT describes the CPUs using:
+
+```dts
+enable-method = "spin-table";
+cpu-release-addr = <...>;
+```
+
+The AArch64 boot protocol explicitly says that for `spin-table`:
+
+> `cpu-release-addr` must point to a naturally aligned 64-bit zero-initialized memory location.
+
+The secondary CPU waits there, and the primary CPU writes the secondary entry address there. ([Kernel.org][2])
+
+The Raspberry Pi DT uses:
+
+```text
+CPU0 -> 0xd8
+CPU1 -> 0xe0
+CPU2 -> 0xe8
+CPU3 -> 0xf0
+```
+
+For example, Raspberry Pi's current DT has:
+
+```dts
+cpu1: cpu@1 {
+    ...
+    enable-method = "spin-table";
+    cpu-release-addr = <0x0 0x000000e0>;
+};
+
+cpu2: cpu@2 {
+    ...
+    enable-method = "spin-table";
+    cpu-release-addr = <0x0 0x000000e8>;
+};
+
+cpu3: cpu@3 {
+    ...
+    enable-method = "spin-table";
+    cpu-release-addr = <0x0 0x000000f0>;
+};
+```
+
+([GitHub][3])
+
+There is also a real Raspberry Pi issue showing a Pi 3's DT with exactly these values:
+
+```text
+cpu@0 -> 0xd8
+cpu@1 -> 0xe0
+cpu@2 -> 0xe8
+cpu@3 -> 0xf0
+```
+
+and `enable-method = "spin-table"`. ([GitHub][4])
+
+---
+
+# 3. But there is a subtle point in your boot chain
+
+Your boot chain is:
+
+```text
+start.elf
+   ↓
+armstub8.bin
+   ↓
+u-boot
+   ↓
+Asterinas
+```
+
+That means **Asterinas is not the program directly controlling the secondary CPU reset state**.
+
+The secondary CPU starts in `armstub8.bin` and does approximately:
+
+```text
+CPU1
+ |
+ v
+armstub8
+ |
+ +-- MPIDR = 1
+ |
+ v
+spin_cpu1
+ |
+ v
+WFE
+ |
+ +------------------+
+ |                  |
+ | read [0xe0]      |
+ |                  |
+ | zero? -----------+
+ |
+ | non-zero
+ v
+branch to address
+```
+
+So if Asterinas writes:
+
+```c
+*(volatile uint64_t *)0xe0 = secondary_entry;
+```
+
+but CPU1 remains asleep, we need to determine **whether the write is actually reaching the location being polled by armstub**.
+
+That's the first major checkpoint.
+
+---
+
+# 4. There are actually four things we should verify
+
+I would debug this in this order.
+
+## A. What address is `armstub8.bin` actually loaded at?
+
+The source uses:
+
+```asm
+adr x5, spin_cpu0
+```
+
+not:
+
+```asm
+ldr x5, =0xd8
+```
+
+This means the actual address of the spin table depends on where the armstub is loaded.
+
+Conceptually:
+
+```text
+armstub_base + 0xd8
+armstub_base + 0xe0
+armstub_base + 0xe8
+armstub_base + 0xf0
+```
+
+This is a very important distinction.
+
+If your DT says:
+
+```dts
+cpu-release-addr = <0x0 0xe0>;
+```
+
+that is only correct if the firmware's armstub has been arranged so that its spin table is actually at physical address `0xe0`.
+
+The standard Raspberry Pi setup does this because the armstub has a special fixed boot location/layout.
+
+---
+
+# 5. B. Is U-Boot modifying the DTB?
+
+This is another big suspect.
+
+Your flow is:
+
+```text
+start.elf
+      |
+      | creates/modifies DTB
+      v
+armstub
+      |
+      v
+u-boot
+      |
+      | possibly modifies DTB
+      v
+Asterinas
+```
+
+So don't assume the DTB that Asterinas receives is the same DTB produced by `start.elf`.
+
+Dump the **actual DTB received by Asterinas** and inspect:
+
+```text
+/cpus
+/cpus/cpu@0
+/cpus/cpu@1
+/cpus/cpu@2
+/cpus/cpu@3
+```
+
+You want:
+
+```dts
+cpu@0 {
+    reg = <0>;
+    enable-method = "spin-table";
+    cpu-release-addr = <0x0 0xd8>;
+};
+
+cpu@1 {
+    reg = <1>;
+    enable-method = "spin-table";
+    cpu-release-addr = <0x0 0xe0>;
+};
+
+cpu@2 {
+    reg = <2>;
+    enable-method = "spin-table";
+    cpu-release-addr = <0x0 0xe8>;
+};
+
+cpu@3 {
+    reg = <3>;
+    enable-method = "spin-table";
+    cpu-release-addr = <0x0 0xf0>;
+};
+```
+
+Also check that the DT has a reservation covering the spin table.
+
+The ARM64 boot protocol says the spin-table memory must be in a reserved area. ([Kernel.org][2])
+
+---
+
+# 6. C. The `SEV` is important
+
+Notice Raspberry Pi's armstub does:
+
+```asm
+secondary_spin:
+    wfe
+    ldr x4, [x5, x6, lsl #3]
+    cbz x4, secondary_spin
+```
+
+So the secondary CPU is sitting in:
+
+```asm
+WFE
+```
+
+This raises an important question:
+
+### After Asterinas writes the release address, does it execute `SEV`?
+
+The ARM64 spin-table protocol explicitly says:
+
+> A `sev` will be issued by the primary CPU.
+
+([Kernel.org][2])
+
+So your sequence should effectively be:
+
+```asm
+str     x1, [release_addr]
+dsb     sy
+sev
+```
+
+or an equivalent correct synchronization sequence.
+
+For example:
+
+```asm
+mov     x0, secondary_entry
+str     x0, [release_addr]
+
+dsb     sy
+sev
+```
+
+Without `SEV`, the secondary CPU can remain asleep in `WFE`.
+
+However, there's an important nuance: **a WFE may return for reasons other than SEV**, and the ARM architecture's event-register semantics mean you shouldn't diagnose this solely from the absence of SEV. But for a spin-table implementation, `DSB + SEV` is the expected mechanism.
+
+---
+
+# 7. D. Cache coherency / memory ordering
+
+This is the next thing I would check.
+
+You potentially have:
+
+```text
+CPU0
+ |
+ | write 0xe0
+ |
+ | cache
+ |
+ +-----> memory
+
+CPU1
+ |
+ | WFE
+ |
+ | LDR [0xe0]
+```
+
+The standard ARM64 implementation needs the release-address write to become globally visible before waking the secondary CPU.
+
+So your implementation should have something equivalent to:
+
+```rust
+ptr::write_volatile(release_addr, entry);
+
+dsb_sy();
+sev();
+```
+
+Depending on how Asterinas' abstraction handles memory barriers, you need to make sure the compiler barrier, CPU barrier, and volatile access are all correct.
+
+---
+
+# 8. A very useful experiment: bypass Asterinas SMP completely
+
+This is the experiment I recommend most strongly.
+
+Make a tiny assembly test kernel whose only job is:
+
+```text
+CPU0:
+    print "CPU0"
+
+    write CPU1 entry to release table
+    DSB
+    SEV
+
+CPU1:
+    print "CPU1"
+
+CPU2:
+    print "CPU2"
+
+CPU3:
+    print "CPU3"
+```
+
+Do **not** involve:
+
+* scheduler
+* interrupts
+* page tables
+* Asterinas SMP abstractions
+* Rust atomics
+* allocator
+* ACPI
+* GIC initialization
+
+Just test:
+
+```text
+armstub8 -> spin table -> secondary entry
+```
+
+If this works, your hardware + firmware + armstub mechanism is proven.
+
+Then:
+
+```text
+tiny kernel
+    ↓
+spin table works
+    ↓
+Asterinas SMP problem
+```
+
+If it doesn't work:
+
+```text
+tiny kernel
+    ↓
+spin table fails
+    ↓
+boot chain / armstub / DT / memory address problem
+```
+
+This will save you a **lot** of time.
+
+---
+
+# 9. There is another particularly interesting clue in `armstub8.S`
+
+Look carefully at this:
+
+```asm
+mrs x6, MPIDR_EL1
+and x6, x6, #0x3
+```
+
+The armstub assumes that:
+
+```text
+MPIDR_EL1.Aff0 == CPU number
+```
+
+and indexes:
+
+```asm
+[x5, x6, lsl #3]
+```
+
+Therefore:
+
+```text
+CPU0 -> spin_cpu0
+CPU1 -> spin_cpu1
+CPU2 -> spin_cpu2
+CPU3 -> spin_cpu3
+```
+
+This is exactly the topology you expect on BCM2837.
+
+Linux confirms the Pi 3 has:
+
+```text
+CPU1 MPIDR = 0x1
+CPU2 MPIDR = 0x2
+CPU3 MPIDR = 0x3
+```
+
+and successfully boots all four CPUs using this mechanism. ([GitHub][5])
+
+So if your Asterinas log says something like:
+
+```text
+CPU0 MPIDR = 0x80000000
+CPU1 MPIDR = ...
+```
+
+please show me those values.
+
+---
+
+# 10. One thing I would NOT do yet: switch to PSCI
+
+You might be tempted to implement:
+
+```text
+PSCI CPU_ON
+```
+
+instead of spin-table.
+
+I wouldn't do that yet.
+
+Your current boot path already has a perfectly valid Raspberry Pi mechanism:
+
+```text
+start.elf
+  ↓
+armstub8
+  ↓
+spin-table
+  ↓
+Asterinas
+```
+
+Linux on the Pi successfully uses it. So let's make **that** work first.
+
+PSCI would introduce another layer:
+
+```text
+Asterinas
+   ↓
+PSCI SMC
+   ↓
+secure firmware / EL3
+   ↓
+CPU power-on
+```
+
+and that's a substantially different problem.
+
+---
+
+# 11. References I'd use as the debugging baseline
+
+These are the ones I recommend you study, in this order:
+
+### ① Raspberry Pi armstub — most important
+
+[`armstub8.S`](https://github.com/raspberrypi/tools/blob/master/armstubs/armstub8.S?utm_source=chatgpt.com)
+
+This tells us **exactly what CPU1/2/3 are doing before entering your kernel**.
+
+### ② ARM64 Linux boot protocol
+
+[Linux ARM64 Booting documentation](https://www.kernel.org/doc/html/latest/arch/arm64/booting.html?utm_source=chatgpt.com)
+
+Especially the `spin-table` section. It specifies the contract between bootloader and kernel. ([Kernel.org][2])
+
+### ③ Raspberry Pi Linux source
+
+[Raspberry Pi Linux](https://github.com/raspberrypi/linux?utm_source=chatgpt.com)
+
+There are real Pi 3 boots demonstrating:
+
+```text
+CPU1
+CPU2
+CPU3
+```
+
+coming up successfully. ([GitHub][6])
+
+### ④ Raspberry Pi firmware
+
+[Raspberry Pi firmware repository](https://github.com/raspberrypi/firmware?utm_source=chatgpt.com)
+
+This is useful because your `start.elf` is part of this firmware stack. ([GitHub][7])
+
+### ⑤ Asterinas
+
+[Asterinas source](https://github.com/asterinas/asterinas?utm_source=chatgpt.com)
+
+Your Asterinas version appears to have ARM64 support, but its current public platform support information does **not** list Raspberry Pi 3 as a standard deployment platform, so your Pi 3 work is effectively a custom platform port. ([GitHub][8])
+
+---
+
+# 12. I think we should debug your actual code next
+
+Rather than giving you generic SMP advice, **I can help you trace this all the way from `armstub8` into Asterinas**.
+
+Please give me these **four pieces** from your project:
+
+1. **Asterinas SMP/CPU bringup code**
+   Especially the function that writes `cpu-release-addr`.
+
+2. **Your Asterinas DTB/DTS CPU section**, e.g.
+
+```dts
+cpus {
+    ...
+};
+```
+
+3. **Your U-Boot boot command/configuration**, especially how you load/pass the DTB:
+
+```text
+booti ...
+bootm ...
+fdt ...
+```
+
+4. **The serial log from the point where Asterinas starts SMP**, e.g.
+
+```text
+CPU0 ...
+SMP: ...
+CPU1 ...
+```
+
+If possible, also give me the code that reads `MPIDR_EL1`.
+
+With those, we can trace this as:
+
+```text
+                    ┌─────────────────────┐
+                    │     start.elf       │
+                    └──────────┬──────────┘
+                               │
+                               ▼
+                    ┌─────────────────────┐
+                    │     armstub8        │
+                    │                     │
+                    │ CPU1 → WFE/LDR e0   │
+                    │ CPU2 → WFE/LDR e8   │
+                    │ CPU3 → WFE/LDR f0   │
+                    └──────────┬──────────┘
+                               │
+                               ▼
+                    ┌─────────────────────┐
+                    │       U-Boot        │
+                    │                     │
+                    │ DTB modification?   │
+                    └──────────┬──────────┘
+                               │
+                               ▼
+                    ┌─────────────────────┐
+                    │      Asterinas      │
+                    │                     │
+                    │ CPU0 writes e0/e8/f0│
+                    │       │             │
+                    │       ▼             │
+                    │      DSB            │
+                    │       │             │
+                    │       ▼             │
+                    │      SEV            │
+                    └─────────────────────┘
+```
+
+**My strongest suspicion right now is an address/DTB/armstub contract mismatch**, rather than the Cortex-A53 itself failing to wake. The official Raspberry Pi armstub gives us a very concrete reference implementation, so we can compare your Asterinas path against it instruction-by-instruction.
+
+[1]: https://github.com/raspberrypi/tools/blob/master/armstubs/armstub8.S?utm_source=chatgpt.com "tools/armstubs/armstub8.S at master · raspberrypi/tools · GitHub"
+[2]: https://www.kernel.org/doc/html/v5.15/arm64/booting.html?utm_source=chatgpt.com "Booting AArch64 Linux — The Linux Kernel documentation"
+[3]: https://github.com/raspberrypi/linux/blob/rpi-6.18.y/arch/arm/boot/dts/broadcom/bcm2711.dtsi?utm_source=chatgpt.com "linux/arch/arm/boot/dts/broadcom/bcm2711.dtsi at rpi-6.18.y · raspberrypi/linux · GitHub"
+[4]: https://github.com/raspberrypi/linux/issues/3156?utm_source=chatgpt.com "SC16IS752 device tree overlay, bug? · Issue #3156 · raspberrypi/linux"
+[5]: https://github.com/raspberrypi/linux/issues/5809?utm_source=chatgpt.com "preempt_rt patched ARM64 kernel will not start on raspberry pi zero w2 or raspberry pi 3b ( BCM2837) · Issue #5809 · raspberrypi/linux · GitHub"
+[6]: https://github.com/raspberrypi/linux?utm_source=chatgpt.com "GitHub - raspberrypi/linux: Kernel source tree for Raspberry Pi-provided kernel builds. Issues unrelated to the linux kernel should be posted on the community forum at https://forums.raspberrypi.com/ · GitHub"
+[7]: https://github.com/raspberrypi/firmware?utm_source=chatgpt.com "GitHub - raspberrypi/firmware: This repository contains pre-compiled binaries of the current Raspberry Pi kernel and modules, userspace libraries, and bootloader/GPU firmware. · GitHub"
+[8]: https://github.com/asterinas/asterinas?utm_source=chatgpt.com "GitHub - asterinas/asterinas: Asterinas aims to be a production-grade Linux alternative—memory safe, high-performance, and more. · GitHub"
+

@@ -1,0 +1,429 @@
+I would **not commit the spin-table fix as the final SMP solution yet**, and I would **not jump to a VC mailbox implementation either**.
+
+Your new evidence changes the diagnosis in an important way: **the spin-table write is correct, but we haven't yet established that the CPUs reaching Asterinas are actually the CPUs that `armstub8` parked in its spin-table loop.**
+
+More importantly, I checked the current TF-A Raspberry Pi 3 documentation, and it strongly supports your suspicion about the boot chain—but with an important correction.
+
+### The key point
+
+TF-A's RPi3 port explicitly says:
+
+* all cores start at address 0 when `armstub8.bin` is used;
+* TF-A has a **secondary-core warm-entry mailbox**;
+* secondary CPUs wait there during cold boot;
+* once BL31 is ready, the primary must use **`PSCI_CPU_ON` to release secondary CPUs**;
+* after that, the secondary cores can be directed to the kernel through another mailbox mechanism. ([GitHub][1])
+
+So this part of your session-context conclusion is essentially right:
+
+> The spin-table at `0xe0/e8/f0` is not necessarily the mechanism responsible for releasing the CPUs from their current state.
+
+And this is particularly significant:
+
+> **TF-A's RPi3 implementation explicitly supports PSCI and recommends/uses PSCI for secondary CPU startup.** ([tf-a.docs.trustedfirmware.org][2])
+
+There is even a TF-A discussion specifically saying that **RPi3 is an upstream example where PSCI is recommended even when the underlying platform may use a spin-table-like mechanism**. ([lists.trustedfirmware.org][3])
+
+---
+
+## So I recommend option 3: investigate PSCI first
+
+Not:
+
+```text
+Asterinas
+   ↓
+write 0xe0
+   ↓
+SEV
+```
+
+but:
+
+```text
+Asterinas CPU0
+   │
+   │ SMC(PSCI_CPU_ON)
+   ▼
+TF-A BL31
+   │
+   │ release CPU
+   ▼
+CPU1
+   │
+   ▼
+TF-A warm entry
+   │
+   ▼
+Asterinas secondary entry
+```
+
+That is the architecture TF-A's RPi3 port was designed around. ([tf-a.docs.trustedfirmware.org][2])
+
+---
+
+# There is one thing I would do before changing Asterinas
+
+Determine **exactly which TF-A you're running**.
+
+Your statement:
+
+> TF-A runs before our kernel
+
+is not enough. We need to know whether your `armstub8.bin` actually contains TF-A BL1/BL31, and which version/configuration.
+
+The official TF-A RPi3 build produces `armstub8.bin` by concatenating padded BL1 and the FIP containing the other TF-A components. ([GitHub][4])
+
+So if your boot chain is:
+
+```text
+start.elf
+    ↓
+your armstub8.bin
+    ↓
+TF-A BL31
+    ↓
+U-Boot
+    ↓
+Asterinas
+```
+
+then **Asterinas should probably treat TF-A as its firmware interface**, rather than trying to take over CPU power-on directly.
+
+---
+
+# Your current spin-table changes are still worth committing
+
+I would actually separate these two things.
+
+### Commit 1 — spin-table correctness
+
+Keep:
+
+```text
+cpu-release-addr 0xe0/e8/f0
+        ↓
+correct physical address interpretation
+        ↓
+write_volatile()
+        ↓
+readback verification
+```
+
+That's a legitimate bug fix.
+
+Your log proves it:
+
+```text
+spin-table@0xe0 wrote=0x344000 readback=0x344000
+spin-table@0xe8 wrote=0x344000 readback=0x344000
+spin-table@0xf0 wrote=0x344000 readback=0x344000
+```
+
+It establishes that:
+
+**Asterinas can access the armstub spin-table memory.**
+
+That is useful information and shouldn't be thrown away.
+
+But don't describe the commit as "fix SMP bringup." I'd make it something like:
+
+```text
+rpi3: correctly write spin-table CPU release addresses
+```
+
+Then make the PSCI work a separate change.
+
+---
+
+# Don't implement VC mailbox yet
+
+This is where I would disagree slightly with your proposed option 2.
+
+The TF-A documentation says there are **two different mailbox concepts** involved:
+
+```text
+             TF-A
+              │
+       ┌──────┴──────┐
+       │             │
+ cold boot       post-BL31
+ mailbox          mailbox
+       │             │
+       ▼             ▼
+secondary       kernel/AP
+wait state      handoff
+```
+
+TF-A itself uses a **Trusted Mailbox in shared BL RAM** during cold boot, and then PSCI `CPU_ON` releases the secondary CPUs. ([tf-a.docs.trustedfirmware.org][2])
+
+That's quite different from saying:
+
+> "Asterinas needs to talk directly to the VideoCore mailbox."
+
+I would **not bypass TF-A and talk to the VC firmware yet**.
+
+That would give you:
+
+```text
+Asterinas
+   ↓
+VC mailbox
+   ↓
+VideoCore firmware
+   ↓
+CPU power control
+```
+
+while you already have:
+
+```text
+Asterinas
+   ↓
+SMC
+   ↓
+TF-A
+   ↓
+PSCI
+```
+
+The second path is much cleaner.
+
+---
+
+# The experiment I want you to run next
+
+Before changing much code, let's test whether PSCI is actually available.
+
+From Asterinas CPU0, issue:
+
+```text
+PSCI_VERSION
+```
+
+which is:
+
+```text
+SMC32 #0
+x0 = 0x84000000
+```
+
+A successful result should be something like:
+
+```text
+x0 = 0x00000001
+```
+
+for PSCI 0.1/0.2-era firmware, or another valid PSCI version.
+
+Then query:
+
+```text
+PSCI_FEATURES(PSCI_CPU_ON)
+```
+
+and then eventually:
+
+```text
+PSCI_CPU_ON
+```
+
+For CPU1:
+
+```text
+x0 = CPU_ON function ID
+x1 = MPIDR of CPU1
+x2 = entry address
+x3 = context ID
+```
+
+The standard PSCI DT binding describes `cpu_on` and the SMC/HVC calling convention. ([GitHub][5])
+
+---
+
+# The DTB is another very important clue
+
+Look at what your actual DTB says.
+
+If it currently contains:
+
+```dts
+cpu@1 {
+    enable-method = "spin-table";
+    cpu-release-addr = <0x0 0xe0>;
+};
+```
+
+then Asterinas is being told:
+
+> "You are responsible for releasing CPU1 using spin-table."
+
+But if TF-A is providing PSCI, what we really want is something like:
+
+```dts
+psci {
+    compatible = "arm,psci-0.2";
+    method = "smc";
+};
+
+cpu@1 {
+    enable-method = "psci";
+};
+```
+
+and similarly for CPU2/CPU3.
+
+Linux's DT binding explicitly supports `psci` as the AArch64 CPU `enable-method`. ([GitHub][6])
+
+So **the DTB may currently be telling Asterinas to use the wrong CPU bring-up mechanism.**
+
+That could explain almost the entire situation.
+
+---
+
+# One especially useful test
+
+Try this from Asterinas:
+
+```text
+CPU0:
+    PSCI_VERSION()
+```
+
+If you get:
+
+```text
+PSCI_VERSION = valid
+```
+
+then immediately try:
+
+```text
+CPU0:
+    PSCI_CPU_ON(MPIDR=1, entry=0x344000)
+```
+
+and put an extremely primitive entry point at `0x344000`:
+
+```asm
+secondary_entry:
+    // initialize stack
+    // write a character to UART
+    // loop
+```
+
+Don't enter the full Asterinas AP initialization yet.
+
+If you get:
+
+```text
+CPU0: PSCI_CPU_ON CPU1 -> SUCCESS
+CPU1: HELLO
+```
+
+we've proven:
+
+```text
+Pi hardware
+  +
+VC firmware
+  +
+TF-A
+  +
+PSCI
+  +
+CPU power-on
+```
+
+all work.
+
+Then the remaining problem is just Asterinas' AP handoff.
+
+---
+
+# One more important correction to the session context
+
+I would change this statement:
+
+> "RPi3 secondary CPUs are managed by the VC firmware and cannot be woken via ARM_LOCAL spin-table alone."
+
+to something more precise:
+
+> **On the TF-A RPi3 boot path, secondary CPU startup is mediated by TF-A/PSCI; therefore writing the Raspberry Pi armstub spin-table does not necessarily release CPUs that have already transitioned into TF-A's secondary-core wait state.**
+
+That's a much safer conclusion.
+
+The distinction matters because the official `armstub8.S` absolutely does contain a spin-table loop:
+
+```asm
+secondary_spin:
+    wfe
+    ldr x4, [x5, x6, lsl #3]
+    cbz x4, secondary_spin
+```
+
+with the release slots at `0xe0`, `0xe8`, and `0xf0`. ([GitHub][7])
+
+So the spin-table itself isn't bogus. **Your observation is that your CPUs aren't currently executing that loop anymore.**
+
+That's the critical insight.
+
+---
+
+## What I'd do in your project
+
+```text
+                 Current
+                    │
+                    ▼
+       ┌────────────────────────┐
+       │ spin-table fixed       │
+       │ 0xe0/e8/f0             │
+       │ write + readback       │
+       └────────────┬───────────┘
+                    │
+                    │ KEEP / COMMIT
+                    ▼
+       ┌────────────────────────┐
+       │ Investigate TF-A       │
+       │ PSCI availability      │
+       └────────────┬───────────┘
+                    │
+             PSCI_VERSION?
+              /           \
+            yes            no
+             │              │
+             ▼              ▼
+        PSCI_CPU_ON     inspect TF-A
+             │           configuration
+             ▼
+       primitive AP
+       entry @ 0x344000
+             │
+          success?
+          /      \
+        yes       no
+         │         │
+         ▼         ▼
+  Asterinas AP    TF-A/PSCI
+  initialization  configuration
+```
+
+### So my answer is:
+
+**1. Commit the spin-table fixes.** They're real and independently useful.
+
+**2. Do not implement the VC mailbox yet.**
+
+**3. Next investigate TF-A PSCI and change Asterinas' RPi3 SMP bring-up to use `PSCI_CPU_ON`, if your TF-A build exposes it.**
+
+If you show me your **TF-A version/config, the `/cpus` + `/psci` portion of the DTB, and Asterinas' current `cpu_on`/SMP code**, I can help you map the exact PSCI calls and determine what entry point TF-A expects for CPU1/2/3.
+
+[1]: https://github.com/ARM-software/arm-trusted-firmware/blob/master/docs/plat/rpi3.rst?utm_source=chatgpt.com "arm-trusted-firmware/docs/plat/rpi3.rst at master · ARM-software/arm-trusted-firmware · GitHub"
+[2]: https://tf-a.docs.trustedfirmware.org/en/latest/plat/rpi3.html?utm_source=chatgpt.com "7.34. Raspberry Pi 3 — Trusted Firmware-A 2.15.0 documentation"
+[3]: https://lists.trustedfirmware.org/archives/list/tf-a%40lists.trustedfirmware.org/message/DPARHFOW4SCSBGW6Y3TUJC4VIVERHZCJ/?utm_source=chatgpt.com "[TF-A] Re: Question about Secondary CPU boot with spintable - TF-A - lists.trustedfirmware.org"
+[4]: https://github.com/ARM-software/arm-trusted-firmware/blob/master/plat/rpi/rpi3/platform.mk?utm_source=chatgpt.com "arm-trusted-firmware/plat/rpi/rpi3/platform.mk at master · ARM-software/arm-trusted-firmware · GitHub"
+[5]: https://github.com/torvalds/linux/blob/master/Documentation/devicetree/bindings/arm/psci.yaml?utm_source=chatgpt.com "linux/Documentation/devicetree/bindings/arm/psci.yaml at master · torvalds/linux · GitHub"
+[6]: https://github.com/torvalds/linux/blob/master/Documentation/devicetree/bindings/arm/cpus.yaml?utm_source=chatgpt.com "linux/Documentation/devicetree/bindings/arm/cpus.yaml at master · torvalds/linux · GitHub"
+[7]: https://github.com/raspberrypi/tools/blob/master/armstubs/armstub8.S?utm_source=chatgpt.com "tools/armstubs/armstub8.S at master · raspberrypi/tools · GitHub"
+
