@@ -1,0 +1,377 @@
+Yes — this summary is much more useful. But I think OpenCode has made **one important inference that we should verify before accepting it as the root cause**.
+
+The strongest new fact is:
+
+```text
+PSCI_VERSION = 0x10001
+PSCI_CPU_ON = INVALID_PARAMETERS
+```
+
+That tells us **TF-A is definitely present and responding to PSCI calls**, but `CPU_ON` rejecting `0x344000` does *not* by itself prove that TF-A's secondary CPUs have already left the `armstub8` spin loop.
+
+There are actually **two separate questions** now.
+
+### 1. What state are CPU1–3 in when Asterinas starts?
+
+### 2. Why does TF-A's `PSCI_CPU_ON()` reject `0x344000`?
+
+I would investigate #2 first, because `INVALID_PARAMETERS` is a very strong diagnostic signal.
+
+---
+
+## The suspicious part: `PSCI_CPU_ON` → `INVALID_PARAMETERS`
+
+On a normal PSCI implementation, the call is essentially:
+
+```text
+CPU_ON(
+    target_cpu,
+    entry_point,
+    context_id
+)
+```
+
+and TF-A validates the target CPU and entry point.
+
+If you're doing:
+
+```text
+target = MPIDR_EL1 CPU1
+entry   = 0x344000
+```
+
+and getting:
+
+```text
+PSCI_E_INVALID_PARAMS
+```
+
+I would **not assume that 0x344000 is an invalid address** yet.
+
+There are several possibilities:
+
+```text
+PSCI_CPU_ON
+   │
+   ├── wrong MPIDR?
+   │
+   ├── CPU already considered ON?
+   │
+   ├── entry point violates TF-A validation?
+   │
+   ├── wrong execution/security state?
+   │
+   ├── TF-A RPi3 platform expects a special handoff?
+   │
+   └── wrong PSCI calling convention?
+```
+
+And because you get the same error for every entry point, the **target CPU / PSCI state** is especially interesting.
+
+---
+
+# I would ask OpenCode to do one specific investigation
+
+Don't let it start changing Asterinas yet.
+
+Have it inspect the exact TF-A RPi3 implementation for:
+
+```text
+plat/rpi/rpi3/
+```
+
+and trace:
+
+```text
+PSCI_CPU_ON
+   ↓
+plat_rpi_validate_power_state()
+   ↓
+rpi3_pwr_domain_on()
+   ↓
+rpi3_cpu_on()
+   ↓
+mailbox / entrypoint handling
+```
+
+The goal is to answer:
+
+> **What does TF-A expect `PSCI_CPU_ON()` to receive on RPi3, and what exact condition produces `PSCI_E_INVALID_PARAMS`?**
+
+That should be a source-code investigation, not speculation.
+
+---
+
+# There is another very important test
+
+Ask OpenCode to call:
+
+```text
+PSCI_AFFINITY_INFO
+```
+
+for CPU1, CPU2 and CPU3.
+
+Conceptually:
+
+```text
+CPU0:
+
+PSCI_AFFINITY_INFO(MPIDR=CPU1)
+PSCI_AFFINITY_INFO(MPIDR=CPU2)
+PSCI_AFFINITY_INFO(MPIDR=CPU3)
+```
+
+The result tells you whether TF-A considers each CPU:
+
+```text
+ON
+OFF
+ON_PENDING
+```
+
+This is extremely valuable.
+
+For example, if you get:
+
+```text
+CPU1 = ON
+CPU2 = ON
+CPU3 = ON
+```
+
+then your hypothesis becomes very strong:
+
+```text
+TF-A believes all APs are already running
+```
+
+and calling `CPU_ON` would naturally fail because you're trying to turn on CPUs TF-A considers already on.
+
+If instead:
+
+```text
+CPU1 = OFF
+CPU2 = OFF
+CPU3 = OFF
+```
+
+then:
+
+```text
+CPU_ON -> INVALID_PARAMETERS
+```
+
+needs further investigation.
+
+---
+
+# Also test `PSCI_MIGRATE_INFO_TYPE`
+
+Not because we need it for the final implementation, but because it can tell us more about the firmware configuration.
+
+More importantly, dump the complete PSCI information:
+
+```text
+PSCI_VERSION
+PSCI_FEATURES(CPU_ON)
+PSCI_FEATURES(AFFINITY_INFO)
+PSCI_FEATURES(SYSTEM_RESET)
+PSCI_FEATURES(SYSTEM_OFF)
+```
+
+You want something like:
+
+```text
+PSCI_VERSION = 0x00010001
+
+CPU_ON:
+    supported
+
+AFFINITY_INFO:
+    supported
+```
+
+---
+
+# The really interesting possibility
+
+I suspect your current boot path may look more like this:
+
+```text
+                     Raspberry Pi VC
+                           │
+                           ▼
+                    armstub8 / TF-A
+                           │
+                           ▼
+                       TF-A BL31
+                           │
+                  boot secondary CPUs
+                           │
+                           ▼
+                       U-Boot
+                           │
+                           ▼
+                      Asterinas
+                           │
+                           │
+                 CPU0 is running here
+                 CPU1-3 may have been
+                 classified by TF-A
+                 as already started
+```
+
+If that's the case, the kernel shouldn't be trying to **power on** CPU1–3 again.
+
+Instead, the question becomes:
+
+> **Where did TF-A send CPU1–3, and how does U-Boot/Asterinas arrange the secondary entry point?**
+
+That's a much more interesting problem.
+
+---
+
+# One thing I would specifically look for in the TF-A source
+
+Search the TF-A RPi3 source for these symbols/strings:
+
+```text
+rpi3_cpu_on
+rpi3_pwr_domain_on
+rpi3_get_sys_suspend_power_state
+rpi3_validate_power_state
+plat_secondary_cold_boot_setup
+plat_is_my_cpu_primary
+plat_secondary_cold_boot
+secondary_entrypoint
+```
+
+And especially search for:
+
+```text
+RPI3_BL31_BASE
+RPI3_SEC_ENTRYPOINT
+RPI3_CPU
+MAILBOX
+```
+
+The RPi3 platform has its own mechanism for getting the secondary cores from the firmware boot state into BL31.
+
+That source will tell us **exactly what happened to CPU1–3 before Asterinas began executing**.
+
+---
+
+# I would also change one statement in OpenCode's summary
+
+It says:
+
+> "The armstub8 spin-table ... is read by TF-A during boot, not by the kernel."
+
+I wouldn't accept that statement yet.
+
+The safer statement is:
+
+> **The `0xe0/e8/f0` locations are part of the Raspberry Pi armstub spin-table, but the presence of TF-A changes the subsequent CPU lifecycle. We need to trace TF-A's RPi3 secondary-core path to determine whether CPU1–3 are still executing the armstub spin loop when Asterinas starts.**
+
+Why am I being picky about this?
+
+Because:
+
+```asm
+secondary_spin:
+    wfe
+    ldr x4, [x5, x6, lsl #3]
+    cbz x4, secondary_spin
+```
+
+is a real mechanism in `armstub8.S`.
+
+If we claim "TF-A reads it, not the kernel," we need source evidence showing **where and when TF-A takes over**.
+
+Otherwise we're building the next debugging step on an assumption.
+
+---
+
+# Your next debugging milestone
+
+I'd make the next experiment extremely small:
+
+```text
+                         Asterinas CPU0
+                              │
+             ┌────────────────┼─────────────────┐
+             │                │                 │
+             ▼                ▼                 ▼
+        PSCI_VERSION    AFFINITY_INFO       CPU_ON
+             │                │                 │
+             ▼                ▼                 ▼
+          1.0.1          CPU1/2/3 state      error code
+```
+
+Then get:
+
+```text
+PSCI_VERSION
+PSCI_FEATURES(CPU_ON)
+PSCI_AFFINITY_INFO(CPU1)
+PSCI_AFFINITY_INFO(CPU2)
+PSCI_AFFINITY_INFO(CPU3)
+PSCI_CPU_ON(CPU1, ...)
+```
+
+**before changing any more SMP code.**
+
+That gives us a firmware-level picture.
+
+---
+
+## And I would *not* investigate VC mailbox yet
+
+At this point I would rank the approaches:
+
+| Approach                                        | Priority |
+| ----------------------------------------------- | -------: |
+| Trace TF-A RPi3 secondary boot source           |    ⭐⭐⭐⭐⭐ |
+| `PSCI_AFFINITY_INFO` CPU1–3                     |    ⭐⭐⭐⭐⭐ |
+| Understand `PSCI_CPU_ON INVALID_PARAMETERS`     |    ⭐⭐⭐⭐⭐ |
+| Determine actual AP entrypoint expected by TF-A |    ⭐⭐⭐⭐⭐ |
+| Try spin-table + SEV further                    |       ⭐⭐ |
+| Direct VC mailbox from Asterinas                |        ⭐ |
+
+The **VC mailbox should be last**, not next.
+
+You already have a functioning TF-A/PSCI interface:
+
+```text
+PSCI_VERSION = 0x10001
+```
+
+so it would be unnecessarily complicated to bypass TF-A and talk to VideoCore directly.
+
+---
+
+### One more thing
+
+Since this is exactly the kind of issue where source-code archaeology matters, I'd strongly recommend having OpenCode **read the TF-A RPi3 source before touching Asterinas again**.
+
+If you paste its next investigation result here — especially the TF-A functions around `CPU_ON`, `rpi3_cpu_on()`, and the `AFFINITY_INFO` results — I can help you reconstruct the exact state machine:
+
+```text
+VC firmware
+   ↓
+armstub
+   ↓
+TF-A BL31
+   ↓
+CPU1/2/3 state
+   ↓
+U-Boot
+   ↓
+Asterinas CPU0
+   ↓
+how CPU1/2/3 must actually be entered
+```
+
+I think we're now close to finding the real handoff point.
+

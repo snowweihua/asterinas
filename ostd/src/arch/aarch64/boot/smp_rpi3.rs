@@ -62,34 +62,23 @@ const CPU_SPIN_TABLE_OFFSETS: [usize; 4] = [
 const PSCI_CPU_ON: u64 = 0x84000001;
 const PSCI_SUCCESS: u64 = 0;
 
-/// Read the MPIDR_EL1 for a given CPU index from the DTB.
+/// Get the MPIDR_EL1 for a given CPU index.
+/// For RPi3 BCM2837, the MPIDR is 0x80000000 | cpu_index.
 fn get_mpidr(cpu_index: u32) -> Option<u64> {
-    let fdt = DEVICE_TREE.get()?;
-    let cpus = fdt.find_node("/cpus")?;
-    let mut current_cpu: u32 = 0;
-    for child in cpus.children() {
-        if child.reg().is_some() {
-            if current_cpu == cpu_index {
-                if let Some(prop) = child.property("reg") {
-                    let v = prop.value;
-                    if v.len() >= 8 {
-                        return Some(u64::from_le_bytes(v[0..8].try_into().ok()?));
-                    }
-                }
-            }
-            current_cpu += 1;
-        }
+    if cpu_index < 4 {
+        Some(0x80000000u64 | (cpu_index as u64))
+    } else {
+        None
     }
-    None
 }
 
-/// Check if PSCI is available by looking for /psci node in DTB.
+/// Check if PSCI is available by calling PSCI_VERSION.
+/// TF-A exposes PSCI via SMC even if the DTB doesn't have a /psci node.
 fn is_psci_available() -> bool {
-    let fdt = match DEVICE_TREE.get() {
-        Some(f) => f,
-        None => return false,
-    };
-    fdt.find_node("/psci").is_some()
+    let psci_version = smc_call(0x84000000, 0, 0, 0);
+    let valid = psci_version >= 0x10000 && psci_version < 0xffffffff;
+    log::info!("[a2-smp] rpi3: PSCI_VERSION={:#x}, available={}", psci_version, valid);
+    valid
 }
 
 /// Read the `cpu-release-addr` property from the DTB for the given logical CPU index.
@@ -123,9 +112,10 @@ fn get_cpu_release_addr(cpu_index: u32) -> Option<u64> {
                         log::info!("[a2-smp] rpi3: cpu-release-addr too short");
                         return None;
                     };
-                    // DTB returns offset within ARM_LOCAL peripheral, not full address
-                    // BCM2836 ARM_LOCAL base is 0x4000_0000
-                    return Some(ARM_LOCAL_PA as u64 + offset);
+                    // DTB cpu-release-addr is the absolute PA of the spin-table entry.
+                    // For RPi3, armstub8 is loaded at PA 0x0, so offset 0xe0 means PA 0xe0.
+                    // With identity mapping (VA == PA for low 4GB), we can access it directly.
+                    return Some(offset);
                 }
                 log::info!("[a2-smp] rpi3: no cpu-release-addr prop");
                 return None;
@@ -161,6 +151,27 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
     num_cpus: u32,
 ) {
     #[cfg(target_arch = "aarch64")]
+    {
+        let psci_version = smc_call(0x84000000, 0, 0, 0);
+        log::info!("[a2-smp] rpi3: PSCI_VERSION={:#x}", psci_version);
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    {
+        let psci_features_cpu_on = smc_call(0x8400000a, PSCI_CPU_ON, 0, 0);
+        log::info!("[a2-smp] rpi3: PSCI_FEATURES(CPU_ON)={:#x}", psci_features_cpu_on);
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    {
+        for cpu_id in 1..4u32 {
+            let mpidr = 0x80000000u64 | (cpu_id as u64);
+            let aff_info = smc_call(0x84000001, mpidr, 0, 0);
+            log::info!("[a2-smp] rpi3: PSCI_AFFINITY_INFO(cpu={}, mpidr={:#x})={:#x}", cpu_id, mpidr, aff_info);
+        }
+    }
+
+    #[cfg(target_arch = "aarch64")]
     log::info!("[a2-smp] rpi3: SMP bringup starting");
 
     unsafe {
@@ -195,8 +206,20 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
             core::ptr::write_volatile(0x41000 as *mut u8, marker_test);
             core::arch::asm!("dsb ish");
             let readback = core::ptr::read_volatile(0x41000 as *const u8);
-            log::info!("[a2-smp] marker test: wrote={:#x}, read={:#x}", marker_test, readback);
+            log::info!("[a2-smp] marker test PA 0x41000: wrote={:#x}, read={:#x}", marker_test, readback);
             core::ptr::write_volatile(0x41000 as *mut u8, 0x55);
+        }
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    {
+        let test_val: u64 = 0xDEADBEEF;
+        unsafe {
+            core::ptr::write_volatile(0xe0 as *mut u64, test_val);
+            core::arch::asm!("dsb ish");
+            let readback: u64 = core::ptr::read_volatile(0xe0 as *const u64);
+            log::info!("[a2-smp] marker test PA 0xe0: wrote={:#x}, read={:#x}", test_val, readback);
+            core::ptr::write_volatile(0xe0 as *mut u64, 0u64);
         }
     }
 
@@ -225,10 +248,10 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
             let info = &*info_ptr.add(cpu_id as usize - 1);
             let stack_top = info.stack_top as u64;
 
-            log::info!("[a2-smp] rpi3: PSCI CPU_ON cpu={} mpidr={:#x} entry={:#x} stack={:#x}",
+            log::info!("[a2-smp] rpi3: PSCI CPU_ON cpu={} mpidr={:#x} entry={:#x}(PA) stack={:#x}",
                 cpu_id, mpidr, ap_entry_paddr, stack_top);
 
-            let result = smc_call(PSCI_CPU_ON, mpidr, ap_entry_paddr, stack_top);
+            let result = smc_call(PSCI_CPU_ON, mpidr, ap_entry_paddr, 0u64);
             log::info!("[a2-smp] rpi3: PSCI result={:#x}", result);
 
             // Small delay
@@ -312,10 +335,11 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
 
         #[cfg(target_arch = "aarch64")]
         {
-            let spin_table_va = crate::mm::paddr_to_vaddr(release_addr as Paddr);
             unsafe {
-                let readback: u64 = core::ptr::read_volatile(spin_table_va as *const u64);
-                log::info!("[a2-smp] rpi3: spin-table@{:#x} current={:#x}", release_addr, readback);
+                core::ptr::write_volatile(release_addr as *mut u64, ap_entry_paddr);
+                core::arch::asm!("dsb ish", "sev", options(nostack, preserves_flags));
+                let readback: u64 = core::ptr::read_volatile(release_addr as *const u64);
+                log::info!("[a2-smp] rpi3: spin-table@{:#x} wrote={:#x} readback={:#x}", release_addr, ap_entry_paddr, readback);
             }
         }
 
