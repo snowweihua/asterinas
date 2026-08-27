@@ -309,32 +309,40 @@ INFO: [a2-smp] rpi3: wrote spin-table@0x400000e0=0x344000
 ```
 But APs still don't wake - CPUs likely not in WFE state.
 
-### Hypothesis: Secondary CPUs Need GPU Firmware Release
+### Updated Investigation (2026-08-27)
 
-The RPi3 VideoCore (VC) firmware manages secondary CPU power-on. The secondary CPUs are held in a special state until the VC firmware releases them via ARM_LOCAL registers.
+**PSCI Available via TF-A**: PSCI_VERSION returns 0x10001 (PSCI 1.0)
+- `is_psci_available()` now calls PSCI_VERSION instead of checking DTB
+- PSCI is available through TF-A even without /psci DTB node
 
-Evidence:
-- The VC firmware loads `armstub8.bin` before U-Boot
-- "Booting 3 processors" message suggests kernel detects CPUs but can't wake them
-- Standard `sev` wake-up may not work because CPUs are not in WFE state
+**But PSCI_CPU_ON returns INVALID_PARAMETERS (-1)**:
+- `PSCI_FEATURES(CPU_ON) = -1` (NOT_SUPPORTED)
+- `PSCI_AFFINITY_INFO for CPU1/2/3 = -1` (NOT_SUPPORTED)
 
-### Next Steps for B404
+This means standard PSCI CPU_ON is NOT supported by the current TF-A build.
 
-**INVESTIGATION COMPLETE - RPi3 SMP requires VC Firmware Mailbox Interface**
+**TF-A RPi3 Architecture** (from TF-A source):
+1. TF-A Trusted Mailbox at 0x10000000 (SHARED_RAM_BASE)
+2. Secondary cores wait in armstub8 WFE loop at 0xe0/0xe8/0xf0 (armstub8 PC-relative offsets)
+3. TF-A BL31 calls PSCI_CPU_ON to release secondaries from its wait loop
+4. BL33 (U-Boot) then puts them in another wait loop
+5. Kernel sends entry address via ARM_LOCAL mailbox 3 at 0x40000000 (0x9C/0xAC/0xBC)
 
-After extensive testing with multiple wake-up mechanisms (dsb+sev, mailbox IRQ, etc.), the conclusion is:
+**Current code correctly**:
+- Writes to ARM_LOCAL mailbox 3 at 0x9C/0xAC/0xBC with entry PA (0x344000)
+- Issues dsb+sev after mailbox write
+- Spin-table correctly writes/reads back 0x344000 at 0xe0/0xe8/0xf0
 
-The RPi3 secondary ARM CPUs are managed by the VideoCore (VC) firmware. The ARM cores cannot be woken via ARM_LOCAL spin-table alone - the VC firmware must cooperate.
+**The Problem**: Secondary CPUs are not in WFE waiting on the mailbox. They may be:
+1. Still in armstub8 WFE loop (PSCI didn't properly release them)
+2. In U-Boot's wait loop (listening on a different address)
+3. In TF-A's secure SRAM mailbox (0x10000000)
 
-Evidence:
-1. Spin-table correctly populated with PA 0x344000 at correct ARM_LOCAL offsets (0xe0, 0xe8, 0xf0)
-2. Mailbox IRQ correctly triggered at offsets (0x84, 0x88, 0x8C)
-3. Multiple sev pulses and extended polling (50k iterations) did not wake APs
-4. PSCI not available (no /psci node in DTB)
-5. QEMU works with PSCI (different implementation) but RPi3 hardware does not
+**Root Cause**: TF-A's PSCI is not properly configured for RPi3 in our boot chain.
+The standard Raspberry Pi firmware+TF-A uses PSCI for secondary CPU boot, but our
+configuration doesn't properly support it.
 
-To bring up SMP on RPi3 hardware, the VC firmware mailbox interface must be implemented. This is a significant effort beyond the scope of current bring-up.
-
-**Recommendation**: Accept single-core operation for RPi3, or implement full VC mailbox interface (future work).
-3. Check if mailbox interrupt to secondary CPUs (via ARM_LOCAL + 0x84/0x88/0x8C) is needed to wake from WFI
-4. Research armstub8.bin role - does it need to be configured differently for kernel SMP boot?
+**Next Steps**:
+1. Accept single-core operation for RPi3 hardware (recommended for now)
+2. OR investigate TF-A build configuration for proper PSCI support
+3. OR bypass TF-A and implement direct VC firmware mailbox interface

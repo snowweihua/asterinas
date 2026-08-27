@@ -59,7 +59,12 @@ const CPU_SPIN_TABLE_OFFSETS: [usize; 4] = [
 ];
 
 /// PSCI function IDs for RPi3 (using SMC conduit)
-const PSCI_CPU_ON: u64 = 0x84000001;
+/// These are PSCI v0.2 standard function IDs (32-bit SMCCC calling convention)
+/// Reference: Linux kernel include/uapi/linux/psci.h
+const PSCI_CPU_OFF: u64 = 0x84000002;          // CPU_OFF function ID
+const PSCI_CPU_ON: u64 = 0x84000003;           // CPU_ON function ID (was incorrectly 0x84000001)
+const PSCI_AFFINITY_INFO: u64 = 0x84000004;    // AFFINITY_INFO function ID (was incorrectly 0x84000001)
+const PSCI_SYSTEM_RESET: u64 = 0x84000009;     // SYSTEM_RESET function ID
 const PSCI_SUCCESS: u64 = 0;
 
 /// Get the MPIDR_EL1 for a given CPU index.
@@ -150,24 +155,39 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
     pt_ptr: Paddr,
     num_cpus: u32,
 ) {
+    // Complete PSCI diagnostic table
     #[cfg(target_arch = "aarch64")]
     {
+        // PSCI_VERSION
         let psci_version = smc_call(0x84000000, 0, 0, 0);
         log::info!("[a2-smp] rpi3: PSCI_VERSION={:#x}", psci_version);
-    }
 
-    #[cfg(target_arch = "aarch64")]
-    {
+        // PSCI_FEATURES for CPU_ON
         let psci_features_cpu_on = smc_call(0x8400000a, PSCI_CPU_ON, 0, 0);
         log::info!("[a2-smp] rpi3: PSCI_FEATURES(CPU_ON)={:#x}", psci_features_cpu_on);
-    }
 
-    #[cfg(target_arch = "aarch64")]
-    {
+        // PSCI_FEATURES for AFFINITY_INFO
+        let psci_features_aff_info = smc_call(0x8400000a, PSCI_AFFINITY_INFO, 0, 0);
+        log::info!("[a2-smp] rpi3: PSCI_FEATURES(AFFINITY_INFO)={:#x}", psci_features_aff_info);
+
+        // PSCI_FEATURES for SYSTEM_RESET
+        let psci_features_sys_reset = smc_call(0x8400000a, PSCI_SYSTEM_RESET, 0, 0);
+        log::info!("[a2-smp] rpi3: PSCI_FEATURES(SYSTEM_RESET)={:#x}", psci_features_sys_reset);
+
+        // PSCI_AFFINITY_INFO for ALL CPUs (including CPU0)
+        for cpu_id in 0..4u32 {
+            let mpidr = 0x80000000u64 | (cpu_id as u64);
+            let aff_info = smc_call(PSCI_AFFINITY_INFO, mpidr, 0, 0);
+            log::info!("[a2-smp] rpi3: PSCI_AFFINITY_INFO(cpu={}, mpidr={:#x})={:#x}", cpu_id, mpidr, aff_info);
+        }
+
+        // PSCI_CPU_ON for each secondary CPU
+        log::info!("[a2-smp] rpi3: --- PSCI_CPU_ON tests ---");
         for cpu_id in 1..4u32 {
             let mpidr = 0x80000000u64 | (cpu_id as u64);
-            let aff_info = smc_call(0x84000001, mpidr, 0, 0);
-            log::info!("[a2-smp] rpi3: PSCI_AFFINITY_INFO(cpu={}, mpidr={:#x})={:#x}", cpu_id, mpidr, aff_info);
+            let result = smc_call(PSCI_CPU_ON, mpidr, AP_BOOT_DEST_PA as u64, 0u64);
+            log::info!("[a2-smp] rpi3: PSCI_CPU_ON(cpu={}, mpidr={:#x}, entry={:#x})={:#x}",
+                cpu_id, mpidr, AP_BOOT_DEST_PA as u64, result);
         }
     }
 

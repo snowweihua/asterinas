@@ -1,0 +1,395 @@
+Yes. **Do not accept single-core yet, and do not implement the VC mailbox.** The new summary contains a contradiction that is actually a very useful clue.
+
+The key is:
+
+> Earlier OpenCode reported `PSCI_CPU_ON = INVALID_PARAMETERS`; now it says `PSCI_CPU_ON = NOT_SUPPORTED`.
+
+Those are **very different failures**.
+
+And the conclusion:
+
+> "TF-A didn't properly initialize PSCI"
+
+is **not established by `PSCI_CPU_ON = NOT_SUPPORTED` alone**.
+
+In fact, if `PSCI_VERSION` returns `0x10001`, we already know that a PSCI implementation is responding.
+
+## I recommend option 2 — investigate the TF-A build/configuration
+
+But with a very specific goal:
+
+**Prove what BL31 is actually implementing, and why `CPU_ON` returns `NOT_SUPPORTED`.**
+
+Do not modify Asterinas SMP or implement VideoCore mailbox yet.
+
+### First, get the exact PSCI results
+
+Have OpenCode produce a table like:
+
+```text
+PSCI_VERSION                         -> ?
+PSCI_FEATURES(CPU_ON)                -> ?
+PSCI_FEATURES(AFFINITY_INFO)         -> ?
+PSCI_FEATURES(SYSTEM_RESET)           -> ?
+PSCI_AFFINITY_INFO(CPU1)             -> ?
+PSCI_AFFINITY_INFO(CPU2)             -> ?
+PSCI_AFFINITY_INFO(CPU3)             -> ?
+PSCI_CPU_ON(CPU1, ...)               -> ?
+```
+
+The crucial one is:
+
+```text
+PSCI_FEATURES(PSCI_CPU_ON)
+```
+
+If that says **NOT_SUPPORTED**, then we have strong evidence that the running BL31 really doesn't expose `CPU_ON`.
+
+If it says **SUCCESS**, but `CPU_ON` subsequently returns `NOT_SUPPORTED`, then something else is wrong with the invocation/target/state.
+
+---
+
+# More importantly: identify the exact TF-A binary
+
+I want OpenCode to stop reasoning from the boot architecture and inspect the **actual binary you're booting**.
+
+Find:
+
+```text
+armstub8.bin
+```
+
+and determine:
+
+```text
+TF-A version
+BL1
+BL31
+BL33
+build configuration
+```
+
+If you built TF-A yourself, give OpenCode:
+
+```text
+make command
+plat/rpi/rpi3/
+build/.../
+```
+
+In particular, inspect the TF-A build configuration around:
+
+```text
+RPI3
+RESET_TO_BL31
+RESET_TO_BL2
+BL31
+ENABLE_PSCI
+```
+
+The official TF-A RPi3 platform absolutely has PSCI support; therefore:
+
+> "TF-A RPi3 doesn't implement PSCI CPU_ON"
+
+should **not be accepted as a general statement**.
+
+The question is why **your particular TF-A image** isn't exposing it.
+
+---
+
+# There's another thing I would investigate immediately
+
+The summary says:
+
+> TF-A calls PSCI_CPU_ON to release secondaries from wait loop
+
+I would challenge this.
+
+The architecture is more subtle.
+
+There are two different contexts:
+
+```text
+             CPU1
+              │
+              ▼
+        armstub8 startup
+              │
+              ▼
+       secondary waiting
+              │
+              │
+       TF-A takes over
+              │
+              ▼
+        BL31 secondary
+              │
+              ▼
+       eventual BL33/kernel
+```
+
+The **PSCI `CPU_ON` interface is intended for the OS to request a powered-off CPU be brought online**.
+
+It isn't simply:
+
+```text
+PSCI_CPU_ON()
+     ↓
+wake armstub WFE
+```
+
+So don't let OpenCode model the system as "PSCI is another way to write `0xe0`."
+
+It's a different CPU lifecycle.
+
+---
+
+# The ARM_LOCAL mailbox discovery is useful—but don't use it yet
+
+OpenCode found:
+
+```text
+ARM_LOCAL base = 0x40000000
+
+CPU1 mailbox 3 = 0x9C
+CPU2 mailbox 3 = 0xAC
+CPU3 mailbox 3 = 0xBC
+```
+
+Good.
+
+But **writing those registers without knowing the current CPU state won't tell us much**.
+
+We need to know what code is actually executing on CPU1–3.
+
+This is the experiment I'd prioritize.
+
+---
+
+# Make CPU1/2/3 announce themselves
+
+Modify the armstub/TF-A handoff temporarily so that each possible secondary entry writes something distinctive to UART.
+
+For example:
+
+```text
+CPU0 -> "S0"
+CPU1 -> "S1"
+CPU2 -> "S2"
+CPU3 -> "S3"
+```
+
+You want to determine whether the APs ever execute:
+
+```text
+armstub8 secondary_spin
+```
+
+versus:
+
+```text
+TF-A secondary entry
+```
+
+versus:
+
+```text
+U-Boot secondary wait
+```
+
+versus:
+
+```text
+Asterinas secondary entry
+```
+
+This is much more informative than repeatedly writing different mailbox addresses.
+
+---
+
+# I would ask OpenCode for one very specific source trace
+
+Tell it:
+
+> Trace the exact RPi3 secondary CPU path in the **TF-A version used to build our `armstub8.bin`**, from reset through BL31 to BL33. Identify exactly where CPU1/2/3 are parked, what wakes them, and what entry point is installed for them. Do not modify code. Also explain why the running PSCI implementation returns `NOT_SUPPORTED` for `CPU_ON`.
+
+That should produce something like:
+
+```text
+CPU1 reset
+   ↓
+armstub8
+   ↓
+???
+   ↓
+TF-A BL31
+   ↓
+???
+   ↓
+U-Boot
+   ↓
+???
+```
+
+with actual functions and addresses.
+
+That's what we need.
+
+---
+
+# One particularly important possibility
+
+Your boot chain may have an **unexpected TF-A configuration**.
+
+For example, you may effectively have:
+
+```text
+start.elf
+   ↓
+armstub8
+   ↓
+BL31
+   ↓
+U-Boot
+   ↓
+Asterinas
+```
+
+but the `armstub8.bin` you're using might have been built with assumptions intended for the standard Linux/U-Boot boot flow.
+
+Then you have:
+
+```text
+TF-A expects:
+    Linux/U-Boot integration
+       ↓
+    secondary CPU handoff
+
+Asterinas expects:
+    DT spin-table
+       ↓
+    secondary CPU handoff
+```
+
+Those assumptions don't necessarily match.
+
+That would explain why:
+
+```text
+spin-table write = successful
+PSCI_VERSION     = successful
+PSCI_CPU_ON      = NOT_SUPPORTED
+APs              = never arrive
+```
+
+---
+
+# I would NOT choose option 1
+
+Definitely don't conclude:
+
+> RPi3 = single core only
+
+because Linux runs SMP on exactly this SoC.
+
+Your hardware is capable of:
+
+```text
+Cortex-A53 × 4
+```
+
+and the Raspberry Pi firmware/TF-A/Linux stack can bring them up.
+
+So this is a **boot-chain integration problem**, not a fundamental RPi3 limitation.
+
+---
+
+# I would NOT choose option 3 yet
+
+Direct VideoCore mailbox would make the architecture:
+
+```text
+Asterinas
+   ↓
+ARM_LOCAL
+   ↓
+VideoCore mailbox protocol
+   ↓
+VC firmware
+   ↓
+CPU power/reset
+```
+
+while you already have:
+
+```text
+Asterinas
+   ↓
+SMC
+   ↓
+TF-A
+```
+
+That's exactly the sort of unnecessary firmware bypass I'd avoid.
+
+---
+
+# Option 4 is also premature
+
+Don't replace `armstub8.bin` until we understand the current one.
+
+Otherwise you'll change:
+
+```text
+firmware
+TF-A
+DTB
+kernel
+```
+
+simultaneously and lose the ability to identify the actual problem.
+
+---
+
+## My recommended path
+
+```text
+                     CURRENT STATE
+                          │
+                          ▼
+              PSCI_VERSION = 1.0.1
+                          │
+                          ▼
+              ┌─────────────────────┐
+              │ PSCI_FEATURES       │
+              │ CPU_ON ?            │
+              └─────────┬───────────┘
+                        │
+              ┌─────────┴───────────┐
+              │                     │
+          SUPPORTED              NOT_SUPPORTED
+              │                     │
+              ▼                     ▼
+       investigate CPU_ON      inspect TF-A build
+       target/state            + platform config
+              │                     │
+              └──────────┬──────────┘
+                         ▼
+                trace RPi3 TF-A
+                secondary path
+                         │
+                         ▼
+             identify AP wait state
+                         │
+                         ▼
+                choose handoff
+```
+
+### So: **Option 2, definitely.**
+
+But don't ask OpenCode merely to "try another TF-A build." First make it **explain the existing TF-A build**.
+
+And I would keep commit `bf59a27c`. The spin-table fixes are valid diagnostic fixes even if spin-table isn't ultimately the SMP mechanism.
+
+If you paste OpenCode's **next TF-A source-trace result** here, especially the actual `rpi3_cpu_on()` / PSCI implementation and the results of `PSCI_FEATURES(CPU_ON)` + `AFFINITY_INFO`, we can probably pin down whether the problem is **TF-A configuration, CPU state, or the Asterinas↔TF-A handoff**.
+
