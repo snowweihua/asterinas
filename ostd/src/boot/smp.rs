@@ -139,18 +139,33 @@ pub fn register_ap_entry(entry: fn()) {
 
 #[unsafe(no_mangle)]
 fn ap_early_entry(cpu_id: u32) -> ! {
-    unsafe {
-        let uart_base = 0x3F201000usize;
-        loop { let fr = core::ptr::read_volatile((uart_base + 0x18) as *const u32); if fr & 0x20 == 0 { break; } }
-        core::ptr::write_volatile(uart_base as *mut u32, b'1' as u32);
-    }
-
     // SAFETY: The safety is upheld by the caller.
     unsafe { crate::cpu::init_on_ap(cpu_id) };
 
-    loop {
-        core::hint::spin_loop();
-    }
+    crate::arch::enable_cpu_features();
+
+    // SAFETY: This function is called in the boot context of the AP.
+    unsafe { crate::arch::trap::init() };
+
+    // SAFETY: This function is only called once on this AP, after the BSP has
+    // done the architecture-specific initialization.
+    unsafe { crate::arch::init_on_ap() };
+
+    crate::arch::irq::enable_local();
+
+    // SAFETY: This function is only called once on this AP.
+    unsafe { crate::mm::kspace::activate_kernel_page_table() };
+
+    // Mark the AP as started.
+    report_online_and_hw_cpu_id(cpu_id);
+
+    log::info!("Processor {} started. Spinning for tasks.", cpu_id);
+
+    let ap_late_entry = AP_LATE_ENTRY.wait();
+    ap_late_entry();
+
+    Task::yield_now();
+    unreachable!("`yield_now` in the boot context should not return");
 }
 
 fn report_online_and_hw_cpu_id(cpu_id: u32) {
