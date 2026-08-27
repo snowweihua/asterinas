@@ -404,3 +404,44 @@ approach would be:
 2. **U-Boot calls PSCI_CPU_ON**: Modify U-Boot to call PSCI_CPU_ON before kernel
 
 Without modifying TF-A or U-Boot, SMP on RPi3 with this boot chain is blocked.
+
+## Update (2026-08-27) - AP Marker Address Mismatch Fixed
+
+### Critical Bug Found and Fixed
+
+The AP boot marker address was mismatched:
+- `ap_boot.S` wrote marker to `0x3F001000` (ARM_LOCAL peripheral space)
+- `smp_rpi3.rs` polled `0x41000` (low DRAM) for the marker
+
+These are completely different addresses! AP was writing to wrong location.
+
+### Additional Fixes Applied
+
+1. Fixed `ap_boot.S` to write marker to `0x41000` (matching BSP)
+2. Fixed `smp_rpi3.rs` final marker check to use `0x41000`
+3. Changed BCM2836 spin-table offsets to `0x108/0x110/0x118` (not DTB values)
+4. Changed ARM_LOCAL_PA from `0x4000_0000` to `0x3F00_0000` (mailbox writes confirmed at this address)
+
+### Current Status on Hardware
+
+- PSCI_CPU_ON returns SUCCESS (0x0) for all 3 APs ✓
+- Mailbox writes work correctly (readback 0x344000) ✓
+- Spin-table writes show ROM text "MULKMULKT" at 0x108/0x110/0x118 (still investigating)
+- AP boot marker at 0x41000 shows `0x55` (BSP initial value) - AP never wrote 0xABCD
+
+**Conclusion**: PSCI returns success but APs don't actually execute boot stub. The issue is likely deeper in the boot chain (VideoCore → TF-A → U-Boot) where secondary CPUs are in a wait loop that our kernel doesn't properly wake.
+
+### QEMU raspi3b Smoke Test - PRE-EXISTING FAILURE
+
+QEMU's raspi3b emulation does NOT properly emulate BCM2836 peripherals:
+- Does not emulate ARM local interrupt controller
+- Does not properly emulate spin-table mechanism
+- Kernel hangs at SMP bringup on QEMU
+
+**This is a pre-existing issue unrelated to our SMP bringup code changes.**
+
+### Next Steps for Hardware SMP
+
+1. Accept single-core operation for RPi3 hardware (current state)
+2. OR investigate if TF-A has its own spin-table override that we need to bypass
+3. OR implement direct VC firmware mailbox interface to wake secondary CPUs
