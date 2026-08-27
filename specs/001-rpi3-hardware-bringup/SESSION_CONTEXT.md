@@ -346,3 +346,61 @@ configuration doesn't properly support it.
 1. Accept single-core operation for RPi3 hardware (recommended for now)
 2. OR investigate TF-A build configuration for proper PSCI support
 3. OR bypass TF-A and implement direct VC firmware mailbox interface
+
+## Update (2026-08-27) - PSCI Bug Found and Fixed
+
+### Critical Bug: PSCI Function IDs Were Wrong
+
+The PSCI function IDs in our code were INCORRECT:
+- Old: `PSCI_CPU_ON = 0x84000001` (this is CPU_OFF!)
+- Correct: `PSCI_CPU_ON = 0x84000003` (PSCI v0.2 standard)
+
+After fixing the function IDs, PSCI is confirmed working:
+- `PSCI_FEATURES(CPU_ON) = 0x0` (SUPPORTED)
+- `PSCI_FEATURES(AFFINITY_INFO) = 0x0` (SUPPORTED)
+- `PSCI_AFFINITY_INFO(cpu=0) = 0x0` (ON)
+- `PSCI_AFFINITY_INFO(cpu=1..3) = 0x1` (OFF)
+
+### PSCI_CPU_ON Behavior
+
+- First call (diagnostic, before boot stub copy): returns SUCCESS (0x0)
+- Second call (in bringup, after boot stub copy): returns DENIED (-4)
+
+This suggests something between the two calls changes the system state.
+
+### Direct Trusted Mailbox Test
+
+Tried directly writing GO state to TF-A Trusted Mailbox at 0x10000008/0x10000010/0x10000018:
+- Entry point written to 0x10000000 = 0x344000 ✓
+- GO state (0x1) written to hold entries ✓
+- But no APs started!
+
+This strongly suggests secondary CPUs are NOT polling the Trusted Mailbox.
+
+### Root Cause Hypothesis: U-Boot Spin-Table Redirect
+
+U-Boot has `spin_table_update_dt()` which MODIFIES the DTB's cpu-release-addr:
+- Original DTB values: 0xe0/0xe8/0xf0 (set by VideoCore firmware)
+- U-Boot overwrites these to point to U-Boot's relocated spin-table address
+
+This means:
+1. We're writing to addresses (0xe0/0xe8/0xf0) that CPUs are no longer polling
+2. CPUs are polling U-Boot's internal spin-table at a different address
+3. Our spin-table writes go to the wrong location
+
+### Evidence
+
+- Trusted Mailbox writes succeed (readback correct) but cores don't wake
+- ARM_LOCAL spin-table writes succeed (readback 0x344000) but cores don't wake
+- PSCI_CPU_ON returns DENIED (cores already in some wait loop?)
+
+### Conclusion
+
+The boot chain complexity (VideoCore → TF-A → U-Boot → kernel) creates a secondary
+CPU coordination that our kernel doesn't properly integrate with. The standard
+approach would be:
+
+1. **TF-A direct boot** (skip U-Boot): `RPI3_DIRECT_LINUX_BOOT=1` in TF-A build
+2. **U-Boot calls PSCI_CPU_ON**: Modify U-Boot to call PSCI_CPU_ON before kernel
+
+Without modifying TF-A or U-Boot, SMP on RPi3 with this boot chain is blocked.

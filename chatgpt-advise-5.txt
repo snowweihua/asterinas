@@ -1,0 +1,372 @@
+This is a **much better diagnosis**, and I would **not accept single-core**. The new finding gives you a clean path forward.
+
+The important discovery is:
+
+> U-Boot's `spin_table_update_dt()` rewrites `cpu-release-addr` to its own relocated spin-table.
+
+That means your original `0xe0/e8/f0` work was correct, but **those are no longer the addresses described by the DTB that Asterinas receives**.
+
+However, I would make one important correction to OpenCode's conclusion:
+
+### Don't have U-Boot call `PSCI_CPU_ON` itself.
+
+U-Boot is BL33. The normal architecture is:
+
+```text
+TF-A BL31
+    ↑
+    │ PSCI
+    │
+U-Boot / OS
+```
+
+If U-Boot starts the CPUs before handing control to Asterinas, then Asterinas loses control over the AP entry point/state. That's not what we want.
+
+Instead, I recommend **Option 2, but with a refinement**:
+
+> Build a TF-A configuration where the handoff to your kernel is compatible with Asterinas, and preferably eliminate U-Boot from the SMP handoff path.
+
+---
+
+# But there is an even easier experiment first
+
+Before rebuilding TF-A, let's exploit the discovery OpenCode just made.
+
+U-Boot changes:
+
+```text
+DTB:
+CPU1 cpu-release-addr = 0xe0
+       ↓
+U-Boot spin_table_update_dt()
+       ↓
+CPU1 cpu-release-addr = <U-Boot relocated address>
+```
+
+So simply make Asterinas use the **final DTB values**, rather than assuming:
+
+```text
+0xe0
+0xe8
+0xf0
+```
+
+If Asterinas currently does:
+
+```rust
+release_addr = 0xe0 + cpu_id * 8;
+```
+
+that's wrong after U-Boot relocation.
+
+Instead it should do:
+
+```text
+DTB
+ │
+ ├── cpu@1
+ │     └── cpu-release-addr = X
+ │
+ ├── cpu@2
+ │     └── cpu-release-addr = Y
+ │
+ └── cpu@3
+       └── cpu-release-addr = Z
+```
+
+and write:
+
+```text
+X → AP1 entry
+Y → AP2 entry
+Z → AP3 entry
+```
+
+### This is the lowest-cost experiment.
+
+It requires **no TF-A rebuild**.
+
+---
+
+# But there's a deeper question
+
+Even if you use U-Boot's relocated spin-table, we need to know:
+
+> **Are CPU1–3 still in the U-Boot spin-table loop when Asterinas starts?**
+
+Because U-Boot's `spin_table_update_dt()` doesn't necessarily mean U-Boot itself is responsible for waking the CPUs in the way we're assuming.
+
+The exact U-Boot code matters.
+
+I would have OpenCode inspect:
+
+```text
+id="8x2jlf"
+spin_table_update_dt()
+spin_table_cpu_release()
+```
+
+and the RPi3 U-Boot CPU implementation.
+
+Specifically determine:
+
+```text
+1. Where is U-Boot's relocated spin-table?
+2. Who consumes it?
+3. Which code puts CPU1-3 into the wait loop?
+4. Does U-Boot execute PSCI_CPU_ON?
+5. Does U-Boot modify cpu-release-addr only for the OS?
+6. At the moment U-Boot jumps to Asterinas, what are CPU1-3 doing?
+```
+
+This is important because **DT modification alone doesn't prove the APs are polling the relocated addresses**.
+
+---
+
+# There's a very promising possibility
+
+Suppose U-Boot does:
+
+```text
+U-Boot:
+    allocate spin-table
+       ↓
+    modify DTB
+       ↓
+    CPU1 waits at U-Boot spin table
+       ↓
+    boot kernel
+```
+
+Then your solution could be incredibly simple:
+
+```text
+U-Boot
+  │
+  │ final DTB
+  ▼
+Asterinas
+  │
+  ├── CPU1 release addr = U-Boot table
+  ├── CPU2 release addr = U-Boot table
+  └── CPU3 release addr = U-Boot table
+       │
+       ▼
+      SEV
+       │
+       ▼
+     APs
+```
+
+No VC mailbox.
+
+No TF-A modification.
+
+No U-Boot PSCI changes.
+
+That is **absolutely worth testing before changing the boot chain.**
+
+---
+
+# Your PSCI discovery is also very valuable
+
+The corrected result:
+
+```text
+PSCI_VERSION                    = 0x10001
+PSCI_FEATURES(CPU_ON)           = 0
+PSCI_FEATURES(AFFINITY_INFO)    = 0
+```
+
+means we now know:
+
+```text
+                    TF-A BL31
+                       │
+                       │ SMC
+                       ▼
+                 PSCI 1.0.1
+                       │
+              ┌────────┴────────┐
+              │                 │
+          CPU_ON             AFFINITY
+          works              supported
+```
+
+So **PSCI is not the fundamental problem**.
+
+That's actually excellent news.
+
+---
+
+# I would now run one very small experiment
+
+Have Asterinas print the **final DTB CPU release addresses** it receives.
+
+Something like:
+
+```text
+CPU1 release address = 0xXXXXXXXX
+CPU2 release address = 0xXXXXXXXX
+CPU3 release address = 0xXXXXXXXX
+```
+
+Then compare them with:
+
+```text
+0xe0
+0xe8
+0xf0
+```
+
+I expect you'll see something like:
+
+```text
+CPU1 = 0x7xxxxxxx
+CPU2 = 0x7xxxxxxx
+CPU3 = 0x7xxxxxxx
+```
+
+rather than:
+
+```text
+CPU1 = 0xe0
+CPU2 = 0xe8
+CPU3 = 0xf0
+```
+
+If so, **write to those addresses** and see whether the APs wake.
+
+That experiment is worth doing before touching TF-A.
+
+---
+
+# One more test can make this nearly conclusive
+
+Since you now have working PSCI, query:
+
+```text
+PSCI_AFFINITY_INFO(CPU1)
+PSCI_AFFINITY_INFO(CPU2)
+PSCI_AFFINITY_INFO(CPU3)
+```
+
+immediately when Asterinas starts.
+
+If they return:
+
+```text
+CPU1 = OFF
+CPU2 = OFF
+CPU3 = OFF
+```
+
+then the APs are probably waiting somewhere and haven't been started.
+
+If they return:
+
+```text
+CPU1 = ON
+CPU2 = ON
+CPU3 = ON
+```
+
+then the situation is completely different: TF-A thinks they are already running.
+
+This is worth logging **before writing any spin-table addresses**.
+
+---
+
+# My preferred debugging sequence now
+
+```text
+                    U-Boot
+                      │
+                      │ modifies DTB
+                      ▼
+             final cpu-release-addr
+                      │
+                      ▼
+                  Asterinas
+                      │
+          ┌───────────┴───────────┐
+          │                       │
+          ▼                       ▼
+   AFFINITY_INFO             read DTB
+   CPU1/2/3                  release addr
+          │                       │
+          │                       ▼
+          │               write final addresses
+          │                       │
+          │                       ▼
+          │                      SEV
+          │                       │
+          └───────────────┬───────┘
+                          ▼
+                    CPU1/2/3
+```
+
+Only if that fails:
+
+```text
+        inspect U-Boot
+             │
+             ▼
+    understand AP wait loop
+             │
+             ▼
+       inspect TF-A
+```
+
+Only after that:
+
+```text
+TF-A rebuild / direct Linux boot
+```
+
+And **direct VC mailbox should still be the last resort**.
+
+---
+
+## So my recommendation
+
+**Don't choose OpenCode's option 1.**
+
+**Don't choose option 3 yet.**
+
+**Don't immediately choose option 2 either.**
+
+First do this:
+
+> **Use the final `cpu-release-addr` values from the DTB after U-Boot's `spin_table_update_dt()`, and test whether writing those addresses + `SEV` wakes the APs.**
+
+This is now the most promising and least invasive experiment.
+
+If it fails, then I'd move to **TF-A direct boot / U-Boot removal**, because that gives you a much cleaner architecture:
+
+```text
+start.elf
+    ↓
+armstub8 / TF-A
+    ↓
+PSCI
+    ↓
+Asterinas
+    ↓
+SMP
+```
+
+rather than:
+
+```text
+start.elf
+    ↓
+TF-A
+    ↓
+U-Boot modifies DT + CPU state
+    ↓
+Asterinas has to reverse-engineer U-Boot's SMP handoff
+```
+
+**The latter is exactly the kind of boot-chain complexity I'd avoid in an OS port.**
+

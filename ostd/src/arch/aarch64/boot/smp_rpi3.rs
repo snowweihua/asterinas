@@ -109,7 +109,7 @@ fn get_cpu_release_addr(cpu_index: u32) -> Option<u64> {
             if current_cpu == cpu_index {
                 if let Some(prop) = child.property("cpu-release-addr") {
                     let v = prop.value;
-                    let offset = if v.len() >= 8 {
+                    let addr = if v.len() >= 8 {
                         u64::from_be_bytes(v[0..8].try_into().ok()?)
                     } else if v.len() >= 4 {
                         u32::from_be_bytes(v[0..4].try_into().ok()?) as u64
@@ -117,10 +117,11 @@ fn get_cpu_release_addr(cpu_index: u32) -> Option<u64> {
                         log::info!("[a2-smp] rpi3: cpu-release-addr too short");
                         return None;
                     };
-                    // DTB cpu-release-addr is the absolute PA of the spin-table entry.
-                    // For RPi3, armstub8 is loaded at PA 0x0, so offset 0xe0 means PA 0xe0.
-                    // With identity mapping (VA == PA for low 4GB), we can access it directly.
-                    return Some(offset);
+                    log::info!("[a2-smp] DTB cpu{} release-addr={:#x} (raw from DTB)", cpu_index, addr);
+                    // DTB cpu-release-addr is typically the absolute PA of the spin-table entry.
+                    // For RPi3, the VideoCore firmware sets this to offsets (0xe0, 0xe8, 0xf0).
+                    // U-Boot's spin_table_update_dt() may have modified these to its own addresses.
+                    return Some(addr);
                 }
                 log::info!("[a2-smp] rpi3: no cpu-release-addr prop");
                 return None;
@@ -258,8 +259,6 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
                 let readback: u64 = core::ptr::read_volatile(addr as *const u64);
                 log::info!("[a2-smp] trusted_mailbox CPU{} @ {:#x}: wrote={:#x}, read={:#x}",
                     cpu_id, addr, test_val, readback);
-                // Write back 0 to avoid interfering with TF-A state
-                core::ptr::write_volatile(addr as *mut u64, 0u64);
             }
         }
     }
