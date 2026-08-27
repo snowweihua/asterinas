@@ -52,12 +52,12 @@ const ARM_LOCAL_PA: usize = 0x3F00_0000;
 
 /// BCM2836 spin-table offsets per CPU (within ARM_LOCAL peripheral space).
 /// These are the actual spin-table addresses within ARM_LOCAL - NOT the mailbox addresses.
-/// The mailbox is at 0x9C/0xAC/0xBC, but the spin-table is at 0x100/0x108/0x110.
+/// Match the values in bcm2836_irq.rs: CORE1_BOOT_CONTROL=0xE8, CORE2_BOOT_CONTROL=0xF0, etc.
 const CPU_SPIN_TABLE_OFFSETS: [usize; 4] = [
-    0x100, // CPU 0
-    0x108, // CPU 1
-    0x110, // CPU 2
-    0x118, // CPU 3
+    0xE0, // CPU 0
+    0xE8, // CPU 1
+    0xF0, // CPU 2
+    0xF8, // CPU 3
 ];
 
 /// PSCI function IDs for RPi3 (using SMC conduit)
