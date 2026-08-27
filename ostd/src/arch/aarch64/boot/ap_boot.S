@@ -17,6 +17,11 @@
 
 .global ap_boot_entry
 ap_boot_entry:
+    /* Write marker to confirm AP reached this code at 0x344000 */
+    mov     x0, #0xABCD
+    ldr     x1, =0x3F001000
+    str     x0, [x1]
+
     /* AP early marker - AP started */
     mov     x0, #0x41
     bl      ap_putchar
@@ -167,8 +172,11 @@ __boot_page_table_pointer:
 /* Simple UART putchar for AP early debug - writes to PL011 at PA 0x3F201000 */
 ap_putchar:
     /* x0 = character to print */
-    /* PL011 UART DATA register at PA 0x3F201000 */
+    /* PL011 UART DATA register at PA 0x3F201000, FR at +0x18 */
+    ldr     x1, =0x3F201018
+1:  ldr     x2, [x1]           /* Read UARTFR */
+    and     x2, x2, #0x20       /* Check TXFF bit (bit 5) */
+    cbnz    x2, 1b              /* If TXFF set, wait */
     ldr     x1, =0x3F201000
-    /* Write character to UART DATA register */
-    str     x0, [x1]
+    str     x0, [x1]            /* Write character to UART DATA register */
     ret

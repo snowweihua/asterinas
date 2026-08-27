@@ -181,31 +181,9 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
             let aff_info = smc_call(PSCI_AFFINITY_INFO, mpidr, 0, 0);
             log::info!("[a2-smp] rpi3: PSCI_AFFINITY_INFO(cpu={}, mpidr={:#x})={:#x}", cpu_id, mpidr, aff_info);
         }
-
-        // PSCI_CPU_ON for each secondary CPU
-        log::info!("[a2-smp] rpi3: --- PSCI_CPU_ON tests ---");
-        for cpu_id in 1..4u32 {
-            let mpidr = 0x80000000u64 | (cpu_id as u64);
-            let result = smc_call(PSCI_CPU_ON, mpidr, AP_BOOT_DEST_PA as u64, 0u64);
-            log::info!("[a2-smp] rpi3: PSCI_CPU_ON(cpu={}, mpidr={:#x}, entry={:#x})={:#x}",
-                cpu_id, mpidr, AP_BOOT_DEST_PA as u64, result);
-            // Immediately check AFFINITY_INFO after CPU_ON to see if TF-A reports ON
-            let aff_info = smc_call(PSCI_AFFINITY_INFO, mpidr, 0, 0);
-            log::info!("[a2-smp] rpi3: PSCI_AFFINITY_INFO after CPU_ON(cpu={})={:#x}", cpu_id, aff_info);
-        }
-
-        // Wait and re-check AFFINITY_INFO to see if CPUs eventually come online
-        log::info!("[a2-smp] rpi3: --- waiting 1 second for CPUs to boot ---");
-        for _ in 0..1000 {
-            core::hint::spin_loop();
-        }
-        for cpu_id in 1..4u32 {
-            let mpidr = 0x80000000u64 | (cpu_id as u64);
-            let aff_info = smc_call(PSCI_AFFINITY_INFO, mpidr, 0, 0);
-            log::info!("[a2-smp] rpi3: PSCI_AFFINITY_INFO after delay(cpu={})={:#x}", cpu_id, aff_info);
-        }
     }
 
+    // Set up globals and copy boot stub BEFORE any PSCI_CPU_ON calls
     #[cfg(target_arch = "aarch64")]
     log::info!("[a2-smp] rpi3: SMP bringup starting");
 
@@ -220,7 +198,7 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
     let ap_boot_src = unsafe { &__ap_boot_start as *const u8 };
     let ap_boot_dst_va = crate::mm::paddr_to_vaddr(AP_BOOT_DEST_PA);
 
-    // Copy boot stub to PA 0x40000
+    // Copy boot stub to PA 0x344000 BEFORE any CPU_ON calls
     unsafe {
         core::ptr::copy_nonoverlapping(ap_boot_src, ap_boot_dst_va as *mut u8, ap_boot_size);
         for offset in (0..ap_boot_size).step_by(64) {
@@ -233,52 +211,7 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
         core::arch::asm!("dsb ish", options(nostack, preserves_flags));
     }
 
-    // BSP self-test: verify marker region at PA 0x41000 is writable
-    #[cfg(target_arch = "aarch64")]
-    {
-        let marker_test: u8 = 0xBC;
-        unsafe {
-            core::ptr::write_volatile(0x41000 as *mut u8, marker_test);
-            core::arch::asm!("dsb ish");
-            let readback = core::ptr::read_volatile(0x41000 as *const u8);
-            log::info!("[a2-smp] marker test PA 0x41000: wrote={:#x}, read={:#x}", marker_test, readback);
-            core::ptr::write_volatile(0x41000 as *mut u8, 0x55);
-        }
-    }
-
-    #[cfg(target_arch = "aarch64")]
-    {
-        let test_val: u64 = 0xDEADBEEF;
-        unsafe {
-            core::ptr::write_volatile(0xe0 as *mut u64, test_val);
-            core::arch::asm!("dsb ish");
-            let readback: u64 = core::ptr::read_volatile(0xe0 as *const u64);
-            log::info!("[a2-smp] marker test PA 0xe0 (ARM_LOCAL spin-table): wrote={:#x}, read={:#x}", test_val, readback);
-            core::ptr::write_volatile(0xe0 as *mut u64, 0u64);
-        }
-    }
-
-    // Test TF-A Trusted Mailbox at 0x10000008 (Secure SRAM)
-    // This is where TF-A expects CPU_ON to write the GO state
-    // Also re-read DTB cpu-release-addr to see if U-Boot modified it
-    #[cfg(target_arch = "aarch64")]
-    {
-        let tm_base: u64 = 0x10000008; // Trusted Mailbox hold base for CPU0
-        for cpu_id in 0..4u32 {
-            let test_val: u64 = 0xDEADCAFEBABE0000u64 | (cpu_id as u64);
-            let addr = tm_base + (cpu_id as u64) * 8;
-            unsafe {
-                core::ptr::write_volatile(addr as *mut u64, test_val);
-                core::arch::asm!("dsb sy");
-                let readback: u64 = core::ptr::read_volatile(addr as *const u64);
-                log::info!("[a2-smp] trusted_mailbox CPU{} @ {:#x}: wrote={:#x}, read={:#x}",
-                    cpu_id, addr, test_val, readback);
-            }
-        }
-    }
-
-    #[cfg(target_arch = "aarch64")]
-    log::info!("[a2-smp] rpi3: boot stub copied");
+    log::info!("[a2-smp] rpi3: boot stub copied to {:#x}", AP_BOOT_DEST_PA);
 
     let ap_entry_paddr = AP_BOOT_DEST_PA as u64;
 
@@ -456,4 +389,11 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
 
     #[cfg(target_arch = "aarch64")]
     log::info!("[a2-smp] rpi3: SMP bringup done");
+
+    // Check if AP boot marker was written (at 0x3F001000 from ap_boot.S)
+    #[cfg(target_arch = "aarch64")]
+    {
+        let ap_marker = unsafe { core::ptr::read_volatile(0x3F001000 as *const u64) };
+        log::info!("[a2-smp] rpi3: AP boot marker @0x3F001000={:#x} (should be 0xABCD if AP reached boot code)", ap_marker);
+    }
 }

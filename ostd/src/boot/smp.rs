@@ -139,6 +139,8 @@ pub fn register_ap_entry(entry: fn()) {
 
 #[unsafe(no_mangle)]
 fn ap_early_entry(cpu_id: u32) -> ! {
+    crate::arch::serial::send(b'E');
+    crate::arch::serial::send(b'E');
     // SAFETY: `cpu_id` is the correct value of the CPU ID.
     unsafe { crate::cpu::init_on_ap(cpu_id) };
 
