@@ -419,14 +419,14 @@ These are completely different addresses! AP was writing to wrong location.
 
 1. Fixed `ap_boot.S` to write marker to `0x41000` (matching BSP)
 2. Fixed `smp_rpi3.rs` final marker check to use `0x41000`
-3. Changed BCM2836 spin-table offsets to `0x108/0x110/0x118` (not DTB values)
+3. Changed BCM2836 spin-table offsets to `0xE8/0xF0/0xF8` (matching bcm2836_irq.rs)
 4. Changed ARM_LOCAL_PA from `0x4000_0000` to `0x3F00_0000` (mailbox writes confirmed at this address)
 
 ### Current Status on Hardware
 
 - PSCI_CPU_ON returns SUCCESS (0x0) for all 3 APs ✓
 - Mailbox writes work correctly (readback 0x344000) ✓
-- Spin-table writes show ROM text "MULKMULKT" at 0x108/0x110/0x118 (still investigating)
+- Spin-table at 0xE8/0xF0/0xF8 shows ROM text "MULKMULKT" (not what we wrote)
 - AP boot marker at 0x41000 shows `0x55` (BSP initial value) - AP never wrote 0xABCD
 
 **Conclusion**: PSCI returns success but APs don't actually execute boot stub. The issue is likely deeper in the boot chain (VideoCore → TF-A → U-Boot) where secondary CPUs are in a wait loop that our kernel doesn't properly wake.
