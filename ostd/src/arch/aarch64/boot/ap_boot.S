@@ -104,6 +104,12 @@ ap_boot_entry:
     mov     x0, #0x54
     bl      ap_putchar
 
+    /* Marker XX - AP is about to branch to Rust ap_early_entry */
+    mov     x0, #0x58
+    bl      ap_putchar
+    mov     x0, #0x58
+    bl      ap_putchar
+
     /* Jump to Rust ap_early_entry (now using VA) */
     ldr     x1, =ap_early_entry
     br      x1
