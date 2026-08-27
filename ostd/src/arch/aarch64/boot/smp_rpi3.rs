@@ -323,12 +323,12 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
         #[cfg(target_arch = "aarch64")]
         {
             use crate::arch::bcm2836_irq::CORE1_MAILBOX3_SET;
-            let base_va = crate::arch::bcm2836_irq::local_ic_base_va();
-            let mailbox_offset = CORE1_MAILBOX3_SET + 16 * (cpu_id as usize - 1);
+            // Use identity-mapped address for ARM_LOCAL during early boot
+            let mailbox_offset = ARM_LOCAL_PA + CORE1_MAILBOX3_SET + 16 * (cpu_id as usize - 1);
             unsafe {
-                core::ptr::write_volatile((base_va + mailbox_offset) as *mut u32, ap_entry_paddr as u32);
+                core::ptr::write_volatile((mailbox_offset) as *mut u32, ap_entry_paddr as u32);
                 core::arch::asm!("dsb sy", "sev", options(nostack, preserves_flags));
-                let readback: u32 = core::ptr::read_volatile((base_va + mailbox_offset) as *const u32);
+                let readback: u32 = core::ptr::read_volatile((mailbox_offset) as *const u32);
                 log::info!("[a2-smp] rpi3: wrote mailbox@{:#x}={:#x}, readback={:#x}", mailbox_offset, ap_entry_paddr as u32, readback);
             }
         }
@@ -336,6 +336,7 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
         #[cfg(target_arch = "aarch64")]
         {
             unsafe {
+                // Use identity-mapped spin_table_addr
                 core::ptr::write_volatile(spin_table_addr as *mut u64, ap_entry_paddr);
                 core::arch::asm!("dsb ish", "sev", options(nostack, preserves_flags));
                 let readback: u64 = core::ptr::read_volatile(spin_table_addr as *const u64);
