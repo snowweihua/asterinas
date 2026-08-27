@@ -238,11 +238,14 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
 
             let info = &*info_ptr.add(cpu_id as usize - 1);
             let stack_top = info.stack_top as u64;
+            let info_ptr_val = info as *const _ as u64;
 
-            log::info!("[a2-smp] rpi3: PSCI CPU_ON cpu={} mpidr={:#x} entry={:#x}(PA) stack={:#x}",
-                cpu_id, mpidr, ap_entry_paddr, stack_top);
+            log::info!("[a2-smp] rpi3: PSCI CPU_ON cpu={} mpidr={:#x} entry={:#x}(PA) info={:#x}",
+                cpu_id, mpidr, ap_entry_paddr, info_ptr_val);
 
-            let result = smc_call(PSCI_CPU_ON, mpidr, ap_entry_paddr, 0u64);
+            // PSCI_CPU_ON: x0=function_id, x1=mpidr, x2=entry_pa, x3=context_id
+            // The context_id (PerApRawInfo pointer) is passed to the AP in x0
+            let result = smc_call(PSCI_CPU_ON, mpidr, ap_entry_paddr, info_ptr_val);
             log::info!("[a2-smp] rpi3: PSCI result={:#x}", result);
 
             // Small delay
@@ -257,49 +260,8 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
         log::info!("[a2-smp] rpi3: PSCI not available, using spin-table");
     }
 
-    // Direct Trusted Mailbox test: write GO state to TF-A Trusted Mailbox
-    // This bypasses the PSCI CPU_ON call to directly signal the cores
-    #[cfg(target_arch = "aarch64")]
-    {
-        const TM_ENTRYPOINT: u64 = 0x10000000;
-        const TM_HOLD_BASE: u64 = 0x10000008; // CPU0 at +0, CPU1 at +8, etc.
-        const TM_STATE_GO: u64 = 1;
-
-        // First set the entry point
-        unsafe {
-            core::ptr::write_volatile(TM_ENTRYPOINT as *mut u64, AP_BOOT_DEST_PA as u64);
-            core::arch::asm!("dsb sy", options(nostack, preserves_flags));
-            let entry_readback: u64 = core::ptr::read_volatile(TM_ENTRYPOINT as *const u64);
-            log::info!("[a2-smp] TM: entry@{:#x}={:#x} (readback)", TM_ENTRYPOINT, entry_readback);
-        }
-
-        for cpu_id in 1..num_cpus {
-            let hold_addr = TM_HOLD_BASE + (cpu_id as u64) * 8;
-            unsafe {
-                // Write GO state to signal core to jump to entry
-                core::ptr::write_volatile(hold_addr as *mut u64, TM_STATE_GO);
-                core::arch::asm!("dsb sy", "sev", options(nostack, preserves_flags));
-                let state_readback: u64 = core::ptr::read_volatile(hold_addr as *const u64);
-                log::info!("[a2-smp] TM: core{} hold@{:#x}={:#x} (readback)", cpu_id, hold_addr, state_readback);
-            }
-        }
-
-        // Small delay
-        for _ in 0..1000 { core::hint::spin_loop(); }
-
-        // Check if APs started
-        let mut ap_started = false;
-        for cpu_id in 1..num_cpus {
-            let val = unsafe { core::ptr::read_volatile(0x41000 as *const u8) };
-            if val != 0x55 && val != 0 {
-                log::info!("[a2-smp] TM: AP {} started via Trusted Mailbox!", cpu_id);
-                ap_started = true;
-            }
-        }
-        if !ap_started {
-            log::info!("[a2-smp] TM: no APs started via Trusted Mailbox, trying spin-table");
-        }
-    }
+    // Skip Trusted Mailbox - it requires specific TF-A configuration
+    // that may not be present. Focus on spin-table method.
 
     // Fall back to spin-table if PSCI didn't work
     for cpu_id in 1..num_cpus {
@@ -311,8 +273,11 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
                 continue;
             }
         };
+        // DTB cpu-release-addr is an OFFSET within ARM_LOCAL peripheral space,
+        // not an absolute address. ARM_LOCAL is at PA 0x40000000.
+        let spin_table_addr = ARM_LOCAL_PA + release_addr as usize;
         #[cfg(target_arch = "aarch64")]
-        log::info!("[a2-smp] rpi3: CPU {} spin-table@{:#x}", cpu_id, release_addr);
+        log::info!("[a2-smp] rpi3: CPU {} spin-table@{:#x} (release_addr={:#x})", cpu_id, spin_table_addr, release_addr);
 
         let info_base_va = AP_INFO_BASE;
 
@@ -371,10 +336,10 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
         #[cfg(target_arch = "aarch64")]
         {
             unsafe {
-                core::ptr::write_volatile(release_addr as *mut u64, ap_entry_paddr);
+                core::ptr::write_volatile(spin_table_addr as *mut u64, ap_entry_paddr);
                 core::arch::asm!("dsb ish", "sev", options(nostack, preserves_flags));
-                let readback: u64 = core::ptr::read_volatile(release_addr as *const u64);
-                log::info!("[a2-smp] rpi3: spin-table@{:#x} wrote={:#x} readback={:#x}", release_addr, ap_entry_paddr, readback);
+                let readback: u64 = core::ptr::read_volatile(spin_table_addr as *const u64);
+                log::info!("[a2-smp] rpi3: spin-table@{:#x} wrote={:#x} readback={:#x}", spin_table_addr, ap_entry_paddr, readback);
             }
         }
 

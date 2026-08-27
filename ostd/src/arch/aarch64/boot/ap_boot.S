@@ -17,10 +17,18 @@
 
 .global ap_boot_entry
 ap_boot_entry:
+    /* Marker 0xAA - AP has entered boot stub */
+    mov     x0, #0xAA
+    bl      ap_putchar
+
     /* Write marker to confirm AP reached this code at 0x344000 */
     mov     x0, #0xABCD
     ldr     x1, =0x3F001000
     str     x0, [x1]
+
+    /* Marker 0xBB - marker write complete */
+    mov     x0, #0xBB
+    bl      ap_putchar
 
     /* AP early marker - AP started */
     mov     x0, #0x41

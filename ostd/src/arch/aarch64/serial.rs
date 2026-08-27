@@ -155,14 +155,7 @@ fn pl011_base_va() -> usize {
     } else {
         PL011_BASE_PA_QEMU
     };
-    // QEMU's PL011 is at 0x0900_0000, which is outside the first high-half GiB
-    // that the kernel maps to DRAM.  Access it through the TTBR0 identity map
-    // (2 MiB device block in boot_l2pt_gb0) instead of adding KERNEL_BASE_VADDR.
-    if is_rpi3() {
-        base_pa + KERNEL_BASE_VADDR
-    } else {
-        base_pa
-    }
+    base_pa + KERNEL_BASE_VADDR
 }
 
 #[inline(always)]
