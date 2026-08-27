@@ -47,6 +47,9 @@ const AP_INFO_BASE: usize = 0x5_0000;
 
 /// ARM_LOCAL peripheral base PA on RPi3.
 /// The BCM2836 spin-table addresses are offsets within this peripheral.
+/// Based on testing, spin-table readback shows garbage at both 0x3F000000 and
+/// 0x400000000, suggesting ARM_LOCAL might be at yet another address or
+/// the spin-table mechanism is not working as expected on this RPi3B.
 const ARM_LOCAL_PA: usize = 0x4000_0000;
 
 /// BCM2836 spin-table offsets per CPU (within ARM_LOCAL peripheral space).
