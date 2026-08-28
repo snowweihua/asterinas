@@ -405,43 +405,57 @@ approach would be:
 
 Without modifying TF-A or U-Boot, SMP on RPi3 with this boot chain is blocked.
 
-## Update (2026-08-27) - AP Marker Address Mismatch Fixed
+---
 
-### Critical Bug Found and Fixed
+## SMP Bringup Progress (Latest Session)
 
-The AP boot marker address was mismatched:
-- `ap_boot.S` wrote marker to `0x3F001000` (ARM_LOCAL peripheral space)
-- `smp_rpi3.rs` polled `0x41000` (low DRAM) for the marker
+### Fix: AP now programs TTBR1 + TCR_EL1 + MAIR_EL1 before MMU enable (committed ebedef32)
 
-These are completely different addresses! AP was writing to wrong location.
+Root cause (high confidence, validated on hardware): The AP boot stub (`ap_boot.S`) only
+programmed `ttbr0_el1`. The branch to the high-half VA of `ap_early_entry` is translated
+via `TTBR1`, which the AP inherited stale from BL31/firmware → the branch faulted and the
+AP never entered the kernel.
 
-### Additional Fixes Applied
+BSP `boot.S` programs BOTH `ttbr0_el1` (identity) and `ttbr1_el1` (boot_l4pt_kern high-half
++ linear map), plus `TCR_EL1` and `MAIR_EL1`. The AP must do the same explicitly.
 
-1. Fixed `ap_boot.S` to write marker to `0x41000` (matching BSP)
-2. Fixed `smp_rpi3.rs` final marker check to use `0x41000`
-3. Changed BCM2836 spin-table offsets to `0xE8/0xF0/0xF8` (matching bcm2836_irq.rs)
-4. Changed ARM_LOCAL_PA from `0x4000_0000` to `0x3F00_0000` (mailbox writes confirmed at this address)
+Fix in `ap_boot.S`:
+- `msr ttbr0_el1, x0` AND `msr ttbr1_el1, x0` (both = `__boot_page_table_pointer` = boot_l4pt_kern)
+- `ldr x0, =TCR_VALUE; msr tcr_el1, x0` and `ldr x0, =MAIR_VALUE; msr mair_el1, x0`
+  before TLBI + cache flush + MMU enable, mirroring boot.S ordering.
 
-### Current Status on Hardware
+### Hardware result: AP now enters ap_early_entry and progresses through init
 
-- PSCI_CPU_ON returns SUCCESS (0x0) for all 3 APs ✓
-- Mailbox writes work correctly (readback 0x344000) ✓
-- Spin-table at 0xE8/0xF0/0xF8 shows ROM text "MULKMULKT" (not what we wrote)
-- AP boot marker at 0x41000 shows `0x55` (BSP initial value) - AP never wrote 0xABCD
+Serial tail observed on RPi3 after the fix + step markers instrumented in `ap_early_entry`:
 
-**Conclusion**: PSCI returns success but APs don't actually execute boot stub. The issue is likely deeper in the boot chain (VideoCore → TF-A → U-Boot) where secondary CPUs are in a wait loop that our kernel doesn't properly wake.
+```
+APRMBSDTXX012345
+```
 
-### QEMU raspi3b Smoke Test - PRE-EXISTING FAILURE
+Decoding (raw PL011 markers, reliable on the AP; `serial::send` letters A..H do NOT appear,
+see note):
+- `APRMBSDTXX` — boot stub completes (A/P before MMU, R/M after MMU, B/S after BSS, D/T, X/X before branch)
+- `0` — first instruction of `ap_early_entry` (raw write to PL011)
+- `1` — after two `crate::arch::serial::send(b'A')`
+- `2` — after `crate::cpu::init_on_ap(cpu_id)`
+- `3` — after `crate::arch::enable_cpu_features()`
+- `4` — after `crate::arch::trap::init()`
+- `5` — after `crate::arch::init_on_ap()` (= `bcm2836_irq::init_on_ap()`, arms CNTPNS timer IRQ)
+- marker `6` (after `crate::arch::irq::enable_local()`) NEVER printed → AP crashes in/around
+  `irq::enable_local()`.
 
-QEMU's raspi3b emulation does NOT properly emulate BCM2836 peripherals:
-- Does not emulate ARM local interrupt controller
-- Does not properly emulate spin-table mechanism
-- Kernel hangs at SMP bringup on QEMU
+### Next bug: crash on/after irq::enable_local()
 
-**This is a pre-existing issue unrelated to our SMP bringup code changes.**
+`irq::enable_local()` does `msr DAIFClr, #0b0011` (unmask IRQ/FIQ). When IRQ is unmasked, a
+pending interrupt fires immediately on the AP. `init_on_ap()` just armed the CNTPNS physical
+timer IRQ for this core, so enabling IRQ very likely triggers an immediate timer interrupt;
+if the AP's per-CPU timer/interrupt handling isn't ready, it faults. Suspect the crash is
+the CNTPNS timer (just armed) firing on the AP before its handler/timer state is fully set up.
 
-### Next Steps for Hardware SMP
+### Important observation: serial::send output is MISSING on the AP
 
-1. Accept single-core operation for RPi3 hardware (current state)
-2. OR investigate if TF-A has its own spin-table override that we need to bypass
-3. OR implement direct VC firmware mailbox interface to wake secondary CPUs
+Despite the raw PL011 markers (0-5) printing correctly, the `crate::arch::serial::send`
+letters (`A,A,B,C,D,E,F,G,H`) do NOT appear on the serial line at all, even though the raw
+markers placed BETWEEN the send calls (1,2,3,4,5) all print. This means `serial::send`
+executes/returns on the AP but produces no visible output. Investigation ongoing; rely on
+raw PL011 markers (via `raw_pl011` helper in `ap_early_entry`) for AP-side debugging.

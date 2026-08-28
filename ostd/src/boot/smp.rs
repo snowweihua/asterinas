@@ -137,30 +137,62 @@ pub fn register_ap_entry(entry: fn()) {
     AP_LATE_ENTRY.call_once(|| entry);
 }
 
+// Debug helper: write a raw char to PL011 at its known VA, bypassing
+// serial::send entirely (no global/static access, no function call beyond
+// the inlined volatile store). Used to isolate where the AP faults.
+#[inline(always)]
+fn raw_pl011(c: u8) {
+    unsafe {
+        let uart = 0xffff_0000_0000_0000usize + 0x3f20_1000usize;
+        core::ptr::write_volatile(uart as *mut u32, c as u32);
+    }
+}
+
 #[unsafe(no_mangle)]
 fn ap_early_entry(cpu_id: u32) -> ! {
+    // RAW marker: write to PL011 directly at its VA (bypass serial::send)
+    // to determine if the AP even enters ap_early_entry. PL011 VA = 0xffff000000000000 + 0x3f201000.
+    raw_pl011(b'0');
+
+    // Bisect: is the crash (a) on the serial::send function call / global
+    // access, or (b) inside cpu::init_on_ap?
     crate::arch::serial::send(b'A');
     crate::arch::serial::send(b'A');
+    raw_pl011(b'1');
 
     // SAFETY: The safety is upheld by the caller.
     unsafe { crate::cpu::init_on_ap(cpu_id) };
+    raw_pl011(b'2');
+    crate::arch::serial::send(b'B');
 
     crate::arch::enable_cpu_features();
+    raw_pl011(b'3');
+    crate::arch::serial::send(b'C');
 
     // SAFETY: This function is called in the boot context of the AP.
     unsafe { crate::arch::trap::init() };
+    raw_pl011(b'4');
+    crate::arch::serial::send(b'D');
 
     // SAFETY: This function is only called once on this AP, after the BSP has
     // done the architecture-specific initialization.
     unsafe { crate::arch::init_on_ap() };
+    raw_pl011(b'5');
+    crate::arch::serial::send(b'E');
 
     crate::arch::irq::enable_local();
+    raw_pl011(b'6');
+    crate::arch::serial::send(b'F');
 
     // SAFETY: This function is only called once on this AP.
     unsafe { crate::mm::kspace::activate_kernel_page_table() };
+    raw_pl011(b'7');
+    crate::arch::serial::send(b'G');
 
     // Mark the AP as started.
     report_online_and_hw_cpu_id(cpu_id);
+    raw_pl011(b'8');
+    crate::arch::serial::send(b'H');
 
     log::info!("Processor {} started. Spinning for tasks.", cpu_id);
 
