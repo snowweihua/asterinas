@@ -158,6 +158,9 @@ pub fn enable_cntv_irq() {
 }
 
 pub unsafe fn init_on_ap() {
+    if crate::arch::board::BoardType::cached() != 2 {
+        return;
+    }
     let core = core_id();
     let offset = CORE0_TIMER_INT_CONTROL + (core * CORE_REG_STRIDE);
     unsafe { write_reg(offset, CNTPNSIRQ_BIT) };

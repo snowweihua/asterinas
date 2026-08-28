@@ -245,6 +245,7 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
             log::info!("[a2-smp] rpi3: PSCI CPU_ON cpu={} mpidr={:#x} entry={:#x}(PA) info={:#x}",
                 cpu_id, mpidr, ap_entry_paddr, info_ptr_val);
 
+<<<<<<< HEAD
             // PSCI_CPU_ON: x0=function_id, x1=mpidr, x2=entry_pa, x3=context_id
             // The context_id (PerApRawInfo pointer) is passed to the AP in x0
             let result = smc_call(PSCI_CPU_ON, mpidr, ap_entry_paddr, info_ptr_val);
@@ -355,7 +356,7 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
     #[cfg(target_arch = "aarch64")]
     log::info!("[a2-smp] rpi3: SMP bringup done");
 
-    // Check if AP boot marker was written (at 0x41000 from ap_boot.S)
+// Check if AP boot marker was written (at 0x41000 from ap_boot.S)
     #[cfg(target_arch = "aarch64")]
     {
         let ap_marker = unsafe { core::ptr::read_volatile(0x41000 as *const u64) };

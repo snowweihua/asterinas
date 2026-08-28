@@ -53,7 +53,7 @@ pub(crate) unsafe fn late_init_on_bsp() {
 }
 
 pub(crate) unsafe fn init_on_ap() {
-    unimplemented!()
+    bcm2836_irq::init_on_ap();
 }
 
 pub(crate) fn interrupts_ack(irq_number: usize) {

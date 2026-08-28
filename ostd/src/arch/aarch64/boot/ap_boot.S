@@ -17,6 +17,8 @@
 
 .global ap_boot_entry
 ap_boot_entry:
+/* FIRST: Save x0 (context ID / PerApRawInfo pointer) to x19 */
+    mov     x19, x0
     /* Write marker to confirm AP reached this code - use 0x41000 where BSP expects it */
     mov     x0, #0xABCD
     ldr     x1, =0x41000
@@ -33,9 +35,6 @@ ap_boot_entry:
     bl      ap_putchar
     mov     x0, #0x50
     bl      ap_putchar
-
-    /* Save x0 (context ID / PerApRawInfo pointer) to x19 */
-    mov     x19, x0
 
     /* Set up page table from global __boot_page_table_pointer */
     ldr     x0, =__boot_page_table_pointer
