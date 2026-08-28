@@ -36,10 +36,30 @@ ap_boot_entry:
     mov     x0, #0x50
     bl      ap_putchar
 
-    /* Set up page table from global __boot_page_table_pointer */
+    /* Set up page tables from global __boot_page_table_pointer.
+     * pt_ptr is the BSP's TTBR1 root (boot_l4pt_kern), which maps:
+     *   - VA 0xffff000000000000 + [0,1GB) -> DRAM  (kernel high-half, executable)
+     *   - VA 0xffff800000000000 + [0,4GB) -> linear map
+     * The stub itself runs at low identity addresses 0x344000 which boot_l4pt_kern
+     * also maps (via boot_l3pt_high[0] -> boot_l2pt_gb0). So program BOTH TTBR0
+     * and TTBR1 to this root. Previously only TTBR0 was set, so the branch to the
+     * high-half VA of ap_early_entry used the stale TTBR1 left by firmware and
+     * faulted — the AP never reached ap_early_entry. */
     ldr     x0, =__boot_page_table_pointer
     ldr     x0, [x0]                 /* Load page table root PA */
     msr     ttbr0_el1, x0
+    msr     ttbr1_el1, x0            /* TTBR1: high-half kernel VAs (ap_early_entry) */
+
+    /* Program TCR_EL1 and MAIR_EL1 explicitly.
+     * Unlike the BSP, the AP never set these before enabling the MMU, so it
+     * inherited whatever BL31/firmware left behind. If those differ from the
+     * kernel's expectations (T1SZ=16/TG1=4KB, MAIR attr1=Normal-WBWA for
+     * page-table walks), the MMU walk of the freshly-loaded TTBR0/TTBR1 can
+     * fault right after MMU enable. Use the exact same values as boot.S. */
+    ldr     x0, =TCR_VALUE
+    msr     tcr_el1, x0
+    ldr     x0, =MAIR_VALUE
+    msr     mair_el1, x0
     isb
 
     /* Invalidate TLBs to ensure page table changes take effect */
@@ -67,21 +87,16 @@ ap_boot_entry:
     mov     x0, #0x4D
     bl      ap_putchar
 
-    /* Set up stack from PerApRawInfo.stack_top (x19 + 0) */
-    ldr     x0, [x19, #0]            /* Load stack_top */
+    /* Set up stack from PerApRawInfo.stack_top (x19 + 0).
+     * stack_top is ALREADY a high-half virtual address (set by the BSP via
+     * paddr_to_vaddr). It must NOT be converted again. */
+    ldr     x0, [x19, #0]            /* Load stack_top (already VA) */
     mov     sp, x0
 
-    /* Set up TPIDR_EL1 (CPU local base) from PerApRawInfo.cpu_local (x19 + 8) */
-    ldr     x0, [x19, #8]            /* Load cpu_local */
+    /* Set up TPIDR_EL1 (CPU local base) from PerApRawInfo.cpu_local (x19 + 8).
+     * cpu_local is also already a high-half VA. */
+    ldr     x0, [x19, #8]            /* Load cpu_local (already VA) */
     msr     tpidr_el1, x0
-
-    /* Now switch SP to virtual address */
-    /* Stack was set up with identity-mapped address, need to convert to VA */
-    mov     x1, sp
-    ldr     x0, =0x40000000
-    sub     x1, x1, x0               /* SP - DRAM_BASE */
-    ldr     x0, =0xffff000000000000
-    add     sp, x1, x0               /* SP_virt = SP_phys - DRAM_BASE + HIGH_HALF */
 
     /* Zero BSS for this CPU */
 .extern __bss
@@ -100,9 +115,6 @@ ap_boot_entry:
     mov     x0, #0x53
     bl      ap_putchar
 
-    /* x19 still has PerApRawInfo pointer - pass it as argument to ap_early_entry */
-    mov     x0, x19
-
     /* AP early marker - before jump to Rust */
     mov     x0, #0x44
     bl      ap_putchar
@@ -114,6 +126,12 @@ ap_boot_entry:
     bl      ap_putchar
     mov     x0, #0x58
     bl      ap_putchar
+
+    /* Pass cpu_id to ap_early_entry as argument 0.
+     * On RPi3, the logical cpu_id equals the MPIDR affinity level 0 (0-3).
+     * Compute it here (AFTER all putchar calls, which clobber x0). */
+    mrs     x0, mpidr_el1
+    and     x0, x0, #0x3            /* x0 = cpu_id */
 
     /* Jump to Rust ap_early_entry (now using VA) */
     ldr     x1, =ap_early_entry
