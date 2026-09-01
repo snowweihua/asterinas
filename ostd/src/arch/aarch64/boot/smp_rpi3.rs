@@ -36,12 +36,8 @@ unsafe extern "C" {
     static mut __boot_page_table_pointer: u64;
 }
 
-/// AP boot stub destination PA in raw binary.
-/// .ap_boot is at file offset 0x2c4000 in the raw binary.
-/// Kernel loads at PA 0x80000, so actual PA = 0x80000 + 0x2c4000 = 0x344000.
-const AP_BOOT_DEST_PA: usize = 0x3_44000;
 /// AP info region base PA - SEPARATE from boot stub copy area.
-/// This is in a different 4KB page (0x50000) than the boot stub (0x34000).
+/// This is in a different 4KB page (0x50000) than the boot stub.
 /// This avoids any cache line sharing issues with BSP self-test writes.
 const AP_INFO_BASE: usize = 0x5_0000;
 
@@ -198,9 +194,15 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
         (&__ap_boot_end as *const u8 as usize) - (&__ap_boot_start as *const u8 as usize)
     };
     let ap_boot_src = unsafe { &__ap_boot_start as *const u8 };
-    let ap_boot_dst_va = crate::mm::paddr_to_vaddr(AP_BOOT_DEST_PA);
 
-    // Copy boot stub to PA 0x344000 BEFORE any CPU_ON calls
+    // Derive the stub destination PA from the linker symbol so it stays at the
+    // stub's own linked runtime location regardless of build/layout shifts.
+    // A fixed destination (e.g. 0x344000) can overlap live kernel .text and
+    // rewrite running code, which deterministically kills AP wake-up.
+    let ap_boot_dst_pa = crate::arch::board::dram_base()
+        + (ap_boot_src as usize - crate::mm::kspace::kernel_loaded_offset());
+    let ap_boot_dst_va = crate::mm::paddr_to_vaddr(ap_boot_dst_pa);
+
     unsafe {
         core::ptr::copy_nonoverlapping(ap_boot_src, ap_boot_dst_va as *mut u8, ap_boot_size);
         for offset in (0..ap_boot_size).step_by(64) {
@@ -213,9 +215,9 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
         core::arch::asm!("dsb ish", options(nostack, preserves_flags));
     }
 
-    log::info!("[a2-smp] rpi3: boot stub copied to {:#x}", AP_BOOT_DEST_PA);
+    log::info!("[a2-smp] rpi3: boot stub copied to {:#x}", ap_boot_dst_pa);
 
-    let ap_entry_paddr = AP_BOOT_DEST_PA as u64;
+    let ap_entry_paddr = ap_boot_dst_pa as u64;
 
     // Clear marker region before waking APs
     unsafe {
@@ -245,8 +247,7 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
             log::info!("[a2-smp] rpi3: PSCI CPU_ON cpu={} mpidr={:#x} entry={:#x}(PA) info={:#x}",
                 cpu_id, mpidr, ap_entry_paddr, info_ptr_val);
 
-<<<<<<< HEAD
-            // PSCI_CPU_ON: x0=function_id, x1=mpidr, x2=entry_pa, x3=context_id
+// PSCI_CPU_ON: x0=function_id, x1=mpidr, x2=entry_pa, x3=context_id
             // The context_id (PerApRawInfo pointer) is passed to the AP in x0
             let result = smc_call(PSCI_CPU_ON, mpidr, ap_entry_paddr, info_ptr_val);
             log::info!("[a2-smp] rpi3: PSCI result={:#x}", result);
