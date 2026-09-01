@@ -4,7 +4,8 @@ This file records durable findings and the current active investigation. Probe c
 
 ## Current Status
 
-- Target: Raspberry Pi 3 Model B, AArch64, single-core runtime.
+- SMP bringup focus: SMP wake path is deterministic PER IMAGE (Case A vs Case B) — not a reboot coin-flip. The BSS-zero fix in `ap_boot.S` and the link-derived stub destination in `smp_rpi3.rs` are both uncommitted/committed, but APs currently do NOT wake on any build (see "SMP: Deterministic Case A/B per Image" section below). Target evidence to validate the BSS fix: APs wake, run stub, reach `report_online_and_hw_cpu_id`, "4/4 CPUs online" + shell.
+- Target: Raspberry Pi 3 Model B, AArch64, single-core runtime (SMP bringup in progress).
 - The physical board boots the init process to an interactive `/ #` prompt.
 - The verified boot baseline completes:
   - metadata mapping and kernel page-table activation;
@@ -493,3 +494,40 @@ gating change skipped it because PSCI "succeeds", leaving the APs permanently pa
 Remove the gating. The fallback wake path must run unconditionally, matching the
 proven-good `ebedef32`/`51434e9a` behavior. The next bug (after APs are re-woken) is
 the crash at `irq::enable_local()` (marker 6) — see the AP-bringup section above.
+
+## SMP: Deterministic Case A/B per Image (2026-09-01)
+
+### User's decisive reframing (verbatim intent)
+"you can't see two cases through only reboot, i think one image only has one specific case."
+→ Case A (banner + `~ #` shell, NO `APRMBSDTXX`) vs Case B (`APRMBSDTXX`, no shell) is a
+**deterministic property of each image**, not boot luck. Reboots of one image can never yield
+the other case.
+
+### Root cause of the deterministic Case A flip (build/layout side effect, NOT wake code)
+`smp_rpi3.rs` hardcoded `AP_BOOT_DEST_PA = 0x344000`, a comment claiming `.ap_boot` sits at
+raw-binary file offset `0x2c4000`. In the CURRENT build the linker moved `.ap_boot` to ELF
+offset `0x313000` → objcopy raw offset `0x303000` → runtime PA at load base `0x80000` =
+`0x383000`. So the hardcoded `0x344000` (file offset `0x2c4000`) landed INSIDE live kernel
+`.text`/data; the stub copy overwrote running BSP/kernel code, deterministically breaking
+AP wake (and making even the BSP path layout-sensitive). Verified via ELF `readelf`/`objdump`
+and by matching the stub bytes `f30300aa...` to raw offset `0x303000` in `/tmp/asterina.img`.
+
+### Fix (committed `25fd23d5`)
+Derive the stub destination PA from the linker symbol at runtime instead of hardcoding:
+```
+let ap_boot_dst_pa = dram_base() + (ap_boot_src_va - kernel_loaded_offset());
+```
+`dram_base()` = 0 on RPi3, `kernel_loaded_offset()` = `KERNEL_CODE_BASE_VADDR`; this yields
+`0x383000` in the current build, matching the layout.
+
+### Hardware verification (RPi3, post-fix)
+- Serial: `boot stub copied to 0x383000` (was stale `0x344000`).
+- Trusted-Mailbox entry + spin-table writes all `0x383000` (correct).
+- BSP deterministically reaches `~ #` shell — self-overwrite regression eliminated.
+
+### OPEN: APs still do not wake
+Despite the correct destination `0x383000`, APs do not start: `TIMEOUT: Only 1/4 CPUs online`,
+no `APRMBSDTXX` markers. PSCI returns `0x0` (SUCCESS) for all 3 CPUs, and the UNCONDITIONAL
+fallback wake path (mailbox + spin-table + `dsb` + `sev`) ran (the proven-good Case B code)
+yet the parked cores are still not released. Next: determine why the release-addr/mailbox/sev
+mechanism does not fire on this TF-A/U-Boot chain even with a correct low identity-mapped stub.

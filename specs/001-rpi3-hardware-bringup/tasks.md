@@ -114,6 +114,14 @@
 3. PSCI not available on this RPi3 (no /psci node in DTB)
 4. APs still don't wake after trying: spin-table + mailbox IRQ + `dsb sy` + `sev`
 
+**B405 (NEW, 2026-09-01) Deterministic Case A/B per image — root cause found and fixed**:
+- User's decisive reframing (verbatim intent): "you can't see two cases through only reboot, i think one image only has one specific case." A single image has ONE deterministic behavior — Case A (banner + `~ #` shell, NO `APRMBSDTXX`) vs Case B (`APRMBSDTXX`, no shell) is NOT a boot coin-flip.
+- ROOT CAUSE of the deterministic Case A flip (build/layout side effect, NOT wake code): `smp_rpi3.rs` hardcoded `AP_BOOT_DEST_PA = 0x344000`, a comment that assumed `.ap_boot` was at raw-binary file offset `0x2c4000`. In the CURRENT build the linker moved `.ap_boot` to ELF offset `0x313000` → objcopy raw offset `0x303000` → runtime PA at load base `0x80000` = `0x383000`. So the hardcoded `0x344000` (file offset `0x2c4000`) landed INSIDE live kernel `.text`; the stub copy overwrote running BSP/kernel code, deterministically killing AP wake and/or corrupting the running kernel.
+- FIX (committed `25fd23d5`): derive the stub destination PA from the linker symbol at runtime instead of hardcoding:
+  `ap_boot_dst_pa = dram_base() + (__ap_boot_start_va - kernel_loaded_offset())`.
+- HARDWARE VERIFICATION (RPi3, after fix): serial shows `boot stub copied to 0x383000` (correct, matches ELF/layout), spin-table and Trusted-Mailbox entry writes all `0x383000` (was stale `0x344000`). BSP deterministically reaches `~ #` shell. **Self-overwrite regression eliminated.**
+- OPEN QUESTION: APs STILL do not wake even with the correct destination — `TIMEOUT: Only 1/4 CPUs online`, no `APRMBSDTXX` markers. PSCI returns `0x0` (SUCCESS) for all 3 CPUs, and the UNCONDITIONAL fallback wake path (mailbox + spin-table + `dsb` + `sev`) ran (per proven-good Case B code) yet APs still not released. Stub is correctly copied to the low identity-mapped PA `0x383000`.
+
 **Current hypothesis**: Secondary CPUs on RPi3 may need GPU firmware (VC) to release them from reset/power-down before spin-table `sev` works. The VC firmware manages secondary CPU state; `sev` alone cannot wake CPUs not in WFE state.
 
 **CONFIRMED**: RPi3 secondary CPUs require VC firmware mailbox interface for SMP bringup. Spin-table + sev is insufficient on real hardware. This is a hardware/firmware limitation.
