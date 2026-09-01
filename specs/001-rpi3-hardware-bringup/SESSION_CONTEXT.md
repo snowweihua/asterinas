@@ -459,3 +459,37 @@ letters (`A,A,B,C,D,E,F,G,H`) do NOT appear on the serial line at all, even thou
 markers placed BETWEEN the send calls (1,2,3,4,5) all print. This means `serial::send`
 executes/returns on the AP but produces no visible output. Investigation ongoing; rely on
 raw PL011 markers (via `raw_pl011` helper in `ap_early_entry`) for AP-side debugging.
+
+## ROOT CAUSE CONFIRMED: fallback-gating regression broke AP entry (2026-09-01)
+
+### The regression
+The uncommitted worktree change to `ostd/src/arch/aarch64/boot/smp_rpi3.rs` added
+fallback *gating*: after the PSCI CPU_ON loop, the Trusted-Mailbox / BCM2836-mailbox /
+spin-table wake path was skipped whenever `psci_available && psci_all_cpu_on_success`
+(i.e. PSCI reported `CPU_ON == PSCI_SUCCESS (0x0)` for every core).
+
+### Single-variable bisect proof
+Applied ONLY that gating edit (19 insertions) on an otherwise clean `51434e9a` HEAD
+tree. Serial result:
+```
+PSCI result=0x0            (all 3 CPUs, SUCCESS)
+PSCI succeeded for all CPUs, skipping fallback
+SMP bringup done
+TIMEOUT: waiting for 4 CPUs, only 1 online after ~500000 iterations
+Only 1/4 CPUs online
+```
+**No AP markers at all** (no `APRMBSDTXX012345`) — APs never enter `ap_boot_entry`.
+
+Clean-HEAD baseline (same kernel, PSCI ALSO returns `0x0`): `APRMBSDTXX012345` — APs
+DO enter `ap_boot_entry`.
+
+### Conclusion
+On this TF-A/U-Boot boot chain, **PSCI CPU_ON returning 0 does NOT actually get the
+parked cores to jump to the entry point**. The thing that really wakes the APs is the
+UNCONDITIONAL fallback wake path (TM/mailbox/spin-table write + `dsb` + `sev`). The
+gating change skipped it because PSCI "succeeds", leaving the APs permanently parked.
+
+### Fix (must restore)
+Remove the gating. The fallback wake path must run unconditionally, matching the
+proven-good `ebedef32`/`51434e9a` behavior. The next bug (after APs are re-woken) is
+the crash at `irq::enable_local()` (marker 6) — see the AP-bringup section above.
