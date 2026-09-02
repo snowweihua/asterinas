@@ -148,6 +148,14 @@ fn raw_pl011(c: u8) {
     }
 }
 
+#[inline(always)]
+unsafe fn ap_dram_ckpt(cpu_id: u32, stage: u32) {
+    let pa = 0x68000usize + (cpu_id as usize) * 0x1000 + (stage as usize) * 4;
+    let va = crate::mm::kspace::paddr_to_vaddr(pa);
+    let val: u32 = 0xd0 + cpu_id;
+    core::ptr::write_volatile(va as *mut u32, val);
+}
+
 #[unsafe(no_mangle)]
 fn ap_early_entry(cpu_id: u32) -> ! {
     // RAW marker: write to PL011 directly at its VA (bypass serial::send)
@@ -159,28 +167,35 @@ fn ap_early_entry(cpu_id: u32) -> ! {
     // raw_pl011 markers are the reliable progress probes.
 
     // SAFETY: The safety is upheld by the caller.
+    unsafe { ap_dram_ckpt(cpu_id, 0); }
     unsafe { crate::cpu::init_on_ap(cpu_id) };
     raw_pl011(b'2');
 
+    unsafe { ap_dram_ckpt(cpu_id, 1); }
     crate::arch::enable_cpu_features();
     raw_pl011(b'3');
 
     // SAFETY: This function is called in the boot context of the AP.
+    unsafe { ap_dram_ckpt(cpu_id, 2); }
     unsafe { crate::arch::trap::init() };
     raw_pl011(b'4');
 
     // SAFETY: This function is only called once on this AP, after the BSP has
     // done the architecture-specific initialization.
+    unsafe { ap_dram_ckpt(cpu_id, 3); }
     unsafe { crate::arch::init_on_ap() };
     raw_pl011(b'5');
 
+    unsafe { ap_dram_ckpt(cpu_id, 4); }
     crate::arch::irq::enable_local();
     raw_pl011(b'6');
 
     // SAFETY: This function is only called once on this AP.
+    unsafe { ap_dram_ckpt(cpu_id, 5); }
     unsafe { crate::mm::kspace::activate_kernel_page_table() };
     raw_pl011(b'7');
 
+    unsafe { ap_dram_ckpt(cpu_id, 6); }
     // Mark the AP as started.
     report_online_and_hw_cpu_id(cpu_id);
     raw_pl011(b'8');

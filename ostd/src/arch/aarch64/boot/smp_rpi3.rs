@@ -383,6 +383,18 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
                 after_ttbr_pa, ttbr_val,
                 pre_rust_pa, rust_val
             );
+            let ap_early_base = 0x68000usize + base;
+            let s0: u32 = unsafe { core::ptr::read_volatile(ap_early_base as *const u32) };
+            let s1: u32 = unsafe { core::ptr::read_volatile((ap_early_base + 4) as *const u32) };
+            let s2: u32 = unsafe { core::ptr::read_volatile((ap_early_base + 8) as *const u32) };
+            let s3: u32 = unsafe { core::ptr::read_volatile((ap_early_base + 12) as *const u32) };
+            let s4: u32 = unsafe { core::ptr::read_volatile((ap_early_base + 16) as *const u32) };
+            let s5: u32 = unsafe { core::ptr::read_volatile((ap_early_base + 20) as *const u32) };
+            let s6: u32 = unsafe { core::ptr::read_volatile((ap_early_base + 24) as *const u32) };
+            log::info!(
+                "[a2-smp] rpi3: AP ap_early_entry cpu={} s0={:#x} s1={:#x} s2={:#x} s3={:#x} s4={:#x} s5={:#x} s6={:#x}",
+                cpu_id, s0, s1, s2, s3, s4, s5, s6
+            );
         }
     }
 
