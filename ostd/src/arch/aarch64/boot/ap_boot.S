@@ -67,10 +67,18 @@ ap_boot_entry:
      * and TTBR1 to this root. Previously only TTBR0 was set, so the branch to the
      * high-half VA of ap_early_entry used the stale TTBR1 left by firmware and
      * faulted — the AP never reached ap_early_entry. */
-    ldr     x0, =__boot_page_table_pointer
+    adr     x0, __boot_page_table_pointer
     ldr     x0, [x0]                 /* Load page table root PA */
     msr     ttbr0_el1, x0
     msr     ttbr1_el1, x0            /* TTBR1: high-half kernel VAs (ap_early_entry) */
+    /* Checkpoint after TTBR loads: marker (cpu_id+0xa0) at PA (0x60000 + cpu*0x1000).
+     * If absent: crash in the high-half-VA literal load (MMU state / map issue). */
+    mrs     x1, mpidr_el1
+    and     x1, x1, #0x3
+    add     x2, x1, #0x60
+    lsl     x2, x2, #12
+    add     x1, x1, #0xa0
+    str     w1, [x2]
 
     /* Program TCR_EL1 and MAIR_EL1 explicitly.
      * Unlike the BSP, the AP never set these before enabling the MMU, so it
@@ -140,6 +148,15 @@ ap_boot_entry:
 
     /* Jump to Rust ap_early_entry (now using VA) */
     ldr     x1, =ap_early_entry
+    /* Checkpoint before Rust branch: marker (cpu_id+0xb0) at PA (0x64000 + cpu*0x1000).
+     * If present: stub fully completed (TTBR+TCR+MAIR+MMU+stack+TPIDR all ok).
+     * If absent (but after_ttbr present): crash in TCR/MAIR/MMU enable/cache flush. */
+    mrs     x2, mpidr_el1
+    and     x2, x2, #0x3
+    add     x3, x2, #0x64
+    lsl     x3, x3, #12
+    add     x2, x2, #0xb0
+    str     w2, [x3]
     br      x1
 
 /* Data section for the PerApRawInfo pointer - filled by BSP */
