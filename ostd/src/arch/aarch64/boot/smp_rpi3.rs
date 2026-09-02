@@ -419,10 +419,10 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
             let marker_pa = 0x42000usize + (cpu_id as usize) * 0x1000;
             let marker: u32 =
                 unsafe { core::ptr::read_volatile(marker_pa as *const u32) };
-            if marker == 0x50 + cpu_id {
-                log::info!("[a2-smp] rpi3: AP {} stub entry marker found, reporting online", cpu_id);
-                crate::boot::smp::report_online_and_hw_cpu_id(cpu_id);
-            }
+            log::info!(
+                "[a2-smp] rpi3: AP {} entry marker @0x{:x}={:#x} (expect 0x{:x})",
+                cpu_id, marker_pa, marker, 0x50 + cpu_id
+            );
         }
     }
 }

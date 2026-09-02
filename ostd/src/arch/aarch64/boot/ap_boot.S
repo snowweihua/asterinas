@@ -2,17 +2,13 @@
 
 /* AArch64 AP boot stub for SMP boot via PSCI CPU_ON.
  *
- * This code is placed in a special .ap_boot section that is loaded to a
- * known physical address. PSCI CPU_ON will jump to this address to wake
- * up secondary cores.
- *
  * Execution flow:
- *   1. AP starts at ap_boot_entry with MMU off, running on identity-mapped addresses
- *   2. Set up page table from __boot_page_table_pointer (global filled by BSP)
- *   3. Set up stack from PerApRawInfo (passed in x0 as context_id)
- *   4. Set up TPIDR_EL1 (CPU local base) from PerApRawInfo
- *   5. Enable MMU
- *   6. Switch to virtual addresses and jump to ap_early_entry Rust function
+ *   1. AP starts at ap_boot_entry at EL2 (set by ATF/BL31) with MMU off
+ *   2. Drop from EL2 to EL1 via HCR_EL2 + ERET
+ *   3. Set up EL1 page tables (TTBR0/1, TCR, MAIR)
+ *   4. Enable MMU on EL1
+ *   5. Set up stack and TPIDR_EL1
+ *   6. Jump to ap_early_entry Rust function
  */
 
 .equ KERNEL_CODE_BASE_VADDR, 0xffff000000000000
@@ -26,11 +22,8 @@ ap_boot_entry:
     ldr     x1, =0x41000
     str     x0, [x1]
 
-    /* FIRST: write per-CPU entry marker to PA (0x42000 + cpu_id*0x1000).
-     * BSP polls these after the wake attempts. If the marker is still 0,
-     * the AP never executed this instruction (never reached the entry);
-     * if the marker matches, the AP reached entry and any missing UART
-     * output is a downstream crash (UART MMIO inaccessible, etc.). */
+    /* Per-CPU entry marker to PA (0x42000 + cpu_id*0x1000).
+     * BSP polls these after the wake attempts. */
     mrs     x1, mpidr_el1
     and     x1, x1, #0x3
     add     x2, x1, #0x42
@@ -38,18 +31,15 @@ ap_boot_entry:
     add     x1, x1, #0x50
     str     w1, [x2]
 
-    /* AP unique marker - AP has entered boot stub (distinguish from BSP) */
+    /* UART markers to confirm AP is alive */
     mov     x0, #0xCC
     bl      ap_putchar
     mov     x0, #0xDD
     bl      ap_putchar
-
-    /* AP early marker - AP started */
     mov     x0, #0x41
     bl      ap_putchar
-    /* Checkpoint after first putchar: marker (cpu_id+0x60) at PA (0x46000 + cpu*0x1000).
-     * If present: putchar returned successfully (UART accessible, write landed).
-     * If absent: AP crashed inside putchar (UART MMIO fault). */
+
+    /* Checkpoint after first putchar: marker (cpu_id+0x60) at PA (0x46000 + cpu*0x1000). */
     mrs     x1, mpidr_el1
     and     x1, x1, #0x3
     add     x2, x1, #0x46
@@ -60,21 +50,42 @@ ap_boot_entry:
     mov     x0, #0x50
     bl      ap_putchar
 
-    /* Set up page tables from global __boot_page_table_pointer.
-     * pt_ptr is the BSP's TTBR1 root (boot_l4pt_kern), which maps:
-     *   - VA 0xffff000000000000 + [0,1GB) -> DRAM  (kernel high-half, executable)
-     *   - VA 0xffff800000000000 + [0,4GB) -> linear map
-     * The stub itself runs at low identity addresses 0x344000 which boot_l4pt_kern
-     * also maps (via boot_l3pt_high[0] -> boot_l2pt_gb0). So program BOTH TTBR0
-     * and TTBR1 to this root. Previously only TTBR0 was set, so the branch to the
-     * high-half VA of ap_early_entry used the stale TTBR1 left by firmware and
-     * faulted — the AP never reached ap_early_entry. */
+    /* ======================================================================
+     * EL2 -> EL1 drop.
+     *
+     * ATF/BL31 brings up secondary cores at EL2. All the page-table and
+     * MMU registers we need to program (TTBR0_EL1, TCR_EL1, SCTLR_EL1, …)
+     * are EL1 registers — they are *accessible* from EL2 but they govern
+     * EL1's translation regime.  While the CPU is at EL2, its own
+     * accesses go through EL2's translation (which is unconfigured / off),
+     * so the identity VA==PA mapping we set up in TTBR0_EL1 is invisible
+     * to EL2.  Any high-half VA (0xffff_…) fetched by the CPU while at
+     * EL2 would be treated as a physical address, which is far beyond
+     * physical RAM → synchronous external abort → silent firmware loop.
+     *
+     * Fix: drop to EL1 immediately, *then* configure and enable MMU.
+     * ====================================================================== */
+
+    /* HCR_EL2.RW = 1: tell EL2 that EL1 runs AArch64 (not AArch32).
+     * Read-modify-write to preserve any other bits the firmware set. */
+    mrs     x0, HCR_EL2
+    orr     x0, x0, #(1 << 31)      /* RW bit */
+    msr     HCR_EL2, x0
+
+    /* Set up EL1 system registers (accessible from EL2).
+     * These have no effect until we actually enter EL1. */
     adr     x0, __boot_page_table_pointer
-    ldr     x0, [x0]                 /* Load page table root PA */
+    ldr     x0, [x0]                /* Load page table root PA */
     msr     ttbr0_el1, x0
-    msr     ttbr1_el1, x0            /* TTBR1: high-half kernel VAs (ap_early_entry) */
-    /* Checkpoint after TTBR loads: marker (cpu_id+0xa0) at PA (0x60000 + cpu*0x1000).
-     * If absent: crash in the high-half-VA literal load (MMU state / map issue). */
+    msr     ttbr1_el1, x0
+
+    ldr     x0, =TCR_VALUE
+    msr     tcr_el1, x0
+    ldr     x0, =MAIR_VALUE
+    msr     mair_el1, x0
+    isb
+
+    /* Checkpoint after TTBR loads: marker (cpu_id+0xa0) at PA (0x60000 + cpu*0x1000). */
     mrs     x1, mpidr_el1
     and     x1, x1, #0x3
     add     x2, x1, #0x60
@@ -82,19 +93,22 @@ ap_boot_entry:
     add     x1, x1, #0xa0
     str     w1, [x2]
 
-    /* Program TCR_EL1 and MAIR_EL1 explicitly.
-     * Unlike the BSP, the AP never set these before enabling the MMU, so it
-     * inherited whatever BL31/firmware left behind. If those differ from the
-     * kernel's expectations (T1SZ=16/TG1=4KB, MAIR attr1=Normal-WBWA for
-     * page-table walks), the MMU walk of the freshly-loaded TTBR0/TTBR1 can
-     * fault right after MMU enable. Use the exact same values as boot.S. */
-    ldr     x0, =TCR_VALUE
-    msr     tcr_el1, x0
-    ldr     x0, =MAIR_VALUE
-    msr     mair_el1, x0
+    /* Prepare ERET to EL1h:
+     *   SPSR_EL2: M[3:0]=0101 (EL1h), DAIF=1111 (all masked), M[4]=0 (AArch64)
+     *   ELR_EL2:  continuation address (physical, since EL1 MMU is still off) */
+    ldr     x0, =0x3C5
+    msr     SPSR_EL2, x0
+    adr     x0, ap_el1_entry
+    msr     ELR_EL2, x0
     isb
+    eret
 
-    /* Invalidate TLBs to ensure page table changes take effect */
+ap_el1_entry:
+    /* Now executing at EL1h with MMU still off.
+     * All accesses use physical addresses.
+     * EL1 system registers are now "live". */
+
+    /* Invalidate TLBs so freshly-loaded TTBR take effect */
     dsb     ish
     tlbi    vmalle1
     dsb     ish
@@ -107,8 +121,8 @@ ap_boot_entry:
     dsb     nsh
     isb
 
-    /* Enable MMU with early boot configuration (same as BSP boot) */
-    /* SCTLR_EL1: mandatory RES1 bits + enable MMU and caches */
+    /* Enable MMU with early boot configuration (same as BSP boot).
+     * After MSR + ISB, the CPU begins using EL1's page tables. */
     ldr     x0, =SCTLR_MMU_ENABLED
     msr     sctlr_el1, x0
     isb
@@ -148,21 +162,23 @@ ap_boot_entry:
     mrs     x0, mpidr_el1
     and     x0, x0, #0x3            /* x0 = cpu_id */
 
-    /* Jump to Rust ap_early_entry via its PA (identity VA on RPi3).
-     * The stub runs at identity after MMU enable (PC = PA), so `adr` directly
-     * gives the function's PA. The identity map (boot_l3pt_low -> boot_l2pt_gb0)
-     * covers the kernel image PA range as Normal executable. The high-half VA
-     * fetch via boot_l3pt_high faults on this path, but the identity fetch works. */
-    adr     x1, ap_early_entry
-    /* Checkpoint before Rust branch: marker (cpu_id+0xb0) at PA (0x64000 + cpu*0x1000).
-     * If present: stub fully completed (TTBR+TCR+MAIR+MMU+stack+TPIDR all ok).
-     * If absent (but after_ttbr present): crash in TCR/MAIR/MMU enable/cache flush. */
-    mrs     x2, mpidr_el1
-    and     x2, x2, #0x3
-    add     x3, x2, #0x64
+    /* Write CurrentEL to DRAM s3 (base+12) so BSP can confirm exception level. */
+    mrs     x8, CurrentEL
+    lsr     x8, x8, #2
+    mov     x9, #0x68
+    lsl     x9, x9, #12
+    add     x9, x9, x0, lsl #12
+    str     w8, [x9, #12]           /* s3 = CurrentEL >> 2 */
+
+    /* Jump to Rust ap_early_entry via its high-half VA (mapped by TTBR1). */
+    ldr     x1, =ap_early_entry
+    /* Checkpoint before Rust branch: marker (cpu_id+0xb0) at PA (0x64000 + cpu*0x1000). */
+    add     x2, x0, #0xb0
+    mov     x3, #0x64
     lsl     x3, x3, #12
-    add     x2, x2, #0xb0
+    add     x3, x3, x0, lsl #12
     str     w2, [x3]
+
     br      x1
 
 /* Data section for the PerApRawInfo pointer - filled by BSP */
