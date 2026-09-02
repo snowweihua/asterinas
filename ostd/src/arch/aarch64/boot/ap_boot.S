@@ -157,7 +157,14 @@ ap_boot_entry:
     lsl     x3, x3, #12
     add     x2, x2, #0xb0
     str     w2, [x3]
-    br      x1
+    /* TEMP: write s0 marker here (same address as ap_early_entry's first write)
+     * and spin instead of branching, to confirm stub reaches the end and the
+     * br x1 to ap_early_entry is what fails. */
+    add     x3, x3, #0x4000
+    add     x2, x2, #0x20
+    str     w2, [x3]
+1:  wfe
+    b       1b
 
 /* Data section for the PerApRawInfo pointer - filled by BSP */
 .global __ap_boot_info_array_pointer
