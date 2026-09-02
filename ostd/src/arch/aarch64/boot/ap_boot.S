@@ -24,6 +24,18 @@ ap_boot_entry:
     ldr     x1, =0x41000
     str     x0, [x1]
 
+    /* FIRST: write per-CPU entry marker to PA (0x42000 + cpu_id*0x1000).
+     * BSP polls these after the wake attempts. If the marker is still 0,
+     * the AP never executed this instruction (never reached the entry);
+     * if the marker matches, the AP reached entry and any missing UART
+     * output is a downstream crash (UART MMIO inaccessible, etc.). */
+    mrs     x1, mpidr_el1
+    and     x1, x1, #0x3
+    add     x2, x1, #0x42
+    lsl     x2, x2, #12
+    add     x1, x1, #0x50
+    str     w1, [x2]
+
     /* AP unique marker - AP has entered boot stub (distinguish from BSP) */
     mov     x0, #0xCC
     bl      ap_putchar
@@ -33,6 +45,16 @@ ap_boot_entry:
     /* AP early marker - AP started */
     mov     x0, #0x41
     bl      ap_putchar
+    /* Checkpoint after first putchar: marker (cpu_id+0x60) at PA (0x46000 + cpu*0x1000).
+     * If present: putchar returned successfully (UART accessible, write landed).
+     * If absent: AP crashed inside putchar (UART MMIO fault). */
+    mrs     x1, mpidr_el1
+    and     x1, x1, #0x3
+    add     x2, x1, #0x46
+    lsl     x2, x2, #12
+    add     x1, x1, #0x60
+    str     w1, [x2]
+
     mov     x0, #0x50
     bl      ap_putchar
 

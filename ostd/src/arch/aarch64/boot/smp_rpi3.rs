@@ -360,6 +360,26 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
     }
 
     #[cfg(target_arch = "aarch64")]
+    {
+        for cpu_id in 1..num_cpus {
+            let entry_pa = 0x42000usize + (cpu_id as usize) * 0x1000;
+            let post_putchar_pa = 0x46000usize + (cpu_id as usize) * 0x1000;
+            let entry_val: u32 =
+                unsafe { core::ptr::read_volatile(entry_pa as *const u32) };
+            let post_val: u32 =
+                unsafe { core::ptr::read_volatile(post_putchar_pa as *const u32) };
+            log::info!(
+                "[a2-smp] rpi3: AP markers cpu={} entry@{:#x}={:#x} post_putchar@{:#x}={:#x}",
+                cpu_id,
+                entry_pa,
+                entry_val,
+                post_putchar_pa,
+                post_val
+            );
+        }
+    }
+
+    #[cfg(target_arch = "aarch64")]
     log::info!("[a2-smp] rpi3: SMP bringup done");
 
 // Check if AP boot marker was written (at 0x41000 from ap_boot.S)
