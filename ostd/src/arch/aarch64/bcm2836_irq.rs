@@ -31,6 +31,17 @@ const LOCAL_GPU_ROUTING: usize = 0x0C;
 const CORE0_TIMER_INT_CONTROL: usize = 0x40;
 const CORE0_IRQ_SOURCE: usize = 0x60;
 
+/// Per-core register stride for the ARM local timer/mailbox/IRQ-source
+/// registers.  The ARM local registers are laid out with a stride of 0x4
+/// between cores (Core0 Timer Ctrl = 0x40, Core1 = 0x44, Core2 = 0x48,
+/// Core3 = 0x4C; Core0 Mailbox Ctrl = 0x50, Core1 = 0x54, ...; Core0 IRQ
+/// Source = 0x60, Core1 = 0x64, ...).  (The mailbox set/clear registers use a
+/// different, 0x10-per-core layout; see below.)
+const CORE_REG_STRIDE: usize = 0x4;
+
+/// Per-core Mailboxes Interrupt Control (Core0 = 0x50, Core1 = 0x54, ...).
+const CORE0_MAILBOX_INT_CONTROL: usize = 0x50;
+
 /// Spin-table mailbox / cpu-release-addr registers (per core).
 /// Standard RPi3 DTB values:
 ///   cpu@1: cpu-release-addr = <0x0 0x000000e8>
@@ -39,9 +50,6 @@ const CORE0_IRQ_SOURCE: usize = 0x60;
 const CORE1_BOOT_CONTROL: usize = 0xE8;
 const CORE2_BOOT_CONTROL: usize = 0xF0;
 const CORE3_BOOT_CONTROL: usize = 0xF8;
-
-/// Per-core register block stride for ARM local registers.
-const CORE_REG_STRIDE: usize = 0x400;
 
 const CNTPNSIRQ_BIT: u32 = 1 << 1;
 const CNTVIRQ_BIT: u32 = 1 << 3;
@@ -162,8 +170,33 @@ pub unsafe fn init_on_ap() {
         return;
     }
     let core = core_id();
-    let offset = CORE0_TIMER_INT_CONTROL + (core * CORE_REG_STRIDE);
-    unsafe { write_reg(offset, CNTPNSIRQ_BIT) };
+    let timer_ctrl = CORE0_TIMER_INT_CONTROL + (core * CORE_REG_STRIDE);
+    let mbox_ctrl = CORE0_MAILBOX_INT_CONTROL + (core * CORE_REG_STRIDE);
+
+    // Mask ALL ARM-local IRQ sources for this core (timer + mailboxes) so no
+    // stray interrupt can fire once the CPU unmask bits (DAIF) are opened by
+    // enable_local().  The AP was woken via a mailbox-write SET (which leaves
+    // a pending mailbox IRQ); if left enabled it would re-enter irq_current in
+    // an infinite storm (acknowledge_interrupt only reads, never clears, and
+    // end_interrupt is a no-op on the BCM2836).
+    unsafe {
+        write_reg(timer_ctrl, 0);
+        write_reg(mbox_ctrl, 0);
+        // Clear any pending wake mailbox IRQ for this core.  The wake used
+        // CORE{n}_MAILBOX3_SET; its set bits live in CORE{n}_MAILBOX3_CLR and
+        // the interrupt stays asserted while non-zero.
+        const CORE0_MAILBOX3_CLR: usize = 0xCC; // stride 0x10 per core
+        const MAILBOX_CLR_STRIDE: usize = 0x10;
+        write_reg(CORE0_MAILBOX3_CLR + (core * MAILBOX_CLR_STRIDE), 0xFFFF_FFFF);
+        core::arch::asm!("dsb sy", "isb", options(nostack, nomem, preserves_flags));
+        // Disable the physical timer so it cannot assert CNTPNSIRQ until the
+        // tick is explicitly armed for this core.
+        core::arch::asm!(
+            "msr cntp_ctl_el0, xzr",
+            "isb",
+            options(nostack, nomem, preserves_flags),
+        );
+    }
 }
 
 /// Enable the BCM2835 AUX mini-UART IRQ (GPU IRQ 29).

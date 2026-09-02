@@ -154,45 +154,36 @@ fn ap_early_entry(cpu_id: u32) -> ! {
     // to determine if the AP even enters ap_early_entry. PL011 VA = 0xffff000000000000 + 0x3f201000.
     raw_pl011(b'0');
 
-    // Bisect: is the crash (a) on the serial::send function call / global
-    // access, or (b) inside cpu::init_on_ap?
-    crate::arch::serial::send(b'A');
-    crate::arch::serial::send(b'A');
-    raw_pl011(b'1');
+    // NOTE: serial::send is intentionally NOT called on the AP here. It touches
+    // shared/global UART state and has been observed to fault/corrupt on APs;
+    // raw_pl011 markers are the reliable progress probes.
 
     // SAFETY: The safety is upheld by the caller.
     unsafe { crate::cpu::init_on_ap(cpu_id) };
     raw_pl011(b'2');
-    crate::arch::serial::send(b'B');
 
     crate::arch::enable_cpu_features();
     raw_pl011(b'3');
-    crate::arch::serial::send(b'C');
 
     // SAFETY: This function is called in the boot context of the AP.
     unsafe { crate::arch::trap::init() };
     raw_pl011(b'4');
-    crate::arch::serial::send(b'D');
 
     // SAFETY: This function is only called once on this AP, after the BSP has
     // done the architecture-specific initialization.
     unsafe { crate::arch::init_on_ap() };
     raw_pl011(b'5');
-    crate::arch::serial::send(b'E');
 
     crate::arch::irq::enable_local();
     raw_pl011(b'6');
-    crate::arch::serial::send(b'F');
 
     // SAFETY: This function is only called once on this AP.
     unsafe { crate::mm::kspace::activate_kernel_page_table() };
     raw_pl011(b'7');
-    crate::arch::serial::send(b'G');
 
     // Mark the AP as started.
     report_online_and_hw_cpu_id(cpu_id);
     raw_pl011(b'8');
-    crate::arch::serial::send(b'H');
 
     log::info!("Processor {} started. Spinning for tasks.", cpu_id);
 

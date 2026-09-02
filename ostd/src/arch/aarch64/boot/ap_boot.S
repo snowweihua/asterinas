@@ -98,24 +98,7 @@ ap_boot_entry:
     ldr     x0, [x19, #8]            /* Load cpu_local (already VA) */
     msr     tpidr_el1, x0
 
-    /* Zero BSS for this CPU */
-.extern __bss
-.extern __bss_end
-    ldr     x0, =__bss
-    ldr     x1, =__bss_end
-    cmp     x0, x1
-    bge     2f
-1:  str     xzr, [x0], #8
-    cmp     x0, x1
-    blt     1b
-2:
-    /* AP early marker - after BSS zero */
-    mov     x0, #0x42
-    bl      ap_putchar
-    mov     x0, #0x53
-    bl      ap_putchar
-
-    /* AP early marker - before jump to Rust */
+    /* AP early marker - boot stub done, jumping to Rust */
     mov     x0, #0x44
     bl      ap_putchar
     mov     x0, #0x54
