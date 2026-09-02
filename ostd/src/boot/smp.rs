@@ -206,8 +206,9 @@ fn ap_early_entry(cpu_id: u32) -> ! {
     let ap_late_entry = AP_LATE_ENTRY.wait();
     ap_late_entry();
 
-    Task::yield_now();
-    unreachable!("`yield_now` in the boot context should not return");
+    loop {
+        crate::task::halt_cpu();
+    }
 }
 
 pub(crate) fn report_online_and_hw_cpu_id(cpu_id: u32) {

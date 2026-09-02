@@ -124,18 +124,14 @@ impl<T: ?Sized, G: SpinGuardian> SpinLock<T, G> {
     }
 
     fn try_acquire_lock(&self) -> bool {
-        // WORKAROUND: RPi3 AXI bridge causes LDXR/STXR atomics to fail.
-        // Use relaxed store + fence for UP boot safety.
-        if self.inner.lock.load(Ordering::Relaxed) {
-            return false;
-        }
-        self.inner.lock.store(true, Ordering::Relaxed);
-        core::sync::atomic::fence(Ordering::Acquire);
-        true
+        self.inner
+            .lock
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_ok()
     }
 
     fn release_lock(&self) {
-        self.inner.lock.store(false, Ordering::Relaxed);
+        self.inner.lock.store(false, Ordering::Release);
     }
 }
 
