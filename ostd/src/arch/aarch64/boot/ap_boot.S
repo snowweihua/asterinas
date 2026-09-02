@@ -148,17 +148,12 @@ ap_boot_entry:
     mrs     x0, mpidr_el1
     and     x0, x0, #0x3            /* x0 = cpu_id */
 
-    /* Jump to Rust ap_early_entry using its PA (identity VA) instead of the
-     * high-half VA. The high-half instruction fetch via boot_l3pt_high faults
-     * on this stub path, but the identity map (boot_l3pt_low -> boot_l2pt_gb0)
-     * for the kernel image PA range is Normal executable and proven to work
-     * (the stub itself runs from identity and DRAM writes succeed).
-     * PA = high_VA - KERNEL_CODE_BASE_VADDR (0xffff000000000000 for aarch64).
-     * Rust globals use PC-relative addressing so the function works from
-     * either VA mapping to the same physical memory. */
+    /* Jump to Rust ap_early_entry via its PA (identity VA on RPi3).
+     * The stub runs at identity after MMU enable (PC = PA), so `adr` directly
+     * gives the function's PA. The identity map (boot_l3pt_low -> boot_l2pt_gb0)
+     * covers the kernel image PA range as Normal executable. The high-half VA
+     * fetch via boot_l3pt_high faults on this path, but the identity fetch works. */
     adr     x1, ap_early_entry
-    ldr     x2, =KERNEL_CODE_BASE_VADDR
-    sub     x1, x1, x2
     /* Checkpoint before Rust branch: marker (cpu_id+0xb0) at PA (0x64000 + cpu*0x1000).
      * If present: stub fully completed (TTBR+TCR+MAIR+MMU+stack+TPIDR all ok).
      * If absent (but after_ttbr present): crash in TCR/MAIR/MMU enable/cache flush. */
