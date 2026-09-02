@@ -210,7 +210,7 @@ fn ap_early_entry(cpu_id: u32) -> ! {
     unreachable!("`yield_now` in the boot context should not return");
 }
 
-fn report_online_and_hw_cpu_id(cpu_id: u32) {
+pub(crate) fn report_online_and_hw_cpu_id(cpu_id: u32) {
     // There are no races because this method will only be called in the boot
     // context, where preemption won't occur.
     let hw_cpu_id = HwCpuId::read_current(&crate::task::disable_preempt());

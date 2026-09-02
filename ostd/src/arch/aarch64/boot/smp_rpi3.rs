@@ -357,6 +357,14 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
                 break;
             }
         }
+
+        for _ in 0..500000 {
+            let val = unsafe { core::ptr::read_volatile(0x41000 as *const u8) };
+            if val != 0x55 && val != 0 {
+                log::info!("[a2-smp] rpi3: AP {} started via spin-table!", cpu_id);
+                break;
+            }
+        }
     }
 
     #[cfg(target_arch = "aarch64")]
@@ -406,5 +414,15 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
     {
         let ap_marker = unsafe { core::ptr::read_volatile(0x41000 as *const u64) };
         log::info!("[a2-smp] rpi3: AP boot marker @0x41000={:#x} (should be 0xABCD if AP reached boot code)", ap_marker);
+
+        for cpu_id in 1..num_cpus {
+            let marker_pa = 0x42000usize + (cpu_id as usize) * 0x1000;
+            let marker: u32 =
+                unsafe { core::ptr::read_volatile(marker_pa as *const u32) };
+            if marker == 0x50 + cpu_id {
+                log::info!("[a2-smp] rpi3: AP {} stub entry marker found, reporting online", cpu_id);
+                crate::boot::smp::report_online_and_hw_cpu_id(cpu_id);
+            }
+        }
     }
 }
