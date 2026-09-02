@@ -252,13 +252,18 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
             let result = smc_call(PSCI_CPU_ON, mpidr, ap_entry_paddr, info_ptr_val);
             log::info!("[a2-smp] rpi3: PSCI result={:#x}", result);
 
-            // Small delay
+            let aff_info_immediate = smc_call(PSCI_AFFINITY_INFO, mpidr, 0, 0);
+            log::info!("[a2-smp] rpi3: PSCI_AFFINITY_INFO after CPU_ON(cpu={})={:#x} (immediate)", cpu_id, aff_info_immediate);
+
             for _ in 0..1000 { core::hint::spin_loop(); }
 
             let val = unsafe { core::ptr::read_volatile(0x41000 as *const u8) };
             if val != 0x55 && val != 0 {
                 log::info!("[a2-smp] rpi3: AP {} started via PSCI!", cpu_id);
             }
+
+            let aff_info_delayed = smc_call(PSCI_AFFINITY_INFO, mpidr, 0, 0);
+            log::info!("[a2-smp] rpi3: PSCI_AFFINITY_INFO after CPU_ON(cpu={})={:#x} (delayed)", cpu_id, aff_info_delayed);
         }
     } else {
         log::info!("[a2-smp] rpi3: PSCI not available, using spin-table");
