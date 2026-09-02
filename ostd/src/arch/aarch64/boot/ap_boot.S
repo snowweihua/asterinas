@@ -15,6 +15,8 @@
  *   6. Switch to virtual addresses and jump to ap_early_entry Rust function
  */
 
+.equ KERNEL_CODE_BASE_VADDR, 0xffff000000000000
+
 .global ap_boot_entry
 ap_boot_entry:
 /* FIRST: Save x0 (context ID / PerApRawInfo pointer) to x19 */
@@ -146,8 +148,17 @@ ap_boot_entry:
     mrs     x0, mpidr_el1
     and     x0, x0, #0x3            /* x0 = cpu_id */
 
-    /* Jump to Rust ap_early_entry (now using VA) */
-    ldr     x1, =ap_early_entry
+    /* Jump to Rust ap_early_entry using its PA (identity VA) instead of the
+     * high-half VA. The high-half instruction fetch via boot_l3pt_high faults
+     * on this stub path, but the identity map (boot_l3pt_low -> boot_l2pt_gb0)
+     * for the kernel image PA range is Normal executable and proven to work
+     * (the stub itself runs from identity and DRAM writes succeed).
+     * PA = high_VA - KERNEL_CODE_BASE_VADDR (0xffff000000000000 for aarch64).
+     * Rust globals use PC-relative addressing so the function works from
+     * either VA mapping to the same physical memory. */
+    adr     x1, ap_early_entry
+    ldr     x2, =KERNEL_CODE_BASE_VADDR
+    sub     x1, x1, x2
     /* Checkpoint before Rust branch: marker (cpu_id+0xb0) at PA (0x64000 + cpu*0x1000).
      * If present: stub fully completed (TTBR+TCR+MAIR+MMU+stack+TPIDR all ok).
      * If absent (but after_ttbr present): crash in TCR/MAIR/MMU enable/cache flush. */
@@ -157,14 +168,7 @@ ap_boot_entry:
     lsl     x3, x3, #12
     add     x2, x2, #0xb0
     str     w2, [x3]
-    /* TEMP: write s0 marker here (same address as ap_early_entry's first write)
-     * and spin instead of branching, to confirm stub reaches the end and the
-     * br x1 to ap_early_entry is what fails. */
-    add     x3, x3, #0x4000
-    add     x2, x2, #0x20
-    str     w2, [x3]
-1:  wfe
-    b       1b
+    br      x1
 
 /* Data section for the PerApRawInfo pointer - filled by BSP */
 .global __ap_boot_info_array_pointer
