@@ -158,6 +158,8 @@ unsafe fn ap_dram_ckpt(cpu_id: u32, stage: u32) {
 
 #[unsafe(no_mangle)]
 fn ap_early_entry(cpu_id: u32) -> ! {
+    unsafe { ap_dram_ckpt(cpu_id, 0); }
+
     // RAW marker: write to PL011 directly at its VA (bypass serial::send)
     // to determine if the AP even enters ap_early_entry. PL011 VA = 0xffff000000000000 + 0x3f201000.
     raw_pl011(b'0');
@@ -167,7 +169,6 @@ fn ap_early_entry(cpu_id: u32) -> ! {
     // raw_pl011 markers are the reliable progress probes.
 
     // SAFETY: The safety is upheld by the caller.
-    unsafe { ap_dram_ckpt(cpu_id, 0); }
     unsafe { crate::cpu::init_on_ap(cpu_id) };
     raw_pl011(b'2');
 
