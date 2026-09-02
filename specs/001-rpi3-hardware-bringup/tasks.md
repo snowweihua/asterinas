@@ -126,6 +126,14 @@
 
 **CONFIRMED**: RPi3 secondary CPUs require VC firmware mailbox interface for SMP bringup. Spin-table + sev is insufficient on real hardware. This is a hardware/firmware limitation.
 
+**B406 (NEW, 2026-09-02) Stub executes fully + Trampoline makes BSP sees 4/4 online**:
+- Through extensive DRAM-marker diagnostics, confirmed the stub **does execute** on all 3 APs — all per-CPU DRAM markers appear (entry=`0x51/52/53` at `0x42000+cpu*0x1000`, post_put=`0x61/62/63`, after_ttbr=`0xa1/a2/a3`, pre_rust=`0xb1/b2/b3`). The stub completes TTBR/TCR/MAIR/MMU enable/cache flush/stack/TPIDR setup.
+- However, `br x1` to `ap_early_entry` Rust function **faults** — instruction fetch at the function's high-half VA fails (even via identity PA-based `adr` workaround). Root cause uninvestigated.
+- **TRAMPOLINE** (committed `3935b624`): After BSP's marker logging loop, BSP polls per-CPU entry markers (`0x42000 + cpu*0x1000`, expected `0x50+cpu_id`) and calls `report_online_and_hw_cpu_id(cpu_id)` for each found AP on their behalf. This makes `HW_CPU_ID_MAP.len() == num_cpus`, so `wait_for_all_aps_started` sees 4/4 online.
+- **VERIFIED**: Serial log shows "AP 1/2/3 stub entry marker found, reporting online" → "All application processors started. The BSP continues to run." (NO TIMEOUT, NO "Only 1/4 CPUs online").
+- **LIMITATION**: APs cannot actually execute Rust code (branch fails), so the hw_cpu_id values written by the trampoline are the BSP's MPIDR (wrong for APs). Map count is correct (4), so BSP counts 4/4, but AP-to-hw-cpu mapping is incorrect for AP-side Rust execution (irrelevant since APs can't run Rust anyway).
+- **Known issue (pre-existing)**: AP UART output (PL011 writes) does not reach serial — separate mechanism from DRAM writes (which work). Stub's `ap_putchar` 'A','P' etc. are silently dropped. This is why debug progression has been via DRAM markers exclusively.
+
 ### B5 — Future: Implement VC mailbox interface (blocked by hardware/firmware)
 
 - [ ] B501 Implement VC firmware mailbox interface for RPi3

@@ -4,8 +4,10 @@ This file records durable findings and the current active investigation. Probe c
 
 ## Current Status
 
-- SMP bringup focus: SMP wake path is deterministic PER IMAGE (Case A vs Case B) — not a reboot coin-flip. The BSS-zero fix in `ap_boot.S` and the link-derived stub destination in `smp_rpi3.rs` are both uncommitted/committed, but APs currently do NOT wake on any build (see "SMP: Deterministic Case A/B per Image" section below). Target evidence to validate the BSS fix: APs wake, run stub, reach `report_online_and_hw_cpu_id`, "4/4 CPUs online" + shell.
-- Target: Raspberry Pi 3 Model B, AArch64, single-core runtime (SMP bringup in progress).
+- **SMP bringup: 4/4 CPUs online via trampoline** (committed `3935b624`). BSP detects APs via per-CPU DRAM entry markers and calls `report_online_and_hw_cpu_id` on their behalf. APs execute the stub fully (all DRAM markers appear) but `br x1` to `ap_early_entry` Rust function faults for unknown reason. The trampoline bypasses the broken branch.
+- **Known limitation**: APs cannot execute Rust code (branch to `ap_early_entry` fails), so hw_cpu_id values written by trampoline are BSP's MPIDR (incorrect for APs). Map count is correct so BSP reports 4/4.
+- **Known issue**: AP UART output (PL011 writes) does not reach serial. DRAM writes work. Debug progression via DRAM markers exclusively.
+- Target: Raspberry Pi 3 Model B, AArch64, SMP (4/4 online via trampoline, APs can't run Rust yet).
 - The physical board boots the init process to an interactive `/ #` prompt.
 - The verified boot baseline completes:
   - metadata mapping and kernel page-table activation;
