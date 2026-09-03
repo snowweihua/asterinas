@@ -119,8 +119,6 @@ unsafe fn init() {
         mm::page_table::reserve_root_pt_page();
     }
 
-    // The frame allocator should be initialized immediately after the metadata
-    // is initialized. Otherwise the boot page table can't allocate frames.
     // SAFETY: This function is called only once.
     unsafe { mm::frame::allocator::init() };
 

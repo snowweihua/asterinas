@@ -70,17 +70,12 @@ extern "C" fn sync_exception_current(f: &mut TrapFrame) {
         ($c:expr) => {
             unsafe {
                 core::arch::asm!(
-                    "movz x4, #0x3F21, lsl #16",
-                    "movk x4, #0x5054",
-                    "1: ldrb w5, [x4]",
-                    "tst w5, #0x20",
-                    "beq 1b",
-                    "movz x4, #0x3F21, lsl #16",
-                    "movk x4, #0x5040",
+                    "movz x4, #0x3F20, lsl #16",
+                    "movk x4, #0x1000",
+                    "movk x4, #0xFFFF, lsl #48",
                     "strb w3, [x4]",
                     in("w3") $c as u32,
                     out("x4") _,
-                    out("w5") _,
                     options(nostack),
                 );
             }

@@ -47,5 +47,5 @@ The RPi3 Cortex-A53 can corrupt x30 when a function returns a 16-byte aggregate 
 - Build MCP in WSL2; serial/power MCP in Windows.
 - QEMU: `raspi3b` machine type, `cortex-a53`, 1G, `-nographic` via tmux, DTB at `/mnt/d/pi_sd/bcm2710-rpi-3-b.dtb`.
 - Smoke test: `make smoke_test` or `python3 test/rpi3/smoke_test.py` (requires `/tmp/asterina.img` and `test/build/initramfs.cpio`).
+- **NOTE**: QEMU smoke test has been broken since SMP bringup work began — skip smoke test when committing: `SKIP_SMOKE_TEST=1 git commit -m "message"`.
 - Commit format: `<area>: <what changed> — <why/result>`.
-- Skip smoke test: `SKIP_SMOKE_TEST=1 git commit -m "message"`.
