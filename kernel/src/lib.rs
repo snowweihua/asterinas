@@ -90,9 +90,6 @@ fn main() {
 
     init();
 
-    // Spawn all AP idle threads.
-    ostd::boot::smp::register_ap_entry(ap_init);
-
     init_on_each_cpu();
 
     // Spawn the first kernel thread on BSP.
@@ -176,6 +173,10 @@ fn first_kthread() {
         envp,
     )
     .expect("Run init process failed.");
+
+    crate::thread::work_queue::start_workers();
+
+    ostd::boot::smp::register_ap_entry(ap_init);
 
     // Wait till initproc become zombie.
     while !initproc.status().is_zombie() {

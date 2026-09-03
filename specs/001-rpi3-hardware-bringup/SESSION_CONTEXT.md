@@ -4,23 +4,11 @@ This file records the current active state. All historical investigations and pr
 
 ## Current Status
 
-- **SMP bringup: 4/4 CPUs online via trampoline** (committed `3935b624`). BSP detects APs via per-CPU DRAM entry markers and calls `report_online_and_hw_cpu_id` on their behalf. APs execute the assembly stub fully (all DRAM markers appear) but `br x1` to `ap_early_entry` Rust function faults for unknown reason.
-- **Known limitation**: APs cannot execute Rust code (branch to `ap_early_entry` fails), so hw_cpu_id values written by trampoline are BSP's MPIDR (incorrect for APs). Map count is correct so BSP reports 4/4.
-- **Known issue**: AP UART output (PL011 writes) does not reach serial. DRAM writes work. Debug progression via DRAM markers exclusively.
-- Target: Raspberry Pi 3 Model B, AArch64, SMP (4/4 online via trampoline, APs can't run Rust yet).
-- The physical board boots the init process to an interactive `~ #` prompt.
-- Shell commands (`echo`, `ls`, `uname`, `reboot -f`) work.
-- QEMU (raspi3b) also boots to shell prompt.
-
-## Durable RPi3 Constraints
-
-### Single-Core and Exclusive-Atomic Constraint
-
-The RPi3 bring-up environment faults on Cortex-A53 exclusive operations (`ldxr`, `ldaxr`, `stxr`, `ldaxrb`, and related CAS loops). RPi3-specific paths use plain load/store or boot-safe single-core helpers. Generic atomic behavior remains unchanged for other targets.
-
-### Cortex-A53 16-Byte Return Hazard
-
-The RPi3 Cortex-A53 can corrupt x30 when a function returns a 16-byte aggregate in registers, including `Result<Frame<M>>`, `Option<Paddr>`, and `(FreeChunk, FreeChunk)`. The allocator mitigations use single-register pointer/physical-address returns with null or `NO_PADDR` sentinels.
+- **SMP bringup: 4/4 CPUs online and executing Rust** — all APs drop from EL2→EL1, enable MMU, enter `ap_early_entry`, call `report_online_and_hw_cpu_id`, and halt cleanly via `halt_cpu()` loop.
+- **Heap allocator: working on all 4 CPUs** — SpinLock uses proper `compare_exchange` for multi-core mutual exclusion; AP idle threads spawn successfully.
+- **Known issue**: Shell regression — kernel boots to "WARN: No generic PCI host controller node found in the device tree" and stalls. No shell prompt, no response to serial input. This is a **pre-existing regression** that existed before SMP work began. Not caused by SMP changes.
+- Target: Raspberry Pi 3 Model B, AArch64, SMP (4/4 online, all executing Rust).
+- Build: single binary for RPi3 hardware and QEMU (uses `aarch64-rpi3` with `cortex-a53`).
 
 ## Confirmed Fixes (Reference)
 
@@ -29,6 +17,9 @@ The RPi3 Cortex-A53 can corrupt x30 when a function returns a 16-byte aggregate 
 - TTBR1 + TCR_EL1 + MAIR_EL1 programming in AP stub (both TTBR0 and TTBR1 must be set)
 - IRQ storm fix (CORE_REG_STRIDE 0x400→0x4, `init_on_ap()` masks all ARM-local IRQs)
 - BSS-zero removal from AP stub (shared kernel BSS must not be zeroed by APs)
+- **EL2→EL1 drop** (commit `a1a5bbde`): APs start at EL2 after PSCI CPU_ON; HCR_EL2.RW=1 + ERET drops to EL1h before MMU enable — fixes `br x1` fault caused by EL2 using unconfigured translation
+- **SpinLock fix** (commit `0c36433f`): Replaced broken non-atomic test-and-set (`load+store Relaxed`) with proper `compare_exchange(Acquire)` and `store(Release)` in release — fixes heap allocator corruption when multiple CPUs access GLOBAL_POOL
+- **AP idle loop fix** (commit `0c36433f`): Replaced `Task::yield_now(); unreachable!()` with `loop { halt_cpu(); }` so APs halt cleanly after init
 - Trampoline: BSP detects APs via DRAM entry markers and reports online on their behalf
 - Timer: BCM2836 non-secure physical timer (CNTPNSIRQ) with relative TVAL, 1000Hz tick
 - `execve` TLS: `TPIDR_EL0` for user TLS (not `TPIDR_EL1` which is OSTD CPU-local base)
@@ -36,6 +27,18 @@ The RPi3 Cortex-A53 can corrupt x30 when a function returns a 16-byte aggregate 
 - Mini-UART RX: `reenable_miniuart_irq()` restores AUX bit after VC firmware overwrites it
 - Page table: managed bootstrap pool with correct `PageTablePageMeta` level, slot-0 not copied to metadata root
 - `getdents64`: exception-table `memcpy_fallible.S` helpers wired in AArch64 mm
+
+## Durable RPi3 Constraints
+
+### Single-Core and Exclusive-Atomic Constraint
+
+The RPi3 bring-up environment faults on Cortex-A53 exclusive operations (`ldxr`, `ldaxr`, `stxr`, `ldaxrb`, and related CAS loops). RPi3-specific paths use plain load/store or boot-safe single-core helpers. Generic atomic behavior remains unchanged for other targets.
+
+**Note**: Despite this constraint, `compare_exchange` (LDXR/STXR) works correctly at EL1 for the SpinLock. The constraint may be specific to EL2 or certain memory regions.
+
+### Cortex-A53 16-Byte Return Hazard
+
+The RPi3 Cortex-A53 can corrupt x30 when a function returns a 16-byte aggregate in registers, including `Result<Frame<M>>`, `Option<Paddr>`, and `(FreeChunk, FreeChunk)`. The allocator mitigations use single-register pointer/physical-address returns with null or `NO_PADDR` sentinels.
 
 ## Operational Notes
 

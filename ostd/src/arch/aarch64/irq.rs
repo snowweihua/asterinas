@@ -122,8 +122,11 @@ pub(crate) struct HwCpuId(u32);
 
 impl HwCpuId {
     pub(crate) fn read_current(_guard: &dyn PinCurrentCpu) -> Self {
-        // TODO: Support SMP in RISC-V.
-        Self(0)
+        let mpidr: u64;
+        unsafe {
+            core::arch::asm!("mrs {0}, mpidr_el1", out(reg) mpidr, options(nostack, nomem, preserves_flags));
+        }
+        Self((mpidr & 0x3) as u32)
     }
 }
 

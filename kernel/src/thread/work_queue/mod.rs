@@ -173,22 +173,24 @@ impl WorkQueue {
     }
 }
 
-/// Initialize global worker pools and work queues.
 pub fn init_in_first_kthread() {
     WORKERPOOL_NORMAL.call_once(|| {
         let cpu_set = CpuSet::new_full();
         WorkerPool::new(WorkPriority::Normal, cpu_set)
     });
-    WORKERPOOL_NORMAL.get().unwrap().run();
     WORKERPOOL_HIGH_PRI.call_once(|| {
         let cpu_set = CpuSet::new_full();
         WorkerPool::new(WorkPriority::High, cpu_set)
     });
-    WORKERPOOL_HIGH_PRI.get().unwrap().run();
     WORKQUEUE_GLOBAL_NORMAL
         .call_once(|| WorkQueue::new(Arc::downgrade(WORKERPOOL_NORMAL.get().unwrap())));
     WORKQUEUE_GLOBAL_HIGH_PRI
         .call_once(|| WorkQueue::new(Arc::downgrade(WORKERPOOL_HIGH_PRI.get().unwrap())));
+}
+
+pub fn start_workers() {
+    WORKERPOOL_NORMAL.get().unwrap().run();
+    WORKERPOOL_HIGH_PRI.get().unwrap().run();
 }
 
 impl Drop for WorkQueue {

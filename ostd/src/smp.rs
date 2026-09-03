@@ -50,6 +50,18 @@ pub fn inter_processor_call(targets: &CpuSet, f: fn()) {
         }
         return;
     };
+
+    #[cfg(target_arch = "aarch64")]
+    {
+        for cpu_id in targets.iter() {
+            if cpu_id == this_cpu_id {
+                f();
+                break;
+            }
+        }
+        return;
+    }
+
     let irq_num = ipi_data.irq.num();
 
     let mut call_on_self = false;
