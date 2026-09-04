@@ -7,6 +7,7 @@ This file records the current active state. All historical investigations and pr
 - **SMP bringup: 4/4 CPUs online and executing Rust** — all APs drop from EL2→EL1, enable MMU, enter `ap_early_entry`, call `report_online_and_hw_cpu_id`, and halt cleanly via `halt_cpu()` loop.
 - **Heap allocator: working on all 4 CPUs** — SpinLock uses proper `compare_exchange` for multi-core mutual exclusion; AP idle threads spawn successfully.
 - **Init process: FIXED — boots to shell prompt on RPi3 hardware** — kernel-mode data abort at `BuddySet::alloc_chunk` (FAR=0x2bfc000) was caused by physical MetaSlot pointers in buddy free lists becoming unmapped after TTBR0 switched to user page table.
+- **Shell stdin/stdout: FIXED — shell is fully interactive** — ENOENT panic at `create_init_task` line 141 was caused by trying to open `/dev/console` before `device::init_in_first_process` created it (initramfs `/dev/` is empty; `/dev/console` is created by device init AFTER `spawn_init_process`). Fix: removed manual stdin/stdout/stderr setup from `create_init_task` — `init_in_first_process` handles it when init task first runs.
 - Target: Raspberry Pi 3 Model B, AArch64, SMP (4/4 online, all executing Rust).
 - Build: single binary for RPi3 hardware and QEMU (uses `aarch64-rpi3` with `cortex-a53`).
 
@@ -28,6 +29,7 @@ This file records the current active state. All historical investigations and pr
 - Page table: managed bootstrap pool with correct `PageTablePageMeta` level, slot-0 not copied to metadata root
 - `getdents64`: exception-table `memcpy_fallible.S` helpers wired in AArch64 mm
 - **Buddy allocator MetaSlot pointer conversion** (commit `d9dde9c7`): During bootstrap, `get_slot()` returns physical MetaSlot pointers stored in linked list `front`/`back`/`next`/`prev` pointers. After `activate_kernel_page_table()` + `IN_BOOTSTRAP_CONTEXT=false`, these physical pointers become unmapped when TTBR0 switches to user page table. Fix: `LinkedList::convert_pointers()` traverses free lists via identity-mapped physical pointers and converts all `NonNull<Link<M>>` pointers to `FRAME_METADATA_RANGE` virtual addresses using `meta_slot_paddr_to_vaddr()`.
+- **Shell stdin/stdout ENOENT fix** (commit `381202a8`): `create_init_task` tried to open `/dev/console` during init task creation, but `/dev/console` doesn't exist yet (initramfs `/dev/` is empty; device init runs AFTER `spawn_init_process`). Fix: removed manual stdin/stdout/stderr setup from `create_init_task`. The `init_in_first_process` function properly sets up stdin/stdout/stderr when the init task first runs (after device init creates `/dev/console`).
 
 ## Durable RPi3 Constraints
 
