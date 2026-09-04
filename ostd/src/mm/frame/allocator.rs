@@ -172,6 +172,7 @@ pub trait GlobalFrameAllocator: Sync {
     ///
     /// The added memory can be uninitialized.
     fn add_free_memory(&self, addr: Paddr, size: usize);
+    fn convert_bootstrap_pointers(&self, _paddr_to_vaddr: fn(Paddr) -> usize) {}
 }
 unsafe extern "Rust" {
     /// The global frame allocator's reference exported by
@@ -184,6 +185,13 @@ pub(super) fn get_global_frame_allocator() -> &'static dyn GlobalFrameAllocator 
     // up-call is safe.
     unsafe { __GLOBAL_FRAME_ALLOCATOR_REF }
 }
+/// Converts physical MetaSlot pointers in the global frame allocator's free
+/// lists to virtual addresses. Must be called once after the kernel page table
+/// is activated.
+pub(crate) fn convert_bootstrap_frame_pointers() {
+    get_global_frame_allocator().convert_bootstrap_pointers(super::meta::meta_slot_paddr_to_vaddr);
+}
+
 /// Initializes the global frame allocator.
 ///
 /// It just does adds the frames to the global frame allocator. Calling it

@@ -202,6 +202,53 @@ where
             self.list_id
         }
     }
+
+    /// Converts all physical `NonNull` pointers in this list to virtual
+    /// addresses using the provided conversion function.
+    ///
+    /// During bootstrap, `get_slot()` returns physical MetaSlot pointers that
+    /// are stored as linked list node pointers (`front`, `back`, `next`, `prev`).
+    /// After the kernel page table is activated and TTBR0 switches to the user
+    /// page table, these physical addresses become unmapped. This method
+    /// converts them to their linear-mapped virtual equivalents.
+    ///
+    /// # Safety
+    ///
+    /// Must be called exactly once, after the kernel page table is activated
+    /// and before any further list operations. The physical pointers must still
+    /// be accessible (identity-mapped via TTBR0 boot page table) during this
+    /// call.
+    pub fn convert_pointers(&mut self, paddr_to_vaddr: fn(usize) -> usize) {
+        // Traverse the list using physical pointers and convert each node's links.
+        let mut current_phys = self.front.map(|p| p.as_ptr() as usize);
+
+        while let Some(phys) = current_phys {
+            // Read the physical next pointer before modifying the node.
+            let next_phys = {
+                let node = unsafe { &*(phys as *const Link<M>) };
+                node.next.map(|p| p.as_ptr() as usize)
+            };
+
+            // Convert this node's next and prev pointers in-place.
+            let node_mut = unsafe { &mut *(phys as *mut Link<M>) };
+            node_mut.next = node_mut.next.map(|p| {
+                NonNull::new(paddr_to_vaddr(p.as_ptr() as usize) as *mut Link<M>).unwrap()
+            });
+            node_mut.prev = node_mut.prev.map(|p| {
+                NonNull::new(paddr_to_vaddr(p.as_ptr() as usize) as *mut Link<M>).unwrap()
+            });
+
+            current_phys = next_phys;
+        }
+
+        // Convert the list's front and back pointers.
+        self.front = self.front.map(|p| {
+            NonNull::new(paddr_to_vaddr(p.as_ptr() as usize) as *mut Link<M>).unwrap()
+        });
+        self.back = self.back.map(|p| {
+            NonNull::new(paddr_to_vaddr(p.as_ptr() as usize) as *mut Link<M>).unwrap()
+        });
+    }
 }
 
 /// A cursor that can mutate the linked list links.

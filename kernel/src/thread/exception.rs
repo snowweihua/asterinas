@@ -75,8 +75,6 @@ pub(super) fn page_fault_handler(info: &CpuException) -> core::result::Result<()
     let thread_local = task.as_thread_local().unwrap();
 
     if thread_local.is_page_fault_disabled() {
-        // Do nothing if the page fault handler is disabled. This will typically cause the fallible
-        // memory operation to report `EFAULT` errors immediately.
         return Err(());
     }
 

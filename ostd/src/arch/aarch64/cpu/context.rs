@@ -238,6 +238,7 @@ impl UserContextApiInternal for UserContext {
                         code: exception,
                         page_fault_addr: far_el1,
                         error_code: self.user_context.esr_el1,
+                        instruction_pointer: self.user_context.elr_el1,
                     });
                     return ReturnReason::UserException;
                 }
@@ -287,6 +288,8 @@ pub struct CpuExceptionInfo {
     pub page_fault_addr: usize,
     /// Raw ESR_EL1 value (includes ISS bits).
     pub error_code: usize,
+    /// Instruction pointer at time of fault (from ELR_EL1).
+    pub instruction_pointer: usize,
 }
 
 impl Default for CpuExceptionInfo {
@@ -295,6 +298,7 @@ impl Default for CpuExceptionInfo {
             code: CpuException::Unknown,
             page_fault_addr: 0,
             error_code: 0,
+            instruction_pointer: 0,
         }
     }
 }

@@ -85,4 +85,8 @@ impl GlobalFrameAllocator for FrameAllocator {
         let guard = irq::disable_local();
         pools::add_free_memory(&guard, addr, size);
     }
+
+    fn convert_bootstrap_pointers(&self, paddr_to_vaddr: fn(Paddr) -> usize) {
+        pools::convert_bootstrap_pointers(paddr_to_vaddr);
+    }
 }

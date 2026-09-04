@@ -127,6 +127,7 @@ extern "C" fn sync_exception_current(f: &mut TrapFrame) {
                 code: CpuException::DataAbortCurrentEL,
                 page_fault_addr: far,
                 error_code: esr,
+                instruction_pointer: elr,
             };
             if (*handler)(&info).is_ok() {
                 return;

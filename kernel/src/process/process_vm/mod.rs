@@ -240,6 +240,7 @@ impl ProcessVm {
         self.heap.alloc_and_map_vm(root_vmar.unwrap()).unwrap();
         #[cfg(target_arch = "aarch64")]
         map_signal_return_trampoline(root_vmar.unwrap()).unwrap();
+        root_vmar.unwrap().vm_space().activate();
     }
 
     #[cfg(target_arch = "aarch64")]

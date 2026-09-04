@@ -52,6 +52,7 @@ use crate::{
             allocator::{self, EarlyAllocatedFrameMeta},
             Frame,
         },
+        kspace::FRAME_METADATA_RANGE,
         paddr_to_vaddr, page_size,
         page_table::boot_pt,
         CachePolicy, Infallible, Paddr, PageFlags, PageProperty, PrivilegedPageFlags, Segment,
@@ -71,6 +72,11 @@ const META_SLOT_SIZE: usize = 64;
 static FRAME_META_PADDR_BASE: AtomicUsize = AtomicUsize::new(0);
 pub(in crate::mm) fn frame_meta_paddr_base() -> usize {
     FRAME_META_PADDR_BASE.load(Ordering::Relaxed)
+}
+
+pub(crate) fn meta_slot_paddr_to_vaddr(paddr: usize) -> usize {
+    let meta_paddr_base = FRAME_META_PADDR_BASE.load(Ordering::Relaxed);
+    FRAME_METADATA_RANGE.start + (paddr - meta_paddr_base)
 }
 #[repr(C)]
 pub(in crate::mm) struct MetaSlot {

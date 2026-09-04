@@ -103,6 +103,16 @@ impl<const MAX_ORDER: BuddyOrder> BuddySet<MAX_ORDER> {
 
         paddr
     }
+
+    /// Converts all physical MetaSlot pointers in the free lists to virtual
+    /// addresses using the provided conversion function.
+    ///
+    /// See [`LinkedList::convert_pointers`] for details.
+    pub(crate) fn convert_pointers(&mut self, paddr_to_vaddr: fn(usize) -> usize) {
+        for list in self.lists.iter_mut() {
+            list.convert_pointers(paddr_to_vaddr);
+        }
+    }
 }
 
 #[cfg(ktest)]

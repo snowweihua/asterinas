@@ -11,7 +11,7 @@ use core::{
 
 use ostd::{
     cpu_local,
-    irq::DisabledLocalIrqGuard,
+    irq::{self, DisabledLocalIrqGuard},
     mm::Paddr,
     sync::{LocalIrqDisabled, SpinLock, SpinLockGuard},
 };
@@ -124,6 +124,26 @@ pub(super) fn add_free_memory(guard: &DisabledLocalIrqGuard, addr: Paddr, size: 
     });
 
     global_pool.update_global_size_if_locked();
+}
+
+/// Converts all physical MetaSlot pointers in the frame allocator's free lists
+/// to virtual addresses.
+///
+/// This must be called once after the kernel page table is activated and
+/// `IN_BOOTSTRAP_CONTEXT` is set to false. See
+/// [`LinkedList::convert_pointers`](ostd::mm::frame::linked_list::LinkedList::convert_pointers).
+pub fn convert_bootstrap_pointers(paddr_to_vaddr: fn(usize) -> usize) {
+    // Convert the global pool's free lists.
+    {
+        let mut global_pool = GLOBAL_POOL.lock();
+        global_pool.convert_pointers(paddr_to_vaddr);
+    }
+
+    // Convert the per-CPU local pools' free lists.
+    let guard = irq::disable_local();
+    let local_pool_cell = LOCAL_POOL.get_with(&guard);
+    let mut local_pool = local_pool_cell.borrow_mut();
+    local_pool.convert_pointers(paddr_to_vaddr);
 }
 
 fn do_dealloc(

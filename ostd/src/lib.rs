@@ -150,6 +150,8 @@ unsafe fn init() {
 
     IN_BOOTSTRAP_CONTEXT.store(false, Ordering::Relaxed);
 
+    mm::frame::allocator::convert_bootstrap_frame_pointers();
+
     arch::irq::enable_local();
 
     invoke_ffi_init_funcs();

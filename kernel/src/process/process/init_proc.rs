@@ -30,9 +30,18 @@ pub fn spawn_init_process(
     envp: Vec<CString>,
 ) -> Result<Arc<Process>> {
     debug_assert!(executable_path.starts_with('/'));
+    // TODO: remove debug marker after page fault is resolved
+    let path_str = executable_path.to_string();
+    let argv_len = argv.len();
+    let envp_len = envp.len();
+    println!("[init-proc] spawn_init_process: path={}, argv={}, envp={}", path_str, argv_len, envp_len);
+
     let process = create_init_process(executable_path, argv, envp)?;
     set_session_and_group(&process);
+
+    println!("[init-proc] calling process.run()");
     process.run();
+    println!("[init-proc] process.run() returned");
     Ok(process)
 }
 
@@ -63,6 +72,7 @@ fn create_init_process(
         user_ns,
     );
 
+    println!("[init-proc] creating init task for executable_path={}", executable_path);
     let init_task = create_init_task(
         pid,
         init_proc.vm(),
@@ -71,6 +81,7 @@ fn create_init_process(
         argv,
         envp,
     )?;
+    println!("[init-proc] init task created successfully");
     init_proc.tasks().lock().insert(init_task).unwrap();
     Ok(init_proc)
 }
@@ -97,18 +108,25 @@ fn create_init_task(
     argv: Vec<CString>,
     envp: Vec<CString>,
 ) -> Result<Arc<Task>> {
+    println!("[init-proc] create_init_task: path={}", executable_path);
     let credentials = Credentials::new_root();
     let fs = ThreadFsInfo::default();
-    let (_, elf_load_info) = {
+    let elf_load_info = {
         let fs_resolver = fs.resolver().read();
         let fs_path = FsPath::new(AT_FDCWD, executable_path)?;
         let elf_file = fs.resolver().read().lookup(&fs_path)?;
+        println!("[init-proc] building program_to_load");
         let program_to_load =
             ProgramToLoad::build_from_file(elf_file, &fs_resolver, argv, envp, 1)?;
+        println!("[init-proc] clearing and mapping process_vm");
         process_vm.clear_and_map();
-        program_to_load.load_to_vm(process_vm, &fs_resolver)?
+        println!("[init-proc] loading elf to vm");
+        let (abs_path, elf_load_info) = program_to_load.load_to_vm(process_vm, &fs_resolver)?;
+        println!("[init-proc] elf loaded to vm successfully, abs_path={}", abs_path);
+        elf_load_info
     };
 
+    println!("[init-proc] entry_point=0x{:x}, user_stack_top=0x{:x}", elf_load_info.entry_point, elf_load_info.user_stack_top);
     let mut user_ctx = UserContext::default();
     user_ctx.set_instruction_pointer(elf_load_info.entry_point as _);
     user_ctx.set_stack_pointer(elf_load_info.user_stack_top as _);
@@ -118,5 +136,8 @@ fn create_init_task(
         .process(process)
         .fs(Arc::new(fs))
         .is_init_process();
-    Ok(thread_builder.build())
+    println!("[init-proc] building thread");
+    let task = thread_builder.build();
+    println!("[init-proc] thread built successfully, returning task");
+    Ok(task)
 }

@@ -6,7 +6,8 @@ This file records the current active state. All historical investigations and pr
 
 - **SMP bringup: 4/4 CPUs online and executing Rust** — all APs drop from EL2→EL1, enable MMU, enter `ap_early_entry`, call `report_online_and_hw_cpu_id`, and halt cleanly via `halt_cpu()` loop.
 - **Heap allocator: working on all 4 CPUs** — SpinLock uses proper `compare_exchange` for multi-core mutual exclusion; AP idle threads spawn successfully.
-- **Known issue**: Shell regression — kernel boots to "WARN: No generic PCI host controller node found in the device tree" and stalls. No shell prompt, no response to serial input. This is a **pre-existing regression** that existed before SMP work began. Not caused by SMP changes.
+- **Page fault at 0x2bfc000 during init process startup** — fault address is a 31-bit value (~44MB) that doesn't fit kernel VA space; appears during `process.run()` after CPIO decode completes. Issue likely: PA being used directly as VA, or truncated pointer.
+- **Rebase infrastructure not found** — session context mentions a rebase infrastructure built across 6 files that causes silent crashes when enabled, but I could not locate it in the current codebase or git history.
 - Target: Raspberry Pi 3 Model B, AArch64, SMP (4/4 online, all executing Rust).
 - Build: single binary for RPi3 hardware and QEMU (uses `aarch64-rpi3` with `cortex-a53`).
 
