@@ -6,8 +6,7 @@ This file records the current active state. All historical investigations and pr
 
 - **SMP bringup: 4/4 CPUs online and executing Rust** — all APs drop from EL2→EL1, enable MMU, enter `ap_early_entry`, call `report_online_and_hw_cpu_id`, and halt cleanly via `halt_cpu()` loop.
 - **Heap allocator: working on all 4 CPUs** — SpinLock uses proper `compare_exchange` for multi-core mutual exclusion; AP idle threads spawn successfully.
-- **Page fault at 0x2bfc000 during init process startup** — fault address is a 31-bit value (~44MB) that doesn't fit kernel VA space; appears during `process.run()` after CPIO decode completes. Issue likely: PA being used directly as VA, or truncated pointer.
-- **Rebase infrastructure not found** — session context mentions a rebase infrastructure built across 6 files that causes silent crashes when enabled, but I could not locate it in the current codebase or git history.
+- **Init process: FIXED — boots to shell prompt on RPi3 hardware** — kernel-mode data abort at `BuddySet::alloc_chunk` (FAR=0x2bfc000) was caused by physical MetaSlot pointers in buddy free lists becoming unmapped after TTBR0 switched to user page table.
 - Target: Raspberry Pi 3 Model B, AArch64, SMP (4/4 online, all executing Rust).
 - Build: single binary for RPi3 hardware and QEMU (uses `aarch64-rpi3` with `cortex-a53`).
 
@@ -28,6 +27,7 @@ This file records the current active state. All historical investigations and pr
 - Mini-UART RX: `reenable_miniuart_irq()` restores AUX bit after VC firmware overwrites it
 - Page table: managed bootstrap pool with correct `PageTablePageMeta` level, slot-0 not copied to metadata root
 - `getdents64`: exception-table `memcpy_fallible.S` helpers wired in AArch64 mm
+- **Buddy allocator MetaSlot pointer conversion** (commit `d9dde9c7`): During bootstrap, `get_slot()` returns physical MetaSlot pointers stored in linked list `front`/`back`/`next`/`prev` pointers. After `activate_kernel_page_table()` + `IN_BOOTSTRAP_CONTEXT=false`, these physical pointers become unmapped when TTBR0 switches to user page table. Fix: `LinkedList::convert_pointers()` traverses free lists via identity-mapped physical pointers and converts all `NonNull<Link<M>>` pointers to `FRAME_METADATA_RANGE` virtual addresses using `meta_slot_paddr_to_vaddr()`.
 
 ## Durable RPi3 Constraints
 
@@ -49,4 +49,5 @@ The RPi3 Cortex-A53 can corrupt x30 when a function returns a 16-byte aggregate 
 - QEMU: `raspi3b` machine type, `cortex-a53`, 1G, `-nographic` via tmux, DTB at `/mnt/d/pi_sd/bcm2710-rpi-3-b.dtb`.
 - Smoke test: `make smoke_test` or `python3 test/rpi3/smoke_test.py` (requires `/tmp/asterina.img` and `test/build/initramfs.cpio`).
 - **NOTE**: QEMU smoke test has been broken since SMP bringup work began — skip smoke test when committing: `SKIP_SMOKE_TEST=1 git commit -m "message"`.
+- **NOTE**: QEMU cannot be used for full testing due to known SMP issues — all verification must be done on physical RPi3 hardware.
 - Commit format: `<area>: <what changed> — <why/result>`.
