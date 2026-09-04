@@ -7,6 +7,7 @@ use ostd::{arch::cpu::context::UserContext, task::Task, user::UserContextApi};
 use super::Process;
 use crate::{
     fs::{
+        file_table::FileTable,
         fs_resolver::{FsPath, AT_FDCWD},
         thread_info::ThreadFsInfo,
     },
@@ -22,6 +23,7 @@ use crate::{
     sched::Nice,
     thread::Tid,
 };
+use ostd::sync::RwArc;
 
 /// Creates and schedules the init process to run.
 pub fn spawn_init_process(
@@ -130,11 +132,15 @@ fn create_init_task(
     let mut user_ctx = UserContext::default();
     user_ctx.set_instruction_pointer(elf_load_info.entry_point as _);
     user_ctx.set_stack_pointer(elf_load_info.user_stack_top as _);
+
+    let file_table = FileTable::new();
+
     let thread_name = Some(ThreadName::new_from_executable_path(executable_path)?);
     let thread_builder = PosixThreadBuilder::new(tid, Box::new(user_ctx), credentials)
         .thread_name(thread_name)
         .process(process)
         .fs(Arc::new(fs))
+        .file_table(RwArc::new(file_table))
         .is_init_process();
     println!("[init-proc] building thread");
     let task = thread_builder.build();
