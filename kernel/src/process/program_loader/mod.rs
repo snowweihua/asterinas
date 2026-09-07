@@ -54,6 +54,14 @@ impl ProgramToLoad {
             if recursion_limit == 0 {
                 return_errno_with_message!(Errno::ELOOP, "the recursieve limit is reached");
             }
+            // Linux appends the script path after the interpreter and its
+            // optional argument. Without this, the interpreter starts without
+            // the script (e.g., `sh` runs interactively instead of running
+            // `/init`), so the init script is silently ignored.
+            let script_path = CString::new(elf_file.abs_path()).map_err(|_| {
+                Error::with_message(Errno::ENOEXEC, "the script path contains nul terminator")
+            })?;
+            new_argv.push(script_path);
             new_argv.extend_from_slice(&argv);
             let interpreter = {
                 let filename = new_argv[0].to_str()?.to_string();
