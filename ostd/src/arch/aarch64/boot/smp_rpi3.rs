@@ -41,10 +41,9 @@ unsafe extern "C" {
 /// This avoids any cache line sharing issues with BSP self-test writes.
 const AP_INFO_BASE: usize = 0x5_0000;
 
-/// ARM_LOCAL peripheral base PA on RPi3.
-/// Mailbox doorbell writes work at 0x3F000000 (readback 0x344000 for CPU2/CPU3).
-/// Spin-table offsets are likely at a different location within ARM_LOCAL.
-const ARM_LOCAL_PA: usize = 0x3F00_0000;
+/// ARM_LOCAL peripheral base PA on RPi3 (QA7 ARM-local block).
+/// Spin-table cpu-release-addr registers and mailbox doorbells live here.
+const ARM_LOCAL_PA: usize = 0x4000_0000;
 
 /// BCM2836 spin-table offsets per CPU (within ARM_LOCAL peripheral space).
 /// These are the actual spin-table addresses within ARM_LOCAL - NOT the mailbox addresses.
@@ -75,9 +74,66 @@ fn get_mpidr(cpu_index: u32) -> Option<u64> {
     }
 }
 
+/// Reads CurrentEL (returns 1, 2, or 3). Plain MRS, cannot fault.
+fn current_el() -> u64 {
+    let el: u64;
+    unsafe {
+        core::arch::asm!(
+            "mrs {0}, CurrentEL",
+            out(reg) el,
+            options(nomem, nostack, preserves_flags),
+        );
+    }
+    (el >> 2) & 0x3
+}
+
+/// Returns true if EL3 is implemented (ID_AA64PFR0_EL1[15:12] != 0).
+/// SMC without EL3 is architecturally UNDEFINED, so a missing EL3 means
+/// no PSCI firmware can exist and any smc call would fault or hang
+/// (observed under QEMU raspi3b, which provides no EL3 firmware).
+/// Plain MRS, cannot fault.
+fn el3_present() -> bool {
+    let pfr0: u64;
+    unsafe {
+        core::arch::asm!(
+            "mrs {0}, ID_AA64PFR0_EL1",
+            out(reg) pfr0,
+            options(nomem, nostack, preserves_flags),
+        );
+    }
+    ((pfr0 >> 12) & 0xf) != 0
+}
+
+/// Reads the generic-timer frequency (Hz). Plain MRS, cannot fault.
+fn cntfrq() -> u64 {
+    let freq: u64;
+    unsafe {
+        core::arch::asm!(
+            "mrs {0}, cntfrq_el0",
+            out(reg) freq,
+            options(nomem, nostack, preserves_flags),
+        );
+    }
+    freq
+}
+
+/// True when PSCI firmware can handle SMC: EL3 must exist, and the timer
+/// frequency must match the Pi's 19.2MHz crystal programmed by VideoCore
+/// firmware. QEMU leaves its own default frequency, so this distinguishes
+/// real hardware (TF-A present) from emulation (no firmware) without
+/// executing a potentially hanging smc.
+fn psci_usable() -> bool {
+    el3_present() && cntfrq() == 19_200_000
+}
+
 /// Check if PSCI is available by calling PSCI_VERSION.
 /// TF-A exposes PSCI via SMC even if the DTB doesn't have a /psci node.
+/// Skipped entirely when EL3 is absent, where smc cannot be handled.
 fn is_psci_available() -> bool {
+    if !psci_usable() {
+        log::info!("[a2-smp] rpi3: PSCI firmware not usable, skipping PSCI probe");
+        return false;
+    }
     let psci_version = smc_call(0x84000000, 0, 0, 0);
     let valid = psci_version >= 0x10000 && psci_version < 0xffffffff;
     log::info!("[a2-smp] rpi3: PSCI_VERSION={:#x}, available={}", psci_version, valid);
@@ -154,9 +210,22 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
     pt_ptr: Paddr,
     num_cpus: u32,
 ) {
-    // Complete PSCI diagnostic table
+    // Report EL state before any SMC: QEMU raspi3b provides no EL3
+    // firmware, so an smc there has nowhere to trap and hangs the boot.
+    // These MRS reads cannot fault.
     #[cfg(target_arch = "aarch64")]
-    {
+    log::info!(
+        "[a2-smp] rpi3: CurrentEL={} EL3_present={} CNTFRQ={} psci_usable={}",
+        current_el(),
+        el3_present(),
+        cntfrq(),
+        psci_usable()
+    );
+
+    // Complete PSCI diagnostic table (skipped unless PSCI firmware is
+    // usable: without it smc has nowhere to trap and hangs the boot).
+    #[cfg(target_arch = "aarch64")]
+    if psci_usable() {
         // PSCI_VERSION
         let psci_version = smc_call(0x84000000, 0, 0, 0);
         log::info!("[a2-smp] rpi3: PSCI_VERSION={:#x}", psci_version);

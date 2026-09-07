@@ -27,9 +27,9 @@ pub fn init() {
     {
         aster_console::register_device("serial-uart".to_string(), Arc::new(SerialConsole));
         init_uart_irq();
-        // The RPi3 VideoCore firmware can clobber the AUX enable bit in
-        // ENABLE_IRQS_1.  For this test we rely on the AUX IRQ only.
-        // timer::register_callback_on_cpu(poll_uart_input);
+        // Drain the RX FIFO on every timer tick as well: the RPi3 VideoCore
+        // firmware can clobber the peripheral IRQ enable bits.
+        timer::register_callback_on_cpu(poll_uart_input);
     }
 }
 

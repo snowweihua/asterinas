@@ -22,8 +22,10 @@
 
 
 /// BCM2836 ARM Local Interrupt Controller (one set of regs per core).
-/// Correct address confirmed via mailbox write/readback tests: 0x3F000000.
-const LOCAL_IC_BASE_PA: usize = 0x3F00_0000;
+/// QA7 ARM-local registers live at PA 0x40000000 (not the 0x3F000000
+/// BCM2835 peripheral window): timer control, mailbox control, IRQ source,
+/// mailbox set/clear, and spin-table cpu-release-addr registers.
+const LOCAL_IC_BASE_PA: usize = 0x4000_0000;
 
 const LOCAL_CONTROL: usize = 0x00;
 const LOCAL_GPU_ROUTING: usize = 0x0C;
