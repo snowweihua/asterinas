@@ -29,11 +29,16 @@ fn raw_put_hex_nibble(v: u8) {
         core::arch::asm!(
             "movz x28, #0x3F20, lsl #16",
             "movk x28, #0x1000",
+            "2: ldr w26, [x28, #0x18]",
+            "tbnz w26, #5, 2b",
             "strb w27, [x28]",
             "movz x28, #0x0900, lsl #16",
+            "3: ldr w26, [x28, #0x18]",
+            "tbnz w26, #5, 3b",
             "strb w27, [x28]",
             in("w27") ch as u32,
             out("x28") _,
+            out("x26") _,
             options(nostack),
         );
     }
@@ -53,11 +58,16 @@ fn raw_puts(s: &[u8]) {
             core::arch::asm!(
                 "movz x28, #0x3F20, lsl #16",
                 "movk x28, #0x1000",
+                "2: ldr w26, [x28, #0x18]",
+                "tbnz w26, #5, 2b",
                 "strb w27, [x28]",
                 "movz x28, #0x0900, lsl #16",
+                "3: ldr w26, [x28, #0x18]",
+                "tbnz w26, #5, 3b",
                 "strb w27, [x28]",
                 in("w27") b as u32,
                 out("x28") _,
+                out("x26") _,
                 options(nostack),
             );
         }
@@ -73,9 +83,12 @@ extern "C" fn sync_exception_current(f: &mut TrapFrame) {
                     "movz x4, #0x3F20, lsl #16",
                     "movk x4, #0x1000",
                     "movk x4, #0xFFFF, lsl #48",
+                    "2: ldr w5, [x4, #0x18]",
+                    "tbnz w5, #5, 2b",
                     "strb w3, [x4]",
                     in("w3") $c as u32,
                     out("x4") _,
+                    out("x5") _,
                     options(nostack),
                 );
             }

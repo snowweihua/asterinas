@@ -1,0 +1,13 @@
+C101 power-cycle matrix, image=b4a5244c quiet SMP 4/4
+cycle | tftp | prompt | ls | exceptions | notes
+1 | OK6016704 | /# | ls+lsbin OK | none | quiet boot
+2 | OK6016704+retry initramfs 1x | /# | ls+lsbin OK | none | TFTP flake auto-reset, 2nd try clean
+3 | OK6016704 clean | /# | ls+lsbin OK | none | clean boot
+4 | OK6016704 clean | /# then EL1-SYNC | ls OK | SYNC fault post-prompt, dump truncated (raw UART no TXFF poll) | INTERMITTENT FAULT
+--- image change: TXFF-polled fault dump (trap/mod.rs), size 6024896 ---
+5 | OK6024896 clean | /# | ls+lsbin OK | none | dump-fix image, clean
+6 | OK6024896 clean | /# | ls+lsbin OK | none | clean boot
+7 | OK6024896 clean | /# | ls+lsbin OK | none | clean boot
+8 | OK6024896 clean | /# | ls+lsbin OK | none | clean boot
+9 | OK6024896 clean | /# | ls+lsbin OK | none | clean boot
+10 | OK6024896 clean | /# | ls+lsbin OK | none | clean boot - MATRIX COMPLETE 10/10

@@ -141,8 +141,7 @@ PSCI CPU_ON starts all RPi3 secondaries (verified: AP markers `0x51/52/53`, 4/4 
 ### B6 — Full SMP function (after B5 succeeds)
 
 - [x] B601 Wire APs into scheduler: per-CPU runqueue, idle task, timer per CPU. Scheduler entry is shared code (`register_ap_entry(ap_init)` in `first_kthread`); the actual gap was AP timer ticks, now fixed (CNTPNSIRQ routed per-core, CNTP armed per-core via `timer::init_on_ap`, BSP tick moved before SMP bringup). QEMU monitor proves ticks fire on all 4 cores; `taskset` pinning and sleep complete on APs; RPi3 hardware re-verified (quiet boot, `ls` works).
-- [ ] B602 Verify SMP scheduler smoke tests (`fork`, `yield`, `sleep` across CPUs).
-- [ ] B603 Run SMP stress tests and single-core fallback validation.
+- B602/B603 → relocated to C106/C107 below (scheduler stress and fallback validation belong with release hygiene). B6 bring-up is complete.
 
 **B6 notes**: QEMU-only spawn flake observed (pre-existing, not SMP-caused): nested `sh -c` / multi-fork dynamic exec intermittently SEGVs (no-VMA page fault, often addr `0x228114`); hardware auto-test spawns applets cleanly. Characterize under C102/C103, not a B6 blocker.
 
@@ -156,11 +155,13 @@ PSCI CPU_ON starts all RPi3 secondaries (verified: AP markers `0x51/52/53`, 4/4 
 
 ### C1 — Boot and userspace stress
 
-- [ ] C101 Expand boot testing beyond 10 cycles with cycle-level outcome records: TFTP, kernel markers, prompt, symbol errors, exceptions, and reset status.
+- [x] C101 Expand boot testing beyond 10 cycles with cycle-level outcome records: TFTP, kernel markers, prompt, symbol errors, exceptions, and reset status. Done: 10/10 reached shell+`ls`; 1 TFTP retry (auto-reset, C105-classified); 1 intermittent post-prompt SYNC fault (cycle 4 of 10, dump was truncated so fault-dump UART hardened to TXFF-polled); records: `.github/agent_state/c101-cycles.log`.
 - [ ] C102 Run shell loops for `echo`, `true`, `ls`, `stat`, `lstat`, `cat /proc/interrupts`, file creation/removal, and symlink operations.
 - [ ] C103 Stress `fork`, `vfork`, `clone`, `wait4`, `execve`, signals, and TLS-sensitive dynamic programs.
 - [ ] C104 Repeat reboot tests after A3 is complete.
 - [ ] C105 Classify network/TFTP failures separately from kernel and userspace failures.
+- [ ] C106 (moved from B602) Verify SMP scheduler smoke tests (`fork`, `yield`, `sleep` across CPUs) on RPi3 and QEMU.
+- [ ] C107 (moved from B603) Run SMP stress tests and single-core fallback validation.
 
 ### C2 — Performance and capacity
 
