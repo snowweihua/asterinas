@@ -9,8 +9,6 @@ use crate::boot::SimpleOnce as Once;
 pub(in crate::arch) fn init() {
     let global_isa_extensions = IsaExtensions::empty();
 
-    log::info!("Detected ISA extensions: {:?}", global_isa_extensions);
-
     GLOBAL_ISA_EXTENSIONS.call_once(|| global_isa_extensions);
 }
 

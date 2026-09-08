@@ -131,12 +131,10 @@ fn psci_usable() -> bool {
 /// Skipped entirely when EL3 is absent, where smc cannot be handled.
 fn is_psci_available() -> bool {
     if !psci_usable() {
-        log::info!("[a2-smp] rpi3: PSCI firmware not usable, skipping PSCI probe");
         return false;
     }
     let psci_version = smc_call(0x84000000, 0, 0, 0);
     let valid = psci_version >= 0x10000 && psci_version < 0xffffffff;
-    log::info!("[a2-smp] rpi3: PSCI_VERSION={:#x}, available={}", psci_version, valid);
     valid
 }
 
@@ -210,22 +208,7 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
     pt_ptr: Paddr,
     num_cpus: u32,
 ) {
-    // Report EL state before any SMC: QEMU raspi3b provides no EL3
-    // firmware, so an smc there has nowhere to trap and hangs the boot.
-    // These MRS reads cannot fault.
-    #[cfg(target_arch = "aarch64")]
-    log::info!(
-        "[a2-smp] rpi3: CurrentEL={} EL3_present={} CNTFRQ={} psci_usable={}",
-        current_el(),
-        el3_present(),
-        cntfrq(),
-        psci_usable()
-    );
-
     // Set up globals and copy boot stub BEFORE any PSCI_CPU_ON calls
-    #[cfg(target_arch = "aarch64")]
-    log::info!("[a2-smp] rpi3: SMP bringup starting");
-
     unsafe {
         __ap_boot_info_array_pointer = info_ptr;
         __boot_page_table_pointer = pt_ptr as u64;
@@ -256,8 +239,6 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
         core::arch::asm!("dsb ish", options(nostack, preserves_flags));
     }
 
-    log::info!("[a2-smp] rpi3: boot stub copied to {:#x}", ap_boot_dst_pa);
-
     let ap_entry_paddr = ap_boot_dst_pa as u64;
 
     // Clear marker region before waking APs
@@ -286,8 +267,6 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
 
             for _ in 0..1000 { core::hint::spin_loop(); }
         }
-    } else {
-        log::info!("[a2-smp] rpi3: PSCI not available, using spin-table");
     }
 
     // Skip Trusted Mailbox - it requires specific TF-A configuration
@@ -383,7 +362,4 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
         }
 
     }
-
-    #[cfg(target_arch = "aarch64")]
-    log::info!("[a2-smp] rpi3: SMP bringup done");
 }

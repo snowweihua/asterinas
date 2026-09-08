@@ -138,12 +138,6 @@ fn ap_init() {
     init_on_each_cpu();
 
     fn ap_idle_thread() {
-        log::info!(
-            "Kernel idle thread for CPU #{} started.",
-            // No races because `ap_idle_thread` runs on a certain AP.
-            CpuId::current_racy().as_usize(),
-        );
-
         loop {
             ostd::task::halt_cpu();
         }
