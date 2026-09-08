@@ -50,24 +50,13 @@ ap_info_ok:
     add     x1, x1, #0x50
     str     w1, [x2]
 
-    /* UART markers to confirm AP is alive */
-    mov     x0, #0xCC
-    bl      ap_putchar
-    mov     x0, #0xDD
-    bl      ap_putchar
-    mov     x0, #0x41
-    bl      ap_putchar
-
-    /* Checkpoint after first putchar: marker (cpu_id+0x60) at PA (0x46000 + cpu*0x1000). */
+    /* Checkpoint marker (cpu_id+0x60) at PA (0x46000 + cpu*0x1000). */
     mrs     x1, mpidr_el1
     and     x1, x1, #0x3
     add     x2, x1, #0x46
     lsl     x2, x2, #12
     add     x1, x1, #0x60
     str     w1, [x2]
-
-    mov     x0, #0x50
-    bl      ap_putchar
 
     /* QEMU starts secondaries at EL3 (no secure firmware drops them);
      * PSCI/TF-A starts them at EL2. Drop EL3->EL2 first when needed. */
@@ -162,11 +151,6 @@ ap_el1_entry:
     isb
 
     /* AP early marker - after MMU enable */
-    mov     x0, #0x52
-    bl      ap_putchar
-    mov     x0, #0x4D
-    bl      ap_putchar
-
     /* Set up stack from PerApRawInfo.stack_top (x19 + 0).
      * stack_top is ALREADY a high-half virtual address (set by the BSP via
      * paddr_to_vaddr). It must NOT be converted again. */
@@ -178,21 +162,9 @@ ap_el1_entry:
     ldr     x0, [x19, #8]            /* Load cpu_local (already VA) */
     msr     tpidr_el1, x0
 
-    /* AP early marker - boot stub done, jumping to Rust */
-    mov     x0, #0x44
-    bl      ap_putchar
-    mov     x0, #0x54
-    bl      ap_putchar
-
-    /* Marker XX - AP is about to branch to Rust ap_early_entry */
-    mov     x0, #0x58
-    bl      ap_putchar
-    mov     x0, #0x58
-    bl      ap_putchar
-
     /* Pass cpu_id to ap_early_entry as argument 0.
      * On RPi3, the logical cpu_id equals the MPIDR affinity level 0 (0-3).
-     * Compute it here (AFTER all putchar calls, which clobber x0). */
+     * Compute it here from MPIDR. */
     mrs     x0, mpidr_el1
     and     x0, x0, #0x3            /* x0 = cpu_id */
 

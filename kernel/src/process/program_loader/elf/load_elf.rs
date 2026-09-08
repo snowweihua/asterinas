@@ -45,7 +45,6 @@ pub fn load_elf_to_vm(
     argv: Vec<CString>,
     envp: Vec<CString>,
 ) -> Result<ElfLoadInfo> {
-    println!("[load_elf] elf entry_point=0x{:x}", elf_headers.entry_point());
     let ldso = lookup_and_parse_ldso(&elf_headers, &elf_file, fs_resolver)?;
 
     match init_and_map_vmos(process_vm, ldso, &elf_headers, &elf_file) {
@@ -127,27 +126,7 @@ fn load_ldso(
     ldso_file: &Path,
     ldso_elf: &ElfHeaders,
 ) -> Result<LdsoLoadInfo> {
-    {
-        let inode = ldso_file.inode();
-        if let Some(page_cache) = inode.page_cache() {
-            let mut buf = [0u8; 32];
-            let _ = page_cache.read_bytes(0, &mut buf);
-            let is_elf = buf[0] == 0x7f && buf[1] == b'E' && buf[2] == b'L' && buf[3] == b'F';
-            println!("[load_ldso] ldso page_cache[0..32]: {:02x?}, elf_magic={}", buf, is_elf);
-        } else {
-            println!("[load_ldso] WARNING: ldso has no page cache!");
-        }
-    }
-    for ph in &ldso_elf.program_headers {
-        if let Ok(program::Type::Load) = ph.get_type() {
-            println!("[load_ldso] ldso LOAD: vaddr=0x{:x} file_size=0x{:x} mem_size=0x{:x} offset=0x{:x}",
-                ph.virtual_addr, ph.file_size, ph.mem_size, ph.offset);
-        }
-    }
-
     let range = map_segment_vmos(ldso_elf, root_vmar, ldso_file)?;
-    println!("[load_ldso] ldso original_range=0x{:x}..0x{:x}, relocated_start=0x{:x}",
-        range.original_range.start, range.original_range.end, range.relocated_start);
 
     let entry_point = range
         .relocated_addr_of(ldso_elf.entry_point())
@@ -155,8 +134,6 @@ fn load_ldso(
             Errno::ENOEXEC,
             "The entry point is not in the mapped range",
         ))?;
-    println!("[load_ldso] ldso entry_point=0x{:x} (elf_entry=0x{:x})", entry_point, ldso_elf.entry_point());
-
     Ok(LdsoLoadInfo {
         entry_point,
         range,
@@ -184,8 +161,6 @@ fn init_and_map_vmos(
     };
 
     let elf_map_range = map_segment_vmos(parsed_elf, root_vmar, elf_file)?;
-    println!("[load_elf] elf_map_range original={:?}, relocated_start=0x{:x}",
-        elf_map_range.original_range, elf_map_range.relocated_start);
 
     let aux_vec = {
         let ldso_base = ldso_load_info
@@ -204,8 +179,6 @@ fn init_and_map_vmos(
                 Errno::ENOEXEC,
                 "The entry point is not in the mapped range",
             ))?;
-        println!("[load_elf] orig_ep=0x{:x}, relocated_ep=0x{:x}, elf_map_range original={:?}, relocated_start=0x{:x}",
-            orig_ep, relocated_ep, elf_map_range.original_range, elf_map_range.relocated_start);
         relocated_ep
     };
 
@@ -512,7 +485,6 @@ pub fn init_aux_vec(
     } else {
         elf.ph_addr()?
     };
-    println!("[init_aux_vec] is_shared={}, ph_addr=0x{:x}, elf_map_addr=0x{:x}", elf.is_shared_object(), ph_addr, elf_map_addr);
     aux_vec.set(AuxKey::AT_PHDR, ph_addr as u64)?;
     aux_vec.set(AuxKey::AT_PHNUM, elf.ph_count() as u64)?;
     aux_vec.set(AuxKey::AT_PHENT, elf.ph_ent() as u64)?;
@@ -523,11 +495,9 @@ pub fn init_aux_vec(
     } else {
         elf.entry_point()
     };
-    println!("[init_aux_vec] AT_ENTRY=0x{:x}, AT_BASE={:?}", elf_entry, ldso_base);
     aux_vec.set(AuxKey::AT_ENTRY, elf_entry as u64)?;
 
     if let Some(ldso_base) = ldso_base {
-        println!("[init_aux_vec] setting AT_BASE=0x{:x}", ldso_base);
         aux_vec.set(AuxKey::AT_BASE, ldso_base as u64)?;
     }
     Ok(aux_vec)

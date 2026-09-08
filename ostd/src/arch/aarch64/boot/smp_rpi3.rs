@@ -222,34 +222,6 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
         psci_usable()
     );
 
-    // Complete PSCI diagnostic table (skipped unless PSCI firmware is
-    // usable: without it smc has nowhere to trap and hangs the boot).
-    #[cfg(target_arch = "aarch64")]
-    if psci_usable() {
-        // PSCI_VERSION
-        let psci_version = smc_call(0x84000000, 0, 0, 0);
-        log::info!("[a2-smp] rpi3: PSCI_VERSION={:#x}", psci_version);
-
-        // PSCI_FEATURES for CPU_ON
-        let psci_features_cpu_on = smc_call(0x8400000a, PSCI_CPU_ON, 0, 0);
-        log::info!("[a2-smp] rpi3: PSCI_FEATURES(CPU_ON)={:#x}", psci_features_cpu_on);
-
-        // PSCI_FEATURES for AFFINITY_INFO
-        let psci_features_aff_info = smc_call(0x8400000a, PSCI_AFFINITY_INFO, 0, 0);
-        log::info!("[a2-smp] rpi3: PSCI_FEATURES(AFFINITY_INFO)={:#x}", psci_features_aff_info);
-
-        // PSCI_FEATURES for SYSTEM_RESET
-        let psci_features_sys_reset = smc_call(0x8400000a, PSCI_SYSTEM_RESET, 0, 0);
-        log::info!("[a2-smp] rpi3: PSCI_FEATURES(SYSTEM_RESET)={:#x}", psci_features_sys_reset);
-
-        // PSCI_AFFINITY_INFO for ALL CPUs (including CPU0)
-        for cpu_id in 0..4u32 {
-            let mpidr = 0x80000000u64 | (cpu_id as u64);
-            let aff_info = smc_call(PSCI_AFFINITY_INFO, mpidr, 0, 0);
-            log::info!("[a2-smp] rpi3: PSCI_AFFINITY_INFO(cpu={}, mpidr={:#x})={:#x}", cpu_id, mpidr, aff_info);
-        }
-    }
-
     // Set up globals and copy boot stub BEFORE any PSCI_CPU_ON calls
     #[cfg(target_arch = "aarch64")]
     log::info!("[a2-smp] rpi3: SMP bringup starting");
@@ -296,7 +268,6 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
     // Try PSCI via SMC first
     #[cfg(target_arch = "aarch64")]
     if is_psci_available() {
-        log::info!("[a2-smp] rpi3: PSCI available, trying SMC CPU_ON");
         for cpu_id in 1..num_cpus {
             let mpidr = match get_mpidr(cpu_id) {
                 Some(m) => m,
@@ -305,34 +276,15 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
                     continue;
                 }
             };
-            // Check AFFINITY_INFO BEFORE bringup CPU_ON to see current state
-            let aff_info_before = smc_call(PSCI_AFFINITY_INFO, mpidr, 0, 0);
-            log::info!("[a2-smp] rpi3: PSCI_AFFINITY_INFO before bringup CPU_ON(cpu={})={:#x}", cpu_id, aff_info_before);
-
             let info = &*info_ptr.add(cpu_id as usize - 1);
             let stack_top = info.stack_top as u64;
             let info_ptr_val = info as *const _ as u64;
 
-            log::info!("[a2-smp] rpi3: PSCI CPU_ON cpu={} mpidr={:#x} entry={:#x}(PA) info={:#x}",
-                cpu_id, mpidr, ap_entry_paddr, info_ptr_val);
-
 // PSCI_CPU_ON: x0=function_id, x1=mpidr, x2=entry_pa, x3=context_id
             // The context_id (PerApRawInfo pointer) is passed to the AP in x0
-            let result = smc_call(PSCI_CPU_ON, mpidr, ap_entry_paddr, info_ptr_val);
-            log::info!("[a2-smp] rpi3: PSCI result={:#x}", result);
-
-            let aff_info_immediate = smc_call(PSCI_AFFINITY_INFO, mpidr, 0, 0);
-            log::info!("[a2-smp] rpi3: PSCI_AFFINITY_INFO after CPU_ON(cpu={})={:#x} (immediate)", cpu_id, aff_info_immediate);
+            let _result = smc_call(PSCI_CPU_ON, mpidr, ap_entry_paddr, info_ptr_val);
 
             for _ in 0..1000 { core::hint::spin_loop(); }
-
-            let val = unsafe { core::ptr::read_volatile(0x41000 as *const u8) };
-            if val != 0x55 && val != 0 {
-                log::info!("[a2-smp] rpi3: AP {} started via PSCI!", cpu_id);
-            }
-
-            let aff_info_delayed = smc_call(PSCI_AFFINITY_INFO, mpidr, 0, 0);
-            log::info!("[a2-smp] rpi3: PSCI_AFFINITY_INFO after CPU_ON(cpu={})={:#x} (delayed)", cpu_id, aff_info_delayed);
         }
     } else {
         log::info!("[a2-smp] rpi3: PSCI not available, using spin-table");
@@ -351,8 +303,6 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
             continue;
         }
         let spin_table_addr = ARM_LOCAL_PA + CPU_SPIN_TABLE_OFFSETS[cpu_idx];
-        #[cfg(target_arch = "aarch64")]
-        log::info!("[a2-smp] rpi3: CPU {} spin-table@{:#x} (BCM2836 offset={:#x})", cpu_id, spin_table_addr, CPU_SPIN_TABLE_OFFSETS[cpu_idx]);
 
         let info_base_va = AP_INFO_BASE;
 
@@ -403,8 +353,6 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
             unsafe {
                 core::ptr::write_volatile((mailbox_offset) as *mut u32, ap_entry_paddr as u32);
                 core::arch::asm!("dsb sy", "sev", options(nostack, preserves_flags));
-                let readback: u32 = core::ptr::read_volatile((mailbox_offset) as *const u32);
-                log::info!("[a2-smp] rpi3: wrote mailbox@{:#x}={:#x}, readback={:#x}", mailbox_offset, ap_entry_paddr as u32, readback);
             }
         }
 
@@ -414,8 +362,6 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
                 // Use identity-mapped spin_table_addr
                 core::ptr::write_volatile(spin_table_addr as *mut u64, ap_entry_paddr);
                 core::arch::asm!("dsb ish", "sev", options(nostack, preserves_flags));
-                let readback: u64 = core::ptr::read_volatile(spin_table_addr as *const u64);
-                log::info!("[a2-smp] rpi3: spin-table@{:#x} wrote={:#x} readback={:#x}", spin_table_addr, ap_entry_paddr, readback);
             }
         }
 
@@ -434,85 +380,10 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
                 );
                 core::arch::asm!("dsb sy", "sev", options(nostack, preserves_flags));
             }
-            log::info!(
-                "[a2-smp] rpi3: QEMU spin-table slot@{:#x} <= {:#x}",
-                slot_pa, ap_entry_paddr
-            );
         }
 
-        for _ in 0..50000 {
-            let val = unsafe { core::ptr::read_volatile(0x41000 as *const u8) };
-            if val != 0x55 && val != 0 {
-                log::info!("[a2-smp] rpi3: AP {} started via spin-table!", cpu_id);
-                break;
-            }
-        }
-
-        for _ in 0..500000 {
-            let val = unsafe { core::ptr::read_volatile(0x41000 as *const u8) };
-            if val != 0x55 && val != 0 {
-                log::info!("[a2-smp] rpi3: AP {} started via spin-table!", cpu_id);
-                break;
-            }
-        }
-    }
-
-    #[cfg(target_arch = "aarch64")]
-    {
-        for cpu_id in 1..num_cpus {
-            let base = (cpu_id as usize) * 0x1000;
-            let entry_pa = 0x42000usize + base;
-            let post_putchar_pa = 0x46000usize + base;
-            let after_ttbr_pa = 0x60000usize + base;
-            let pre_rust_pa = 0x64000usize + base;
-            let entry_val: u32 =
-                unsafe { core::ptr::read_volatile(entry_pa as *const u32) };
-            let post_val: u32 =
-                unsafe { core::ptr::read_volatile(post_putchar_pa as *const u32) };
-            let ttbr_val: u32 =
-                unsafe { core::ptr::read_volatile(after_ttbr_pa as *const u32) };
-            let rust_val: u32 =
-                unsafe { core::ptr::read_volatile(pre_rust_pa as *const u32) };
-            log::info!(
-                "[a2-smp] rpi3: AP markers cpu={} entry@{:#x}={:#x} post_put@{:#x}={:#x} after_ttbr@{:#x}={:#x} pre_rust@{:#x}={:#x}",
-                cpu_id,
-                entry_pa, entry_val,
-                post_putchar_pa, post_val,
-                after_ttbr_pa, ttbr_val,
-                pre_rust_pa, rust_val
-            );
-            let ap_early_base = 0x68000usize + base;
-            let s0: u32 = unsafe { core::ptr::read_volatile(ap_early_base as *const u32) };
-            let s1: u32 = unsafe { core::ptr::read_volatile((ap_early_base + 4) as *const u32) };
-            let s2: u32 = unsafe { core::ptr::read_volatile((ap_early_base + 8) as *const u32) };
-            let s3: u32 = unsafe { core::ptr::read_volatile((ap_early_base + 12) as *const u32) };
-            let s4: u32 = unsafe { core::ptr::read_volatile((ap_early_base + 16) as *const u32) };
-            let s5: u32 = unsafe { core::ptr::read_volatile((ap_early_base + 20) as *const u32) };
-            let s6: u32 = unsafe { core::ptr::read_volatile((ap_early_base + 24) as *const u32) };
-            log::info!(
-                "[a2-smp] rpi3: AP ap_early_entry cpu={} s0={:#x} s1={:#x} s2={:#x} s3={:#x} s4={:#x} s5={:#x} s6={:#x}",
-                cpu_id, s0, s1, s2, s3, s4, s5, s6
-            );
-        }
     }
 
     #[cfg(target_arch = "aarch64")]
     log::info!("[a2-smp] rpi3: SMP bringup done");
-
-// Check if AP boot marker was written (at 0x41000 from ap_boot.S)
-    #[cfg(target_arch = "aarch64")]
-    {
-        let ap_marker = unsafe { core::ptr::read_volatile(0x41000 as *const u64) };
-        log::info!("[a2-smp] rpi3: AP boot marker @0x41000={:#x} (should be 0xABCD if AP reached boot code)", ap_marker);
-
-        for cpu_id in 1..num_cpus {
-            let marker_pa = 0x42000usize + (cpu_id as usize) * 0x1000;
-            let marker: u32 =
-                unsafe { core::ptr::read_volatile(marker_pa as *const u32) };
-            log::info!(
-                "[a2-smp] rpi3: AP {} entry marker @0x{:x}={:#x} (expect 0x{:x})",
-                cpu_id, marker_pa, marker, 0x50 + cpu_id
-            );
-        }
-    }
 }
