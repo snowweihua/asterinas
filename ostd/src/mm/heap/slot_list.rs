@@ -86,4 +86,29 @@ impl<const SLOT_SIZE: usize> SlabSlotList<SLOT_SIZE> {
 
         Some(unsafe { HeapSlot::new(original_head, super::SlotInfo::SlabSlot(SLOT_SIZE)) })
     }
+
+    /// Converts bootstrap physical slot pointers recorded before the kernel
+    /// page table was activated into virtual addresses, in place.
+    ///
+    /// Pointers that are already virtual (or NULL terminators) are kept.
+    pub fn convert_pointers(&mut self, paddr_to_vaddr: fn(usize) -> usize) {
+        fn cvt(v: usize, paddr_to_vaddr: fn(usize) -> usize) -> usize {
+            if v != 0 && v < 0xffff_8000_0000_0000usize {
+                paddr_to_vaddr(v)
+            } else {
+                v
+            }
+        }
+        let head = self.head.map(|p| p.as_ptr() as usize).unwrap_or(0);
+        self.head = NonNull::new(cvt(head, paddr_to_vaddr) as *mut u8);
+        let mut cur = head;
+        while cur != 0 {
+            // SAFETY: `cur` was recorded in this list; it is read and written
+            // through the mapping valid for its current form.
+            let at_va = cvt(cur, paddr_to_vaddr);
+            let next = unsafe { *(at_va as *const usize) };
+            unsafe { *(at_va as *mut usize) = cvt(next, paddr_to_vaddr) };
+            cur = next;
+        }
+    }
 }

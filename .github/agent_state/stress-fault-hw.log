@@ -1,0 +1,48 @@
+# HW SMP stress, ID-fix image (3921488 bytes) + stress initramfs — full kernel log
+# Result: stress COMPLETED (4x EATER_DONE, burst, SMP-STRESS-DONE, AUTO-TEST-DONE),
+# then a DIFFERENT post-prompt fault: synchronous EXTERNAL abort (bus error),
+# not the translation fault from before. Full readable dump (TXFF fix works).
+
+```text
+Starting kernel ...
+
+WARN: No generic PCI host controller node found in the device tree
+<banner omitted>
+=== AUTO-TEST-START ===
+hello-from-init
+--- ls / ---
+<bin dev etc init nix proc root run sys tmp listing>
+--- ls /bin ---
+<busybox cat echo ls mkdir mount sh true + symlinks listing>
+=== SMP-STRESS-START ===
+EATER_DONE
+--- fork/exec burst ---
+EATER_DONE
+EATER_DONE
+EATER_DONE
+=== SMP-STRESS-DONE ===
+=== AUTO-TEST-DONE ===
+/ #
+[EL1-SYNC]
+ ESR=0000000096000035 ELR=ffff000000297064 FAR=ffff80000807fec0
+ x0=ffff80000807fec0 x1=0000000000000008 x2=0000000000000020 x3=0000000000000050
+ x4=ffffdfffffffda68 x5=ffffdfffffffda90 x6=0000000000000000 x7=0000000000000000
+ x8=0000000000000001 x9=0000000000000000 x10=1ffff0000100ffd8 x11=0000000000000000
+ x12=0000000000000020 x13=ffff8000026ba168 x14=0000000000000000 x15=ffff8000026ba168
+ x16=00000000000000c0 x17=0000000000000001 x18=0000000000000000 x19=ffff8000033a8e00
+ x20=ffffdfffffef5ee0 x21=ffffdfffffef5f28 x22=0000000000000000 x23=0000000000000000
+ x24=0000000000000000 x25=0000000000000000 x26=0000000000000000 x27=0000000000000000
+ x28=0000000000000000 x29=0000000000000000 lr=ffff000000297050
+ spsr=0000000060000305
+### EL1 HALT ###
+```
+
+# Decode
+# - ESR 0x96000035: EC=0x25 (data abort, current EL), DFSC=0x35 (synchronous
+#   EXTERNAL abort — bus error, not a translation fault).
+# - FAR 0xffff80000807fec0 (kernel linear map, DRAM ~128MB), x0 same.
+#   x1=8, x2=0x20 (32?), x3=0x50 — small ints, looks like a memutils op.
+# - DAIF unmasked (spsr 0x600003c5). Board halted (EL1 HALT loop).
+# - NOTE: stress itself passed; fault came after, at/after the prompt.
+#   Possibly the same class as the cycle-4 post-prompt fault (which had no
+#   readable dump). Different signature from the slab wild-pointer fault.

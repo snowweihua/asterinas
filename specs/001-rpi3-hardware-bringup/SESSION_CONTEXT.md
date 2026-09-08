@@ -38,6 +38,9 @@ This file records the current active state. All historical investigations and pr
 - **EL3/CNTFRQ-gated PSCI probe** (commit `5bb16ff7`): `is_psci_available()` and the PSCI diagnostic table are skipped unless `psci_usable()` (EL3 implemented + CNTFRQ 19.2MHz) — fixes QEMU `raspi3b` boot hang in the first `smc` with no EL3 firmware.
 - **ARM-local base address** (commit `5bb16ff7`): `LOCAL_IC_BASE_PA` and `ARM_LOCAL_PA` corrected from `0x3F000000` (BCM2835 window) to `0x40000000` (QA7 ARM-local) — timer IRQ enable, IRQ-source acknowledge, and spin-table writes now reach real registers; QEMU serial RX and timer tick work.
 - **UART RX polling fallback** (commit `5bb16ff7`): `timer::register_callback_on_cpu(poll_uart_input)` drains the PL011 FIFO every tick in addition to the IRQ handler.
+- **Heap bootstrap pointer conversion**: heap slab lists and per-CPU slot caches never got the frame allocator's physical-to-virtual conversion, leaving stale pointers that faulted under fork churn; now converted at ostd init (global + BSP cache) and AP entry (per-CPU), with selective (idempotent, mix-safe) walks.
+- **Unique slab-list IDs**: all `LinkedList`s shared ID 1, so `dealloc` removed full-list slabs via the wrong list object and corrupted both chains; IDs are now unique per list.
+- **Atomic RPi3 refcount/mutex paths**: `inc_count` load/store and `Mutex` load/store replaced with atomic `fetch_add`/`swap`, matching std semantics on SMP.
 
 ## Durable RPi3 Constraints
 

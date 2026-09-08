@@ -126,6 +126,14 @@ impl<const SLOT_SIZE: usize> SlabCache<SLOT_SIZE> {
             self.empty.push_front(slab);
         }
     }
+
+    /// Converts bootstrap physical links recorded before the kernel page
+    /// table was activated into virtual addresses.
+    pub(crate) fn convert_bootstrap_pointers(&mut self, meta_cvt: fn(usize) -> usize) {
+        self.empty.convert_pointers(meta_cvt);
+        self.partial.convert_pointers(meta_cvt);
+        self.full.convert_pointers(meta_cvt);
+    }
 }
 
 /// Gets which slab the slot belongs to.

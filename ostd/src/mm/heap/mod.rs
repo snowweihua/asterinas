@@ -49,6 +49,12 @@ pub trait GlobalHeapAllocator: Sync {
     /// Each deallocation must correspond to exactly one previous allocation. The provided
     /// [`HeapSlot`] must match the one returned from the original allocation.
     fn dealloc(&self, slot: HeapSlot) -> Result<(), AllocError>;
+
+    /// Converts bootstrap pointers recorded before the kernel page table was
+    /// activated into virtual addresses.
+    ///
+    /// The default implementation does nothing.
+    fn convert_bootstrap_pointers(&self, _meta_cvt: fn(usize) -> usize, _linear_cvt: fn(usize) -> usize) {}
 }
 
 unsafe extern "Rust" {
@@ -65,6 +71,16 @@ unsafe extern "Rust" {
 fn get_global_heap_allocator() -> &'static dyn GlobalHeapAllocator {
     // SAFETY: This up-call is redirected safely to Rust code by OSDK.
     unsafe { __GLOBAL_HEAP_ALLOCATOR_REF }
+}
+
+/// Converts bootstrap pointers in the global heap allocator.
+///
+/// Must be called once after the kernel page table is activated.
+pub(crate) fn convert_bootstrap_heap_pointers(
+    meta_cvt: fn(usize) -> usize,
+    linear_cvt: fn(usize) -> usize,
+) {
+    get_global_heap_allocator().convert_bootstrap_pointers(meta_cvt, linear_cvt);
 }
 
 /// Gets the size and type of heap slots to serve allocations of the layout.

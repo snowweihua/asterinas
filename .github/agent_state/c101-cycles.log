@@ -11,3 +11,7 @@ cycle | tftp | prompt | ls | exceptions | notes
 8 | OK6024896 clean | /# | ls+lsbin OK | none | clean boot
 9 | OK6024896 clean | /# | ls+lsbin OK | none | clean boot
 10 | OK6024896 clean | /# | ls+lsbin OK | none | clean boot - MATRIX COMPLETE 10/10
+CYCLE4 NOTE: fault after /# + idle line, tail was "/ # [EL1-SYNC] x" then silence; pre-TXFF-fix image so dump truncated. Image 6016704 WITH AP timer ticks (b4a5244c). No input (RX dead). Full serial of cycle 4 not saved (policy from here: save full log of every bad cycle).
+--- matrix extended: hunting intermittent post-prompt SYNC fault (cycle 4), dump-fix image ---
+11 | no-boot first try (zero output, power-state glitch) | retry: /# clean | ls+lsbin OK | none | INFRA, not kernel; retry clean BOOT_OK
+12 | OK3921488+retry initramfs 1x | /# | ls+lsbin OK | none | TFTP flake auto-reset; conversion image quiet boot clean

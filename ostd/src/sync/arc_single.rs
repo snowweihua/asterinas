@@ -47,11 +47,14 @@ fn is_rpi3_single_core() -> bool {
 }
 
 fn inc_count(counter: &AtomicUsize) {
-    let old = counter.load(Ordering::Relaxed);
+    // Must be a single atomic RMW: a load/store pair loses updates when a
+    // concurrent clone (or preemption) interleaves, undercounting the
+    // refcount and freeing the object while still referenced.
+    // This matches std `Arc::clone`, which uses `fetch_add(Relaxed)`.
+    let old = counter.fetch_add(1, Ordering::Relaxed);
     if old > MAX_REFCOUNT {
         abort();
     }
-    counter.store(old + 1, Ordering::Relaxed);
 }
 
 #[inline(never)]

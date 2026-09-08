@@ -321,4 +321,35 @@ impl GlobalHeapAllocator for HeapAllocator {
 
         local_cache.dealloc(slot, class)
     }
+
+    /// Converts bootstrap physical pointers recorded before the kernel page
+    /// table was activated into virtual addresses, in the global caches and
+    /// in the current CPU's local cache. Safe to call on every CPU: global
+    /// conversion is idempotent and per-CPU caches are disjoint.
+    fn convert_bootstrap_pointers(&self, meta_cvt: fn(usize) -> usize, linear_cvt: fn(usize) -> usize) {
+        {
+            let mut pool = GLOBAL_POOL.lock();
+            pool.slab8.convert_bootstrap_pointers(meta_cvt);
+            pool.slab16.convert_bootstrap_pointers(meta_cvt);
+            pool.slab32.convert_bootstrap_pointers(meta_cvt);
+            pool.slab64.convert_bootstrap_pointers(meta_cvt);
+            pool.slab128.convert_bootstrap_pointers(meta_cvt);
+            pool.slab256.convert_bootstrap_pointers(meta_cvt);
+            pool.slab512.convert_bootstrap_pointers(meta_cvt);
+            pool.slab1024.convert_bootstrap_pointers(meta_cvt);
+            pool.slab2048.convert_bootstrap_pointers(meta_cvt);
+        }
+        let irq_guard = irq::disable_local();
+        let cache = LOCAL_POOL.get_with(&irq_guard);
+        let mut cache = cache.borrow_mut();
+        cache.cache8.list.convert_pointers(linear_cvt);
+        cache.cache16.list.convert_pointers(linear_cvt);
+        cache.cache32.list.convert_pointers(linear_cvt);
+        cache.cache64.list.convert_pointers(linear_cvt);
+        cache.cache128.list.convert_pointers(linear_cvt);
+        cache.cache256.list.convert_pointers(linear_cvt);
+        cache.cache512.list.convert_pointers(linear_cvt);
+        cache.cache1024.list.convert_pointers(linear_cvt);
+        cache.cache2048.list.convert_pointers(linear_cvt);
+    }
 }

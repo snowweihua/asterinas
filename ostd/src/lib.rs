@@ -152,6 +152,11 @@ unsafe fn init() {
 
     mm::frame::allocator::convert_bootstrap_frame_pointers();
 
+    mm::heap::convert_bootstrap_heap_pointers(
+        mm::frame::meta::meta_slot_paddr_to_vaddr,
+        mm::paddr_to_vaddr,
+    );
+
     arch::irq::enable_local();
 
     invoke_ffi_init_funcs();

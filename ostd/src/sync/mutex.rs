@@ -84,20 +84,6 @@ impl<T: ?Sized> Mutex<T> {
     }
 
     fn acquire_lock(&self) -> bool {
-        #[cfg(target_arch = "aarch64")]
-        if crate::arch::is_rpi3() {
-            // RPi3 single-core: the exclusive instructions used by `swap` can
-            // abort on this board. Disable local IRQs so that the load/store
-            // sequence cannot be interrupted by another task on the one CPU.
-            let _irq = crate::irq::disable_local();
-            let was = self.lock.load(Ordering::Relaxed);
-            if !was {
-                self.lock.store(true, Ordering::Relaxed);
-            }
-            core::sync::atomic::fence(Ordering::Acquire);
-            return !was;
-        }
-
         // WORKAROUND: QEMU 6.2 AArch64 compare_exchange (LDAXR/STXR exclusive monitor)
         // fails spuriously. Use swap + check pattern instead.
         !self.lock.swap(true, Ordering::Acquire)

@@ -1,0 +1,40 @@
+# SMP stress fault — full kernel log (RPi3B hardware, 2026-09-08)
+# Image: 6024896-byte quiet SMP build + TXFF-polled dump (trap/mod.rs)
+# Initramfs: SMP stress variant (4x background arithmetic eaters + 15x ls fork burst)
+# NOTE: VideoCore/U-Boot prologue omitted (identical boilerplate every boot).
+# TFTP: asterina.img 6024896 bytes (5beec0 hex), initramfs.cpio 4682752 bytes — both OK.
+
+```text
+Starting kernel ...
+
+WARN: No generic PCI host controller node found in the device tree
+<banner omitted>
+=== AUTO-TEST-START ===
+hello-from-init
+--- ls / ---
+<bin dev etc init nix proc root run sys tmp listing>
+--- ls /bin ---
+<busybox cat echo ls mkdir mount sh true + symlinks listing>
+=== SMP-STRESS-START ===
+page fault handler failed: addr: 0x2c146c0, err: Error { errno: EACCES, msg: Some("no VM mappings contain the page fault address") }
+
+[EL1-SYNC]
+ ESR=0000000096000006 ELR=ffff00000034e694 FAR=0000000002c146c0
+ x0=ffff00000043e7d8 x1=0000000002c146c0 x2=0000000000000078 x3=0000000000000000
+ x4=0000000000000000 x5=ffffdfffffdede40 x6=ffff800000000000 x7=0000000000000000
+ x8=ffff00000043e800 x9=0000000000000001 x10=0000000000000000 x11=00000000000004d8
+ x12=ffff00000043d0f0 x13=ffff80000261efe0 x14=ffffdfffffdeca00 x15=0000000000000000
+ x16=0000000000000000 x17=0000000000000000 x18=0000000000000000 x19=ffffdfffffdec7a0
+ x20=0000000000000000 x21=ffff00000043d0f0 x22=00000000000000c0 x23=ffff00000043e650
+ x24=ffffdfffffdec858 x25=0000000000000040 x26=ffff80000261e480 x27=0000000000000000
+ x28=ffff8000026be810 x29=00007ffffffef180 lr=ffff0000003533a8
+ spsr=00000000000003c5
+### EL1 HALT ###
+```
+
+# Decode
+# - ESR 0x96000006: EC=0x25 (data abort, current EL), DFSC=0x06 (translation fault level 0)
+# - FAR 0x2c146c0 == x1: kernel touched unmapped user VA (load/store via x1), x2=0x78 (120 bytes?)
+# - A userspace fault at the SAME address immediately preceded ("no VM mappings").
+# - Context: first background eater subshell fork during SMP-STRESS-START.
+# - Board halted in EL1 HALT loop (power cycle required).

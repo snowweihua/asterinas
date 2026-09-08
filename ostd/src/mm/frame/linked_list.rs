@@ -195,58 +195,55 @@ where
     }
 
     fn lazy_get_id(&mut self) -> u64 {
+        // Every list needs a distinct ID: `contains`/`cursor_mut_at` use it
+        // to tell whether a frame belongs to THIS list. Sharing one ID
+        // across lists misroutes removals and corrupts both chains.
         if self.list_id == 0 {
-            self.list_id = 1;
-            1
-        } else {
-            self.list_id
+            static NEXT_LIST_ID: AtomicU64 = AtomicU64::new(1);
+            self.list_id = NEXT_LIST_ID.fetch_add(1, Ordering::Relaxed);
         }
+        self.list_id
     }
 
-    /// Converts all physical `NonNull` pointers in this list to virtual
-    /// addresses using the provided conversion function.
+    /// Converts bootstrap physical pointers in this list to virtual addresses.
     ///
     /// During bootstrap, `get_slot()` returns physical MetaSlot pointers that
     /// are stored as linked list node pointers (`front`, `back`, `next`, `prev`).
-    /// After the kernel page table is activated and TTBR0 switches to the user
-    /// page table, these physical addresses become unmapped. This method
-    /// converts them to their linear-mapped virtual equivalents.
+    /// After the kernel page table is activated, these physical addresses must
+    /// be converted. Pointers that are already virtual (or NULL) are kept, so
+    /// converting a mixed list is safe.
     ///
     /// # Safety
     ///
-    /// Must be called exactly once, after the kernel page table is activated
-    /// and before any further list operations. The physical pointers must still
-    /// be accessible (identity-mapped via TTBR0 boot page table) during this
-    /// call.
+    /// The physical pointers must still be accessible during this call, and no
+    /// other code may access the list concurrently.
     pub fn convert_pointers(&mut self, paddr_to_vaddr: fn(usize) -> usize) {
-        // Traverse the list using physical pointers and convert each node's links.
-        let mut current_phys = self.front.map(|p| p.as_ptr() as usize);
-
-        while let Some(phys) = current_phys {
-            // Read the physical next pointer before modifying the node.
-            let next_phys = {
-                let node = unsafe { &*(phys as *const Link<M>) };
-                node.next.map(|p| p.as_ptr() as usize)
-            };
-
-            // Convert this node's next and prev pointers in-place.
-            let node_mut = unsafe { &mut *(phys as *mut Link<M>) };
-            node_mut.next = node_mut.next.map(|p| {
-                NonNull::new(paddr_to_vaddr(p.as_ptr() as usize) as *mut Link<M>).unwrap()
-            });
-            node_mut.prev = node_mut.prev.map(|p| {
-                NonNull::new(paddr_to_vaddr(p.as_ptr() as usize) as *mut Link<M>).unwrap()
-            });
-
-            current_phys = next_phys;
+        fn cvt(v: usize, paddr_to_vaddr: fn(usize) -> usize) -> usize {
+            if v != 0 && v < 0xffff_8000_0000_0000usize {
+                paddr_to_vaddr(v)
+            } else {
+                v
+            }
         }
-
-        // Convert the list's front and back pointers.
+        let mut current = self.front.map(|p| p.as_ptr() as usize);
         self.front = self.front.map(|p| {
-            NonNull::new(paddr_to_vaddr(p.as_ptr() as usize) as *mut Link<M>).unwrap()
+            NonNull::new(cvt(p.as_ptr() as usize, paddr_to_vaddr) as *mut Link<M>).unwrap()
         });
+        while let Some(raw) = current {
+            // SAFETY: `raw` was recorded in this list; it is read through the
+            // mapping valid for its current form.
+            let node = unsafe { &mut *(cvt(raw, paddr_to_vaddr) as *mut Link<M>) };
+            let next_raw = node.next.map(|p| p.as_ptr() as usize);
+            node.next = node.next.map(|p| {
+                NonNull::new(cvt(p.as_ptr() as usize, paddr_to_vaddr) as *mut Link<M>).unwrap()
+            });
+            node.prev = node.prev.map(|p| {
+                NonNull::new(cvt(p.as_ptr() as usize, paddr_to_vaddr) as *mut Link<M>).unwrap()
+            });
+            current = next_raw;
+        }
         self.back = self.back.map(|p| {
-            NonNull::new(paddr_to_vaddr(p.as_ptr() as usize) as *mut Link<M>).unwrap()
+            NonNull::new(cvt(p.as_ptr() as usize, paddr_to_vaddr) as *mut Link<M>).unwrap()
         });
     }
 }

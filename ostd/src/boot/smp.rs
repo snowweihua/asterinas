@@ -170,6 +170,12 @@ fn ap_early_entry(cpu_id: u32) -> ! {
     // Mark the AP as started.
     report_online_and_hw_cpu_id(cpu_id);
 
+    // Convert this CPU's bootstrap heap pointers (idempotent no-op if done).
+    crate::mm::heap::convert_bootstrap_heap_pointers(
+        crate::mm::frame::meta::meta_slot_paddr_to_vaddr,
+        crate::mm::paddr_to_vaddr,
+    );
+
     let ap_late_entry = AP_LATE_ENTRY.wait();
     ap_late_entry();
 
