@@ -140,9 +140,11 @@ PSCI CPU_ON starts all RPi3 secondaries (verified: AP markers `0x51/52/53`, 4/4 
 
 ### B6 — Full SMP function (after B5 succeeds)
 
-- [ ] B601 Wire APs into scheduler: per-CPU runqueue, idle task, timer per CPU.
+- [x] B601 Wire APs into scheduler: per-CPU runqueue, idle task, timer per CPU. Scheduler entry is shared code (`register_ap_entry(ap_init)` in `first_kthread`); the actual gap was AP timer ticks, now fixed (CNTPNSIRQ routed per-core, CNTP armed per-core via `timer::init_on_ap`, BSP tick moved before SMP bringup). QEMU monitor proves ticks fire on all 4 cores; `taskset` pinning and sleep complete on APs; RPi3 hardware re-verified (quiet boot, `ls` works).
 - [ ] B602 Verify SMP scheduler smoke tests (`fork`, `yield`, `sleep` across CPUs).
 - [ ] B603 Run SMP stress tests and single-core fallback validation.
+
+**B6 notes**: QEMU-only spawn flake observed (pre-existing, not SMP-caused): nested `sh -c` / multi-fork dynamic exec intermittently SEGVs (no-VMA page fault, often addr `0x228114`); hardware auto-test spawns applets cleanly. Characterize under C102/C103, not a B6 blocker.
 
 ---
 

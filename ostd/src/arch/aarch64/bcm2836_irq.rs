@@ -191,13 +191,9 @@ pub unsafe fn init_on_ap() {
         const MAILBOX_CLR_STRIDE: usize = 0x10;
         write_reg(CORE0_MAILBOX3_CLR + (core * MAILBOX_CLR_STRIDE), 0xFFFF_FFFF);
         core::arch::asm!("dsb sy", "isb", options(nostack, nomem, preserves_flags));
-        // Disable the physical timer so it cannot assert CNTPNSIRQ until the
-        // tick is explicitly armed for this core.
-        core::arch::asm!(
-            "msr cntp_ctl_el0, xzr",
-            "isb",
-            options(nostack, nomem, preserves_flags),
-        );
+        // Route this core's non-secure physical timer IRQ to the CPU. The
+        // tick itself is armed right after by the timer init.
+        enable_cntpns_irq();
     }
 }
 

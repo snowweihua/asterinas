@@ -79,6 +79,14 @@ pub(super) unsafe fn init() {
     set_next_timer();
 }
 
+/// Arms the physical timer tick on an AP.
+///
+/// The BSP's [`init`] already allocated the shared IRQ line and published
+/// the tick interval; each AP only arms its own per-core counter here.
+pub(super) unsafe fn init_on_ap() {
+    set_next_timer();
+}
+
 fn timer_callback(trapframe: &TrapFrame) {
     crate::timer::call_timer_callback_functions(trapframe);
 

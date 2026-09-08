@@ -40,12 +40,14 @@ pub(crate) unsafe fn late_init_on_bsp() {
         unsafe { gic::init_on_bsp() };
     }
     let io_mem_builder = io::construct_io_mem_allocator_builder();
+    // Start the BSP tick and publish the tick interval before APs boot:
+    // APs arm their own timers in `init_on_ap`, which needs both ready.
+    unsafe { timer::init() };
     if crate::arch::board::BoardType::cached() == 2 {
         unsafe { crate::boot::smp::boot_all_aps() };
     } else {
         unsafe { crate::boot::smp::boot_all_aps() };
     }
-    unsafe { timer::init() };
     if crate::arch::board::BoardType::cached() == 2 {
     } else {
         unsafe { crate::io::init(io_mem_builder) };
@@ -54,6 +56,7 @@ pub(crate) unsafe fn late_init_on_bsp() {
 
 pub(crate) unsafe fn init_on_ap() {
     bcm2836_irq::init_on_ap();
+    unsafe { timer::init_on_ap() };
 }
 
 pub(crate) fn interrupts_ack(irq_number: usize) {
