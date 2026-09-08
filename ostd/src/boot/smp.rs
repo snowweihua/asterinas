@@ -127,6 +127,42 @@ static AP_LATE_ENTRY: Once<fn()> = Once::new();
 /// will jump to the entry function immediately.
 pub fn register_ap_entry(entry: fn()) {
     AP_LATE_ENTRY.call_once(|| entry);
+    // Wake APs parked in `wait_for_ap_late_entry` (AArch64 only; other
+    // architectures keep using `spin::Once::wait`). The `dsb` pushes the
+    // completion store out before signaling the event so a woken AP's
+    // re-check observes it promptly.
+    #[cfg(target_arch = "aarch64")]
+    unsafe {
+        core::arch::asm!("dsb ishst", "sev");
+    }
+}
+
+/// Waits until the BSP registers the AP late entry.
+///
+/// On AArch64 this uses the WFE/SEV event mechanism instead of a tight
+/// load-acquire spin: APs spinning in `spin::Once::wait`'s LDARB loop have
+/// been observed (QEMU TCG, Cortex-A53) to never observe the completion
+/// store even though the flag is set in memory. Event-based waiting avoids
+/// the tight acquire spin entirely and is the architected cross-core
+/// signaling primitive. On other architectures this just calls
+/// `spin::Once::wait`.
+#[cfg(target_arch = "aarch64")]
+fn wait_for_ap_late_entry() -> fn() {
+    // `sevl` latches a local event so the first `wfe` below never sleeps
+    // through an already-signaled registration (register-before-wait race).
+    unsafe { core::arch::asm!("sevl") };
+    loop {
+        if let Some(entry) = AP_LATE_ENTRY.get() {
+            return *entry;
+        }
+        unsafe { core::arch::asm!("wfe") };
+    }
+}
+
+/// Waits until the BSP registers the AP late entry (non-AArch64 fallback).
+#[cfg(not(target_arch = "aarch64"))]
+fn wait_for_ap_late_entry() -> fn() {
+    *AP_LATE_ENTRY.wait()
 }
 
 #[inline(always)]
@@ -176,7 +212,7 @@ fn ap_early_entry(cpu_id: u32) -> ! {
         crate::mm::paddr_to_vaddr,
     );
 
-    let ap_late_entry = AP_LATE_ENTRY.wait();
+    let ap_late_entry = wait_for_ap_late_entry();
     ap_late_entry();
 
     loop {

@@ -4,15 +4,15 @@ This file records the current active state. All historical investigations and pr
 
 ## Current Status
 
-- **SMP bringup: 4/4 CPUs online and executing Rust** — all APs drop from EL2→EL1, enable MMU, enter `ap_early_entry`, call `report_online_and_hw_cpu_id`, and halt cleanly via `halt_cpu()` loop.
-- **Heap allocator: working on all 4 CPUs** — SpinLock uses proper `compare_exchange` for multi-core mutual exclusion; AP idle threads spawn successfully.
+- **SMP bringup: 4/4 CPUs online, AP wait fixed** — all APs drop from EL2→EL1, enable MMU, enter `ap_early_entry`, and report online. The `AP_LATE_ENTRY` wait used `spin::Once::wait` (tight LDARB spin) in which QEMU APs intermittently parked forever despite the set flag; replaced with sevl/wfe/sev event signaling (`wait_for_ap_late_entry`, aarch64-only). Verified: 2/2 QEMU boots all APs reach the idle-halt loop; hardware boots clean to prompt.
+- **Heap allocator: SMP-safe under fork churn** — stale bootstrap pointers converted, unique list IDs, atomic RPi3 paths; eater stress clean on QEMU and hardware.
 - **Init process: FIXED — boots to shell prompt on RPi3 hardware** — kernel-mode data abort at `BuddySet::alloc_chunk` (FAR=0x2bfc000) was caused by physical MetaSlot pointers in buddy free lists becoming unmapped after TTBR0 switched to user page table.
 - **Shell stdin/stdout: FIXED — shell is fully interactive** — ENOENT panic at `create_init_task` line 141 was caused by trying to open `/dev/console` before `device::init_in_first_process` created it (initramfs `/dev/` is empty; `/dev/console` is created by device init AFTER `spawn_init_process`). Fix: removed manual stdin/stdout/stderr setup from `create_init_task` — `init_in_first_process` handles it when init task first runs.
 - **Shebang scripts: FIXED** (commit `76c5cad1`) — script path is now appended to the interpreter argv; RPi3 `/init` runs and `ls` works.
 - **QEMU smoke test: PASSES on `raspi3b`** (commit `5bb16ff7`) — prompt, echo, and `ls` all pass. Two root causes fixed: (a) ARM-local base was `0x3F000000`, must be `0x40000000` (timer enable, IRQ acknowledge, and spin-table writes went nowhere); (b) PSCI SMC probe hung with no EL3 firmware — now gated on `psci_usable()` (EL3 present + 19.2MHz CNTFRQ).
 - **QEMU SMP: 4/4 CPUs online** — same image takes the spin-table path there (no EL3 firmware for PSCI). Three QEMU-specific incompatibilities fixed: (a) slots are absolute `0xD8+mpidr*8` per QEMU `hw/arm/raspi.c` (not ARM-local offsets); (b) AP stub falls back to the global info array when `x0==0` (QEMU ROM stub zeroes regs; PSCI passes context in `x0`); (c) AP stub drops EL3→EL2 first (QEMU starts secondaries at EL3, TF-A starts them at EL2). Hardware keeps the proven PSCI path unchanged.
 - **UART RX: FIXED via timer-tick polling fallback** — `poll_uart_input()` also runs on every timer tick, so serial input works even if the UART IRQ is lost; QEMU echo verified.
-- Target: Raspberry Pi 3 Model B, AArch64, SMP (4/4 online, all executing Rust).
+- Target: Raspberry Pi 3 Model B, AArch64, SMP (4/4 online; AP thread scheduling pending proof).
 - Build: single binary for RPi3 hardware and QEMU (uses `aarch64-rpi3` with `cortex-a53`).
 
 ## Confirmed Fixes (Reference)
@@ -41,18 +41,25 @@ This file records the current active state. All historical investigations and pr
 - **Heap bootstrap pointer conversion**: heap slab lists and per-CPU slot caches never got the frame allocator's physical-to-virtual conversion, leaving stale pointers that faulted under fork churn; now converted at ostd init (global + BSP cache) and AP entry (per-CPU), with selective (idempotent, mix-safe) walks.
 - **Unique slab-list IDs**: all `LinkedList`s shared ID 1, so `dealloc` removed full-list slabs via the wrong list object and corrupted both chains; IDs are now unique per list.
 - **Atomic RPi3 refcount/mutex paths**: `inc_count` load/store and `Mutex` load/store replaced with atomic `fetch_add`/`swap`, matching std semantics on SMP.
+- **Atomic frame refcounts** (commit `fc431c14`): `inc/dec/mark_unique` load/store replaced with atomic ops; same single-core-assumption class as above. HW stress clean on that image.
 
 ## Durable RPi3 Constraints
 
-### Single-Core and Exclusive-Atomic Constraint
+### Exclusive-Atomic Constraint (revised: SMP is real, see below)
 
-The RPi3 bring-up environment faults on Cortex-A53 exclusive operations (`ldxr`, `ldaxr`, `stxr`, `ldaxrb`, and related CAS loops). RPi3-specific paths use plain load/store or boot-safe single-core helpers. Generic atomic behavior remains unchanged for other targets.
+Early bring-up assumed single-core and avoided exclusive operations (`ldxr`/`stxr`/CAS) on RPi3 paths, using plain load/store or boot-safe helpers instead. That assumption is now WRONG and actively harmful: with 4 CPUs live, every shared-memory RMW must be atomic, and several stability faults traced to non-atomic single-core paths (`inc_count`, `Mutex`, frame refcounts — all fixed to atomic ops and verified on hardware).
 
-**Note**: Despite this constraint, `compare_exchange` (LDXR/STXR) works correctly at EL1 for the SpinLock. The constraint may be specific to EL2 or certain memory regions.
+What still holds: exclusive/acquire accesses have aborted in specific contexts — LDARB external aborts with 1GiB-block mappings spanning DRAM+MMIO (documented in `SimpleOnce::call_once`/`store_direct`, `ostd/src/boot/mod.rs`), and DMA/device-memory exclusives (commit `e137f8c1`). Keep device-memory and early-boot paths off exclusives/acquires. At EL1 on Normal memory (heap, locks, refcounts), LDXR/STXR/CAS work on this board.
 
 ### Cortex-A53 16-Byte Return Hazard
 
 The RPi3 Cortex-A53 can corrupt x30 when a function returns a 16-byte aggregate in registers, including `Result<Frame<M>>`, `Option<Paddr>`, and `(FreeChunk, FreeChunk)`. The allocator mitigations use single-register pointer/physical-address returns with null or `NO_PADDR` sentinels.
+
+## Open Issues
+
+- **Post-prompt exclusive-abort in kthread spawn (HW-only, intermittent)**: synchronous external abort (`ESR 0x96000035`) with ELR at the `ldxr` in the `ThreadOptions::build` init sequence (`alloc` → two plain stores succeed → `ldxr [x0+8]` aborts). DECISIVE: the prior stores to the same page prove translation is valid — not a page-table bug. Same victim VA `ffff800008000a08` across 4 boots (deterministic heap layout). Verdict: silicon/fabric exclusive-handling quirk (same class as tree-documented LDARB aborts); no software lever on generic `Arc` LDXR. System SURVIVES (shell+echo work after HALT — one spawn fails, the rest continues). Full dumps in `.github/agent_state/stress-fault-hw*.log`. Rate on the latest image looks elevated (3 faults / 2 boots vs ~3 / 15 before) — needs more soak data; monitor across future boots. Possible future mitigation: avoid post-boot kthread spawns (static pool) — design discussion, not yet attempted.
+- **AP wait flakiness (FIXED, pending HW proof of scheduling)**: root cause was the `spin::Once::wait` tight-LDARB spin; sevl/wfe/sev replacement verified 2/2 QEMU boots + HW boot clean. Hardware AP thread scheduling still has no direct positive evidence (no AP-side observability); per-CPU tick/taskset proof is future work under B6/C106.
+- **Spawn SEGV flake**: nested/multi-fork dynamic exec intermittently SEGVs on QEMU (deterministic addresses per workload); hardware auto-test spawns cleanly. Re-characterize on the fixed image under C102/C103.
 
 ## Operational Notes
 
@@ -62,5 +69,5 @@ The RPi3 Cortex-A53 can corrupt x30 when a function returns a 16-byte aggregate 
 - QEMU: `raspi3b` machine type, `cortex-a53`, 1G, `-nographic` via tmux, DTB at `/mnt/d/pi_sd/bcm2710-rpi-3-b.dtb`.
 - Smoke test: `make smoke_test` or `python3 test/rpi3/smoke_test.py` (requires `/tmp/asterina.img` and `test/build/initramfs.cpio`).
 - QEMU `raspi3b` smoke test passes (prompt + echo + `ls`); the pre-commit hook runs it automatically — do not skip with `SKIP_SMOKE_TEST=1` unless the failure is proven unrelated.
-- QEMU `raspi3b` boots 4/4 SMP via the spin-table slots it polls; use physical RPi3 hardware to validate the PSCI path and real timing.
+- QEMU `raspi3b` boots 4/4 (APs reach the entry wait via spin-table slots); AP scheduler participation unproven — use physical RPi3 hardware to validate the PSCI path and real timing.
 - Commit format: `<area>: <what changed> — <why/result>`.
