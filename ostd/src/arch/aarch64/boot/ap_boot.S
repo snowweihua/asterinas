@@ -13,10 +13,29 @@
 
 .equ KERNEL_CODE_BASE_VADDR, 0xffff000000000000
 
+/* SCR_EL3 for the EL3->EL2 drop below (mirrors boot.S SCR_VALUE):
+ * NS=1, RES1=[5:4]=3, SMD=1, HCE=1, RW=1 (EL2 in AArch64). */
+.equ AP_SCR_VALUE, ((1 << 0) | (3 << 4) | (1 << 7) | (1 << 8) | (1 << 10))
+/* SPSR to enter EL2h with DAIF masked (mirrors boot.S SPSR_EL3_VALUE). */
+.equ AP_SPSR_EL3_VALUE, ((7 << 6) | 0b1001)
+
 .global ap_boot_entry
 ap_boot_entry:
-/* FIRST: Save x0 (context ID / PerApRawInfo pointer) to x19 */
+/* FIRST: Save x0 (context ID / PerApRawInfo pointer) to x19.
+ * PSCI CPU_ON passes the context ID in x0; QEMU's spin-table stub zeroes
+ * x0-x3 before jumping, so derive the pointer from the BSP-filled global
+ * array instead (PerApRawInfo is two pointers = 16 bytes, indexed by
+ * affinity-1; see ostd/src/boot/smp.rs and update this if it changes). */
     mov     x19, x0
+    cbnz    x19, ap_info_ok
+    mrs     x19, mpidr_el1
+    and     x19, x19, #0x3
+    sub     x19, x19, #1
+    lsl     x19, x19, #4
+    adr     x20, __ap_boot_info_array_pointer
+    ldr     x20, [x20]
+    add     x19, x20, x19
+ap_info_ok:
     /* Write marker to confirm AP reached this code - use 0x41000 where BSP expects it */
     mov     x0, #0xABCD
     ldr     x1, =0x41000
@@ -50,6 +69,21 @@ ap_boot_entry:
     mov     x0, #0x50
     bl      ap_putchar
 
+    /* QEMU starts secondaries at EL3 (no secure firmware drops them);
+     * PSCI/TF-A starts them at EL2. Drop EL3->EL2 first when needed. */
+    mrs     x20, CurrentEL
+    lsr     x20, x20, #2
+    cmp     x20, #3
+    b.ne    ap_el2_start
+    ldr     x20, =AP_SCR_VALUE
+    msr     SCR_EL3, x20
+    ldr     x20, =AP_SPSR_EL3_VALUE
+    msr     SPSR_EL3, x20
+    adr     x20, ap_el2_start
+    msr     ELR_EL3, x20
+    isb
+    eret
+ap_el2_start:
     /* ======================================================================
      * EL2 -> EL1 drop.
      *

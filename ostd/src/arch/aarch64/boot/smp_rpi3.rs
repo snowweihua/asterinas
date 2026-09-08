@@ -396,7 +396,7 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
         }
 
         #[cfg(target_arch = "aarch64")]
-        {
+        if psci_usable() {
             use crate::arch::bcm2836_irq::CORE1_MAILBOX3_SET;
             // Use identity-mapped address for ARM_LOCAL during early boot
             let mailbox_offset = ARM_LOCAL_PA + CORE1_MAILBOX3_SET + 16 * (cpu_id as usize - 1);
@@ -409,7 +409,7 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
         }
 
         #[cfg(target_arch = "aarch64")]
-        {
+        if psci_usable() {
             unsafe {
                 // Use identity-mapped spin_table_addr
                 core::ptr::write_volatile(spin_table_addr as *mut u64, ap_entry_paddr);
@@ -417,6 +417,27 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
                 let readback: u64 = core::ptr::read_volatile(spin_table_addr as *const u64);
                 log::info!("[a2-smp] rpi3: spin-table@{:#x} wrote={:#x} readback={:#x}", spin_table_addr, ap_entry_paddr, readback);
             }
+        }
+
+        // QEMU wake: its AArch64 secondary stub polls 64-bit slots at absolute
+        // 0xD8+mpidr*8 (CPU1 -> 0xE0); PSCI is unavailable there. Push the
+        // write to PoC (secondaries read with MMU off) and signal with sev.
+        #[cfg(target_arch = "aarch64")]
+        if !psci_usable() {
+            let slot_pa = 0xD8usize + (cpu_id as usize) * 8;
+            unsafe {
+                core::ptr::write_volatile(slot_pa as *mut u64, ap_entry_paddr);
+                core::arch::asm!(
+                    "dc cvac, {addr}",
+                    addr = in(reg) slot_pa,
+                    options(nostack, preserves_flags),
+                );
+                core::arch::asm!("dsb sy", "sev", options(nostack, preserves_flags));
+            }
+            log::info!(
+                "[a2-smp] rpi3: QEMU spin-table slot@{:#x} <= {:#x}",
+                slot_pa, ap_entry_paddr
+            );
         }
 
         for _ in 0..50000 {

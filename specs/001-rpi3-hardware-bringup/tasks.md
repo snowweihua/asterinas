@@ -1,6 +1,6 @@
 # Tasks: AArch64 RPi3 v1.1
 
-**Baseline**: `aarch64_v1.0.1` — verified RPi3 shell boot, working shell command execution, and 10/10 clean power-cycle boots. QEMU now also boots to shell and `ls` works after the relative timer fix.
+**Baseline**: `aarch64_v1.0.1` — verified RPi3 shell boot, working shell command execution, and 10/10 clean power-cycle boots. QEMU now also boots to shell and `ls` works after the relative timer fix. QEMU smoke test fully passes since commit `5bb16ff7` (prompt + echo + `ls`); RPi3 hardware re-verified with `ls` (4/4 CPUs via PSCI, no regression).
 
 **Execution order**: Phase A → Phase B → Phase C. Do not enable SMP until the single-core baseline remains reproducible.
 
@@ -71,7 +71,7 @@
 - [x] A501 Run the documented AArch64 virt boot with the correct AArch64 initramfs and verify `/ #` — QEMU now boots to shell and `ls` works after using RPi3-style relative timer (`cntp_tval_el0`) instead of absolute compare timer (`cntp_cval_el0`).
 - [x] A502 Run affected crate checks/tests and `./tools/format_all.sh --check` (attempted: `format_all.sh --check` reported many pre-existing rustfmt diffs across the tree; documentation-only changes do not affect build).
 - [ ] A503 Establish a pre-merge gate covering QEMU boot, RPi3 shell smoke tests, TFTP validation, and no stale deployment paths.
-- [x] A504 **Known Issue**: QEMU serial output works with raspi3b machine type (`-serial null -serial file:/tmp/qemu_serial.log`), but serial input does not work. Cannot send commands to QEMU shell. Use RPi3 hardware for interactive testing.
+- [x] A504 QEMU `raspi3b` serial input FIXED (commit `5bb16ff7`): root cause was the ARM-local base (`0x3F000000` → `0x40000000`), which broke IRQ acknowledge and timer enable; plus a timer-tick RX polling fallback. `smoke_test.py` passes (prompt + echo + `ls`). QEMU now boots 4/4 SMP via corrected spin-table slots (`0xD8+mpidr*8`); hardware still required for PSCI-path validation.
 
 ---
 
@@ -90,8 +90,8 @@
 
 - [x] B201 Added PSCI markers (`log::info!("[a2-smp] PSCI: ...")`) to trace execution.
 - [x] B202 Added bounded timeout (500k iteration limit) to `wait_for_all_aps_started()` replacing indefinite spin loop.
-- [x] B203 **BLOCKED**: Cannot validate cache/barriers because PSCI doesn't work on RPi3 and spin-table path is not connected (dead code).
-- [x] B204 **BLOCKED**: Cannot remove probes because SMP never starts — failure boundary never reached.
+- [x] B203 RESOLVED: PSCI works on RPi3 hardware via TF-A (`PSCI_VERSION=0x10001`, all 3 APs start, hardware-verified); spin-table is the QEMU path (PSCI correctly skipped there via `psci_usable()`).
+- [x] B204 RESOLVED: probes removed; SMP starts on hardware (4/4 online) and boot reaches the shell.
 
 ### B3 — Connect spin-table to boot flow
 
@@ -134,11 +134,9 @@
 - **LIMITATION**: APs cannot actually execute Rust code (branch fails), so the hw_cpu_id values written by the trampoline are the BSP's MPIDR (wrong for APs). Map count is correct (4), so BSP counts 4/4, but AP-to-hw-cpu mapping is incorrect for AP-side Rust execution (irrelevant since APs can't run Rust anyway).
 - **Known issue (pre-existing)**: AP UART output (PL011 writes) does not reach serial — separate mechanism from DRAM writes (which work). Stub's `ap_putchar` 'A','P' etc. are silently dropped. This is why debug progression has been via DRAM markers exclusively.
 
-### B5 — Future: Implement VC mailbox interface (blocked by hardware/firmware)
+### B5 — Dropped: VC mailbox interface not needed (PSCI via TF-A works)
 
-- [ ] B501 Implement VC firmware mailbox interface for RPi3
-- [ ] B502 Request VC firmware to start secondary ARM cores via mailbox
-- [ ] B503 Once APs start, implement minimal `init_on_ap()`
+PSCI CPU_ON starts all RPi3 secondaries (verified: AP markers `0x51/52/53`, 4/4 online) — no VC mailbox interface required. Spin-table remains the (QEMU-only) fallback path.
 
 ### B6 — Full SMP function (after B5 succeeds)
 
@@ -148,7 +146,7 @@
 
 ---
 
-**Phase B Summary**: `boot_all_aps()` is now called for RPi3 and spin-table executes. Spin-table address bug fixed (offset vs full address). Debug markers confirm APs never reach boot stub entry. Secondary CPUs don't wake from `sev`. May need GPU firmware release mechanism or PSCI SMC instead of spin-table. Need further investigation before implementing `init_on_ap()`.
+**Phase B Summary**: `boot_all_aps()` is now called for RPi3 and spin-table executes. Spin-table address bug fixed (offset vs full address). Update: SMP works on RPi3 hardware via PSCI CPU_ON (TF-A) — 4/4 online with AP Rust markers, no VC mailbox needed. QEMU reaches 4/4 too via corrected spin-table slots (`0xD8+mpidr*8` per QEMU `hw/arm/raspi.c`), an `x0==0` info fallback, and an EL3→EL2 drop in the AP stub (QEMU starts secondaries at EL3, PSCI at EL2).
 
 ---
 
@@ -195,7 +193,7 @@
 
 ## Constraints
 
-- RPi3 is currently single-core and must avoid Cortex-A53 exclusive operations in affected paths.
+- RPi3 runs SMP (4/4 via PSCI) but affected paths must still avoid Cortex-A53 exclusive operations.
 - Cortex-A53 16-byte return hazards can move under instrumentation; use minimal probes and remove them after diagnosis.
-- RPi3 virtual timer initialization remains disabled until separately validated.
+- RPi3 uses the non-secure physical timer (CNTPNSIRQ, IRQ 30) at 1000Hz; the virtual timer is not enabled.
 - Runtime files are deployed to `/mnt/d/pi_sd/`; `/srv/tftp` is not used.
