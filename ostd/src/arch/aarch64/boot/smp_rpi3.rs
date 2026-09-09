@@ -22,6 +22,13 @@
 //! 3. BSP triggers BCM2836 mailbox IRQ to wake AP from WFE
 //! 4. AP wakes, enables MMU, polls hold_flag at 0x50000
 //! 5. AP reads entry from 0x50000 + 0x08 and branches to it
+//!
+//! # Safety
+//!
+//! The stub/info/marker regions above are reserved by layout and accessed
+//! as raw physical memory only while the boot identity map is live. The
+//! BSP completes all info writes plus cache cleaning before the mailbox
+//! wakeup; APs poll `hold_flag` before branching to the entry.
 
 use super::DEVICE_TREE;
 use crate::{

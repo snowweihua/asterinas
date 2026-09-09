@@ -9,6 +9,13 @@
 //! All runtime MMIO is done through the kernel high-half mapping
 //! (crate::mm::kspace::KERNEL_BASE_VADDR) so that the peripheral pages are
 //! accessed with Device memory attributes and values are not cached.
+//!
+//! # Safety
+//!
+//! UART access is volatile MMIO with Device attributes (see above), so no
+//! caching or compiler reordering across the accesses. The TXFF-polled
+//! fault-dump path takes no locks and touches no allocator state, which
+//! is what makes it safe to call from the synchronous-exception handler.
 
 use core::sync::atomic::{AtomicBool, Ordering};
 

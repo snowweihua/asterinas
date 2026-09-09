@@ -1,5 +1,15 @@
 // SPDX-License-Identifier: MPL-2.0
 
+//! AArch64 memory management: boot and runtime page tables plus
+//! fallible user-memory helpers.
+//!
+//! # Safety
+//!
+//! Page-table memory is managed by the frame allocator with the correct
+//! page-table page type. User-memory helpers (`memcpy_fallible.S`) run
+//! under the exception table, so a fault on the accessed range returns
+//! failure instead of unwinding into the kernel.
+
 use alloc::fmt;
 use core::{arch::asm, ops::Range};
 

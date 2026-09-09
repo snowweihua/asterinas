@@ -19,6 +19,14 @@
 //!   bit 1: CNTPSIRQ  (physical timer, secure)
 //!   bit 2: CNTVIRQ   (virtual timer)
 //!   bit 3: CNTHPIRQ  (hypervisor timer)
+//!
+//! # Safety
+//!
+//! All register access in this module is volatile MMIO through the kernel
+//! high-half mapping of PA 0x4000_0000, so it carries Device attributes
+//! and is never cached. Per-core registers are touched by the local CPU
+//! only; the BSP's mailbox writes are the intended cross-core wakeup
+//! mechanism, not data sharing.
 
 
 /// BCM2836 ARM Local Interrupt Controller (one set of regs per core).

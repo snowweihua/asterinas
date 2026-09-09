@@ -1,6 +1,14 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! Handles trap.
+//!
+//! # Safety
+//!
+//! Trap entry/exit is hand-written assembly that saves and restores the
+//! full register state; Rust code here only runs with a valid trap frame.
+//! The synchronous-exception dump path is lock- and allocation-free
+//! (raw MPIDR read, volatile UART), so dumping state cannot deadlock the
+//! faulting CPU.
 
 #[expect(clippy::module_inception)]
 mod trap;
