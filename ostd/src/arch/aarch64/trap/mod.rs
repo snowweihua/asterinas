@@ -162,6 +162,22 @@ extern "C" fn sync_exception_current(f: &mut TrapFrame) {
     put_str!(b" FAR=");
     put_hex!(FAR_EL1.get() as usize);
     put_crlf!();
+    // Diagnostic: which CPU and which task took the fault (spawner hunt).
+    // Raw MPIDR read (same Aff0 masking as HwCpuId) and the current task
+    // pointer are both lock-free, hence safe in trap context. A TASK of
+    // zero means bootstrap/IRQ context with no current task.
+    let mpidr: u64;
+    unsafe {
+        core::arch::asm!("mrs {0}, mpidr_el1", out(reg) mpidr, options(nostack, nomem, preserves_flags))
+    };
+    let task_ptr = crate::task::Task::current()
+        .map(|t| &*t as *const crate::task::Task as usize)
+        .unwrap_or(0);
+    put_str!(b" CPU=");
+    put_hex!((mpidr & 0x3) as usize);
+    put_str!(b" TASK=");
+    put_hex!(task_ptr);
+    put_crlf!();
     put_str!(b" x0=");
     put_hex!(f.general.x0);
     put_str!(b" x1=");
