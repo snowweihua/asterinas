@@ -161,7 +161,7 @@ PSCI CPU_ON starts all RPi3 secondaries (verified: AP markers `0x51/52/53`, 4/4 
 - [ ] C104 Repeat reboot tests after A3 is complete.
 - [ ] C105 Classify network/TFTP failures separately from kernel and userspace failures.
 - [x] C106 (moved from B602) Verify SMP scheduler smoke tests (`fork`, `yield`, `sleep` across CPUs) on RPi3 and QEMU. Done: probe v2 as `/init` (sequential per-CPU fork + 20000x `sched_yield` + 200ms `nanosleep` with `clock_gettime` deltas; source `.github/agent_state/ap_probe2.c`) — all 4 CPUs on BOTH targets: fork/yield OK, sleep deltas exactly 201ms (per-CPU ticks firing on every core, including all HW APs).
-- [ ] C107 (moved from B603) Run SMP stress tests and single-core fallback validation.
+- [x] C107 (moved from B603) Run SMP stress tests and single-core fallback validation. Done: probe v3 (4-way parallel pinned spins + 4x200k shared-atomic race; source `.github/agent_state/ap_probe3.c`) clean on BOTH targets — QEMU spins 50-133ms + atomic exactly 800000; HW spins 4x17ms identical (true parallel) + atomic exactly 800000. Single-core: QEMU 1-CPU DTB (`/tmp/smp1.dtb`, cpu@1..3 removed) boots to prompt+echo. HW single-core needs an SD DTB swap (user-assisted, pending).
 
 ### C2 — Performance and capacity
 
