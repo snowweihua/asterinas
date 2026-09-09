@@ -13,7 +13,7 @@
 ```bash
 # 1. Build kernel
 docker run --rm -v $(pwd):/root/asterinas asterinas/aarch64-dev:latest bash -c \
-  'cd /root/asterinas && cargo osdk build --release --target-arch aarch64 --boot-method qemu-direct --scheme aarch64'
+  'cd /root/asterinas && cargo osdk build --release --target-arch aarch64 --boot-method qemu-direct --scheme aarch64-rpi3'
 
 # 2. Convert ELF → raw binary (required for booti)
 docker run --rm -v $(pwd):/root/asterinas asterinas/aarch64-dev:latest bash -c \
@@ -32,7 +32,7 @@ cp test/build/initramfs.cpio /mnt/d/pi_sd/initramfs.cpio
 
 ## Power
 
-Please stop and ask user to power on RPi3B board, user will reply "Done" when finish this
+Power is software-controlled via the USB switch (power MCP): power off → clear the serial buffer → power on. No manual intervention needed.
 
 ## Verifier
 
@@ -50,14 +50,12 @@ stty -F /dev/ttyUSB0 115200 raw -echo 2>/dev/null; cat /dev/ttyUSB0 &
 ## Expected Boot Log
 
 ```
-[a2-boot] entry
-[a2-boot] using loader dtb
-[a2-boot] dtb discovery done
-[a2-boot] initramfs found
-[a2-boot] cmdline: init=/init console=ttyAMA0
-[a2-boot] calling ostd_main
-[a2-smp] boot_all_aps: num_cpus=
-[a2-smp] only 1 CPU, skipping SMP
+Asterinas banner (Presented by the Asterinas developers, MPL-2.0)
+=== AUTO-TEST-START ===
+hello-from-init
+--- ls / ---  (directory listing)
+--- ls /bin ---  (applet listing)
+=== AUTO-TEST-DONE ===
 / #
 ```
 
@@ -76,11 +74,11 @@ Note: The `/ #` shell prompt is the **correct and expected result**. If the kern
 2. Convert `target/osdk/aster-nix/aster-nix-osdk-bin.qemu_elf` → `asterina.img` (raw AArch64 binary for `booti`).
 3. Copy `asterina.img` and `test/build/initramfs.cpio` to `/mnt/d/pi_sd/` (the Windows TFTP root). Do not use `/srv/tftp`.
 4. Ensure `boot.scr` on the SD card aborts and resets on any TFTP failure instead of booting stale data.
-5. Power off the board, clear the serial buffer, power on, wait 140–150 s, and read serial until empty.
+5. Power off the board, clear the serial buffer, power on, wait ~95 s (prompt lands ~50 s after power-on), and read serial until empty.
 6. Record outcomes:
    - TFTP success/failure separately from kernel/user-space failure.
    - `/ #` prompt reached or hang point.
-   - Shell commands: `echo hello`, `sleep 1`, `ls /bin`, `reboot -f`.
+    - Shell commands: `echo hello`, `busybox sleep 1`, `ls /bin`, `busybox reboot -f` (applets live behind `busybox`; only echo/ls/cat/mkdir/mount/sh/true/umount are symlinked in /bin).
    - 10-cycle power baseline pass/fail count.
 
 ## Test Scenarios
@@ -96,7 +94,7 @@ Note: The `/ #` shell prompt is the **correct and expected result**. If the kern
 ```bash
 echo hello        # Expected: hello
 ls /bin          # Expected: list of binaries (no SIGSEGV)
-cat /proc/interrupts  # Expected: interrupt counts
+busybox nproc     # Expected: 4 (minimal procfs: /proc/interrupts is absent)
 ```
 
 ### 3. Interactive Shell
@@ -107,14 +105,16 @@ cat /proc/interrupts  # Expected: interrupt counts
 
 ### 4. Reboot (SC-004)
 ```bash
-reboot
-# Expected: system resets within 30 seconds, boots back to / #
+busybox reboot -f
+# Expected: PSCI reset, fresh firmware boot, back to / # in ~50 s
 ```
 
-### 5. SMP (SC-005) — after FR-006 is implemented
+### 5. SMP (SC-005)
 ```bash
-cat /proc/cpuinfo
-# Expected: 4x CPU online
+busybox nproc
+# Expected: 4
+busybox taskset -c 1 busybox echo ap1
+# Expected: ap1 (proves APs schedule user threads)
 ```
 
 ## QEMU Regression Test
@@ -123,31 +123,35 @@ Use this to verify changes don't break QEMU virt boot:
 
 ```bash
 qemu-system-aarch64 \
-  -machine virt -cpu cortex-a72 -smp 1 -m 512M \
-  -kernel target/osdk/aster-nix/aster-nix-osdk-bin.qemu_elf \
-  -dtb test/nix/aarch64-virt.dtb \
-  -device loader,file=test/build/virt-2cpu-initrd.dtb,addr=0x47000000,force-raw=on \
-  -device loader,file=test/build/initramfs.cpio,addr=0x48000000,force-raw=on \
-  -append "console=ttyAMA0" -nographic -display none
+  -machine raspi3b -cpu cortex-a53 -smp 4 -m 1G \
+  -dtb /mnt/d/pi_sd/bcm2710-rpi-3-b.dtb \
+  -kernel /tmp/asterina.img -initrd test/build/initramfs.cpio \
+  -append 'init=/init console=ttyAMA0' -nographic -display none -monitor none
 
-# Expected: / # shell prompt within 60 seconds
-# NOTE: Use the uncompressed AArch64 initramfs (initramfs.cpio); the old
-#       aarch64-shell-initramfs.cpio.gz path is obsolete.
+# Expected: / # shell prompt in ~75 seconds
+# NOTE: raspi3b QEMU has no EL3 firmware — PSCI paths are gated (psci_usable);
+# use RPi3 hardware for PSCI-path validation.
 
-### QEMU PSCI Reboot Note
-QEMU virt uses HVC conduit for PSCI calls (vs SMC on RPi3 hardware). The `reboot -f`
-syscall executes the PSCI SYSTEM_RESET function, but QEMU may not actually reset
-the emulator — this is normal QEMU behavior. The syscall should return without error.
-For actual hardware reset testing, use RPi3 with the static `/bin/reboot` helper.
+### QEMU PSCI Note
+QEMU raspi3b has no EL3 firmware, so PSCI SMC paths are skipped; `busybox reboot -f`
+on QEMU will not reset the emulator. Hardware reset testing is RPi3-only
+(`busybox reboot -f` verified → PSCI reset → prompt).
 
 ## Troubleshooting
 
 | Symptom | Likely Cause |
 |---------|-------------|
 | No serial output after power-on | U-Boot not loading; check SD card, config.txt |
-| Boot hangs at `[kt1] init in first kthread` | Using wrong initramfs (x86-64 instead of AArch64); for QEMU use the uncompressed AArch64 `initramfs.cpio`; for RPi3 TFTP ensure `initramfs.cpio` is the AArch64 build. Also verify `boot.scr` aborts on TFTP errors |
-| `reboot -f` returns to prompt or segfaults | Use the static `/bin/reboot` helper in the AArch64 initramfs; the dynamic busybox `reboot -f` applet is not reliable on RPi3. Plain `reboot` (no `-f`) requires PID1 shutdown support |
-| APs not coming online | BCM2836 spin-table SMP issue (FR-006) |
+| Boot hangs before `/ #` prompt | Using wrong initramfs (x86-64 instead of AArch64); for QEMU use the uncompressed AArch64 `initramfs.cpio`; for RPi3 TFTP ensure `initramfs.cpio` is the AArch64 build. Also verify `boot.scr` aborts on TFTP errors |
+| `reboot -f` returns to prompt or segfaults | Use `busybox reboot -f` (verified → PSCI reset). Plain `reboot` needs PID1 shutdown support (future work) |
+| APs not scheduling | Check the image has the sevl/wfe/sev AP wait; verify with `busybox taskset -c 1 busybox echo ap1` |
+
+## Operational Notes (C402)
+
+- TFTP root is Windows `D:/pi_sd/` = WSL2 `/mnt/d/pi_sd/`; `/srv/tftp` is not used.
+- `boot.scr`, DTB, and firmware files live on the SD card — SD updates require manual copy; ask the user to copy them.
+- Power/serial are software-controlled (power MCP on COM3, serial MCP on COM7 @115200); workflow is power off → clear buffer → power on → wait ~95 s → read until empty.
+- Failure taxonomy (C105): per-boot DHCP filename miss (`0A8E0F*.img` not found → falls back to `asterina.img`) is infra-normal; initramfs TFTP retries auto-reset clean; kernel faults (`EL1-SYNC`) and userspace failures are distinct classes.
 
 ## Further Documentation
 
