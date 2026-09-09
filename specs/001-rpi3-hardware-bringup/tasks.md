@@ -180,8 +180,8 @@ PSCI CPU_ON starts all RPi3 secondaries (verified: AP markers `0x51/52/53`, 4/4 
 
 ### C4 — Documentation and release
 
-- [ ] C401 Update `known-issues.md`, `research.md`, `plan.md`, `quickstart.md`, and this task file with post-v1.0 evidence.
-- [ ] C402 Document the Windows TFTP root, manual SD-card copy requirement, power/serial procedure, and failure classification.
+- [ ] C401 Update `known-issues.md`, `research.md`, `plan.md`, `quickstart.md`, and this task file with post-v1.0 evidence. Partial: `known-issues.md` rewritten (Issues 2 superseded, new Issues 4-8: F2, NPTL, DTB, procfs, QEMU flake) and `quickstart.md` corrected (scheme, MCP power, current boot log, raspi3b QEMU cmd, reboot/SMP/procfs expectations, C402 ops notes). Open: `research.md` / `plan.md` refresh.
+- [x] C402 Document the Windows TFTP root, manual SD-card copy requirement, power/serial procedure, and failure classification. Done: new "Operational Notes (C402)" section in `quickstart.md` (TFTP mapping, SD manual-copy, MCP power/serial workflow, C105 failure taxonomy); TFTP/SD details also in SESSION_CONTEXT/AGENTS.md.
 - [ ] C403 Define v1.1 acceptance criteria and create a release tag only after the selected Phase A/B/C gates pass.
 
 ---
