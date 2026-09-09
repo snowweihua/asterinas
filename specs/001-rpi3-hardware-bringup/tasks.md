@@ -160,7 +160,7 @@ PSCI CPU_ON starts all RPi3 secondaries (verified: AP markers `0x51/52/53`, 4/4 
 - [ ] C103 Stress `fork`, `vfork`, `clone`, `wait4`, `execve`, signals, and TLS-sensitive dynamic programs.
 - [ ] C104 Repeat reboot tests after A3 is complete.
 - [ ] C105 Classify network/TFTP failures separately from kernel and userspace failures.
-- [ ] C106 (moved from B602) Verify SMP scheduler smoke tests (`fork`, `yield`, `sleep` across CPUs) on RPi3 and QEMU.
+- [x] C106 (moved from B602) Verify SMP scheduler smoke tests (`fork`, `yield`, `sleep` across CPUs) on RPi3 and QEMU. Done: probe v2 as `/init` (sequential per-CPU fork + 20000x `sched_yield` + 200ms `nanosleep` with `clock_gettime` deltas; source `.github/agent_state/ap_probe2.c`) — all 4 CPUs on BOTH targets: fork/yield OK, sleep deltas exactly 201ms (per-CPU ticks firing on every core, including all HW APs).
 - [ ] C107 (moved from B603) Run SMP stress tests and single-core fallback validation.
 
 ### C2 — Performance and capacity
