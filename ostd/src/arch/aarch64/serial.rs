@@ -146,7 +146,7 @@ fn pl011_init() {
 }
 
 fn is_rpi3() -> bool {
-    crate::arch::board::BoardType::cached() == 2
+    crate::arch::is_rpi3()
 }
 
 fn pl011_base_va() -> usize {

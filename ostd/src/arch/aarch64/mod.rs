@@ -34,7 +34,9 @@ pub(crate) fn init_cvm_guest() {
 
 pub(crate) unsafe fn late_init_on_bsp() {
     unsafe { trap::init() };
-    if crate::arch::board::BoardType::cached() == 2 {
+    // Board dispatch is resolved once; RPi3 (no GIC) takes the BCM2836 path.
+    let is_rpi3_board = crate::arch::board::BoardType::cached() == 2;
+    if is_rpi3_board {
         unsafe { bcm2836_irq::init_on_bsp() };
     } else {
         unsafe { gic::init_on_bsp() };
@@ -43,13 +45,9 @@ pub(crate) unsafe fn late_init_on_bsp() {
     // Start the BSP tick and publish the tick interval before APs boot:
     // APs arm their own timers in `init_on_ap`, which needs both ready.
     unsafe { timer::init() };
-    if crate::arch::board::BoardType::cached() == 2 {
-        unsafe { crate::boot::smp::boot_all_aps() };
-    } else {
-        unsafe { crate::boot::smp::boot_all_aps() };
-    }
-    if crate::arch::board::BoardType::cached() == 2 {
-    } else {
+    unsafe { crate::boot::smp::boot_all_aps() };
+    // RPi3 skips `io::init` as before; non-RPi3 targets run it.
+    if !is_rpi3_board {
         unsafe { crate::io::init(io_mem_builder) };
     }
 }
@@ -70,9 +68,9 @@ pub fn tsc_freq() -> u64 {
         return freq;
     }
 
-    // RPi3 single-core bring-up skips `timer::init()` (it needs a GIC),
-    // so `TIMEBASE_FREQ` is never set. Read CNTFRQ_EL0 directly; the
-    // firmware initializes it to the system counter frequency.
+    // `TIMEBASE_FREQ` is published by `timer::init()` during normal boot,
+    // but very early callers can reach here beforehand. Read CNTFRQ_EL0
+    // directly; the firmware initializes it to the system counter frequency.
     let cntfrq: u64;
     unsafe {
         core::arch::asm!(
@@ -95,7 +93,6 @@ pub fn read_tsc() -> u64 {
 ///
 /// Returns None if no random value was generated.
 pub fn read_random() -> Option<u64> {
-    // FIXME: Implement a hardware random number generator on RISC-V platforms.
     None
 }
 
