@@ -97,7 +97,7 @@ impl SystemConsole {
 
             let device = match console_name {
                 "tty0" => Some(Arc::new(Tty0Device) as _),
-                "ttyS0" => serial0_device().cloned().map(|device| device as _),
+                "ttyS0" | "ttyAMA0" => serial0_device().cloned().map(|device| device as _),
                 "hvc0" => hvc0_device().cloned().map(|device| device as _),
                 _ => None,
             };

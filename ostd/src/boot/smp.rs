@@ -51,6 +51,16 @@ pub(crate) struct PerApRawInfo {
     cpu_local: *mut u8,
 }
 
+impl PerApRawInfo {
+    pub(crate) fn stack_top(&self) -> *mut u8 {
+        self.stack_top
+    }
+
+    pub(crate) fn cpu_local(&self) -> *mut u8 {
+        self.cpu_local
+    }
+}
+
 // SAFETY: This information (i.e., the pointer addresses) can be shared safely
 // among multiple threads. However, it is the responsibility of the user to
 // ensure that the contained pointers are used safely.

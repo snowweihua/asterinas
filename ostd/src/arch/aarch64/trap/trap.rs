@@ -1,0 +1,122 @@
+// SPDX-License-Identifier: MPL-2.0 OR MIT
+//
+// The original source code is from [trapframe-rs](https://github.com/rcore-os/trapframe-rs),
+// which is released under the following license:
+//
+// SPDX-License-Identifier: MIT
+//
+// Copyright (c) 2020 - 2024 Runji Wang
+//
+// We make the following new changes:
+// * Implement the `trap_handler` of Asterinas.
+//
+// These changes are released under the following license:
+//
+// SPDX-License-Identifier: MPL-2.0
+
+#![allow(unfulfilled_lint_expectations)]
+
+use core::arch::{asm, global_asm};
+
+use crate::{arch::cpu::context::GeneralRegs, mm::fault::TrapFrameApi};
+
+#[cfg(target_arch = "aarch64")]
+global_asm!(include_str!("trap.S"));
+#[cfg(target_arch = "aarch64")]
+global_asm!(include_str!("el2_trap.S"));
+
+/// Initialize interrupt handling for the current HART.
+///
+/// # Safety
+///
+/// This function will:
+/// - Set `vbar_el1` to the EL1 vector table.
+///
+/// You **MUST NOT** modify `vbar_el1` later.
+pub unsafe fn init() {
+    unsafe {
+        asm!(
+            "adr x9, vector_table_el1",
+            "msr vbar_el1, x9",
+            options(nomem, nostack),
+            out("x9") _,
+        );
+    }
+}
+
+pub(crate) unsafe fn init_on_cpu() {
+    unsafe { init() }
+}
+
+/// Trap frame of kernel interrupt
+///
+/// # Trap handler
+///
+/// You need to define a handler function like this:
+///
+/// ```no_run
+/// #[no_mangle]
+/// pub extern "C" fn trap_handler(tf: &mut TrapFrame) {
+///     println!("TRAP! tf: {:#x?}", tf);
+/// }
+/// ```
+#[derive(Debug, Default, Clone, Copy)]
+#[repr(C)]
+pub struct TrapFrame {
+    /// General registers
+    pub general: GeneralRegs,
+    /// link register, aka x30
+    pub lr: usize,
+    /// exception link register
+    pub elr_el1: usize,
+    /// saved program status
+    pub spsr_el1: usize,
+    /// exception syndrome register
+    pub esr_el1: usize,
+}
+
+impl TrapFrameApi for TrapFrame {
+    fn set_instruction_pointer(&mut self, ip: usize) {
+        self.elr_el1 = ip;
+    }
+
+    fn instruction_pointer(&self) -> usize {
+        self.elr_el1
+    }
+}
+
+/// Saved registers on a trap.
+#[derive(Debug, Default, Clone, Copy)]
+#[repr(C)]
+pub(in crate::arch) struct RawUserContext {
+    /// General registers
+    pub(in crate::arch) general: GeneralRegs,
+    /// link register
+    pub(in crate::arch) lr: usize,
+    /// exception link register
+    pub(in crate::arch) elr_el1: usize,
+    /// saved program status
+    pub(in crate::arch) spsr_el1: usize,
+    /// exception syndrome register
+    pub(in crate::arch) esr_el1: usize,
+    /// user stack pointer (SP_EL0)
+    pub(in crate::arch) sp_el0: usize,
+}
+
+impl RawUserContext {
+    /// Goes to user space with the context, and comes back when a trap occurs.
+    ///
+    /// On return, the context will be reset to the status before the trap.
+    /// Trap reason and error code will be placed at `scause` and `stval`.
+    pub(in crate::arch) fn run(&mut self) {
+        // Return to userspace with interrupts disabled. Otherwise, interrupts
+        // after switching `sscratch` will mess up the CPU state.
+        crate::arch::irq::disable_local();
+        unsafe { run_user(self) }
+    }
+}
+
+#[expect(improper_ctypes)]
+unsafe extern "C" {
+    fn run_user(regs: &mut RawUserContext);
+}

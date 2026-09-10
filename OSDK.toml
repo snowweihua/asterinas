@@ -89,3 +89,35 @@ qemu.args = """\
     -device virtconsole,chardev=mux \
     -rtc base=utc
 """
+
+[scheme."aarch64"]
+supported_archs = ["aarch64"]
+boot.method = "qemu-direct"
+build.strip_elf = false
+
+qemu.args = """\
+    -machine virt \
+    -cpu cortex-a72 \
+    -smp 1 \
+    -m 1G \
+    --no-reboot \
+    -nographic \
+    -display none \
+    -serial mon:stdio
+"""
+
+[scheme."aarch64-rpi3"]
+supported_archs = ["aarch64"]
+boot.method = "qemu-direct"
+build.strip_elf = false
+
+qemu.args = """\
+    -machine raspi3b \
+    -cpu cortex-a53 \
+    -smp 4 \
+    -m 1G \
+    --no-reboot \
+    -nographic \
+    -display none \
+    -serial mon:stdio
+"""

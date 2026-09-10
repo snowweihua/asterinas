@@ -575,6 +575,10 @@ impl VmMapping {
                     let map_prop = PageProperty::new_user(page_flags, CachePolicy::Writeback);
 
                     cursor.map(frame, map_prop);
+                    // A fresh mapping needs a TLB flush: the faulting walk may
+                    // have cached a negative TLB entry.
+                    TlbFlushOp::for_range(page_aligned_addr..page_aligned_addr + PAGE_SIZE)
+                        .perform_on_current();
                     rss_delta.add(self.rss_type(), 1);
                 }
             }
@@ -689,7 +693,11 @@ impl VmMapping {
                         let page_flags = PageFlags::from(vm_perms) | PageFlags::ACCESSED;
                         let page_prop = PageProperty::new_user(page_flags, CachePolicy::Writeback);
                         let (_, frame) = commit_fn()?;
+                        let mapped = cursor.virt_addr();
                         cursor.map(frame.into(), page_prop);
+                        // A fresh mapping needs a TLB flush: the faulting walk
+                        // may have cached a negative TLB entry.
+                        TlbFlushOp::for_range(mapped..mapped + PAGE_SIZE).perform_on_current();
                         rss_delta_ref.add(self.rss_type(), 1);
                     } else {
                         let next_addr = cursor.virt_addr() + PAGE_SIZE;
