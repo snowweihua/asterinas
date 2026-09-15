@@ -11,12 +11,12 @@ mod gic;
 pub(crate) mod io;
 pub(crate) mod iommu;
 pub(crate) mod irq;
-pub(crate) mod mm;
+pub mod mm;
 pub(crate) mod ex_table;
 pub mod qemu;
 pub mod serial;
 pub(crate) mod task;
-mod timer;
+pub mod timer;
 pub mod trap;
 pub(crate) mod board;
 pub(crate) mod bcm2836_irq;
@@ -34,6 +34,8 @@ pub(crate) fn init_cvm_guest() {
 
 pub(crate) unsafe fn late_init_on_bsp() {
     unsafe { trap::init() };
+    // TEMP-HW-DEBUG bisect: confirm VBAR write returns.
+    crate::arch::serial::marker(b'A');
     // Board dispatch is resolved once; RPi3 (no GIC) takes the BCM2836 path.
     let is_rpi3_board = crate::arch::board::BoardType::cached() == 2;
     if is_rpi3_board {
@@ -41,6 +43,9 @@ pub(crate) unsafe fn late_init_on_bsp() {
     } else {
         unsafe { gic::init_on_bsp() };
     }
+    crate::arch::serial::reenable_rx_irq();
+    crate::arch::serial::init_rx_irq();
+    unsafe { crate::arch::irq::init_ipi_on_bsp() };
     let io_mem_builder = unsafe { io::construct_io_mem_allocator_builder() };
     // Start the BSP tick and publish the tick interval before APs boot:
     // APs arm their own timers in `init_on_ap`, which needs both ready.
@@ -51,6 +56,7 @@ pub(crate) unsafe fn late_init_on_bsp() {
 
 pub(crate) unsafe fn init_on_ap() {
     bcm2836_irq::init_on_ap();
+    unsafe { crate::arch::irq::init_ipi_on_ap() };
     unsafe { timer::init_on_ap() };
 }
 

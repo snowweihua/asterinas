@@ -83,6 +83,36 @@ pub(crate) unsafe fn bringup_all_aps(info_ptr: *const PerApRawInfo, pt_ptr: Padd
 /// MMU off and through the TTBR0 identity map.
 pub(crate) const AP_INFO_SCRATCH_PA: usize = 0x5_0020;
 
+/// TEMP-HW-DEBUG: scratch slot carrying the runtime KPT root PA from the BSP
+/// to APs. The AP-side `Once` read faults with `ldxr` on HW, so the BSP
+/// publishes the root explicitly through the proven scratch channel
+/// (same linear-alias + `dc cvac` pattern as the working SP/TPIDR path).
+/// Revert-or-promote after validation.
+pub(crate) const KPT_ROOT_SCRATCH_PA: usize = 0x5_0060;
+
+/// Pushes the AP boot globals to the point of coherency.
+///
+/// The AP stub reads these with the MMU off, bypassing the cache, so a
+/// dirty cache line here would make APs observe stale values (e.g. a zero
+/// page-table root, which faults every AP immediately).
+pub(crate) unsafe fn flush_ap_boot_globals() {
+    unsafe extern "C" {
+        static __ap_boot_info_array_pointer: u64;
+        static __boot_page_table_pointer: u64;
+    }
+    unsafe {
+        let base = &__ap_boot_info_array_pointer as *const u64 as usize & !63;
+        for offset in (0..320).step_by(64) {
+            core::arch::asm!(
+                "dc cvac, {addr}",
+                addr = in(reg) base + offset,
+                options(nostack, preserves_flags)
+            );
+        }
+        core::arch::asm!("dsb ish", options(nostack, preserves_flags));
+    }
+}
+
 unsafe extern "C" {
     static boot_l4pt: u8;
 }
@@ -106,13 +136,14 @@ pub(crate) fn boot_root_paddr() -> Paddr {
 pub(crate) unsafe fn publish_ap_info_to_scratch(info_ptr: *const PerApRawInfo, num_cpus: u32) {
     for i in 0..(num_cpus as usize).saturating_sub(1) {
         let entry = unsafe { &*info_ptr.add(i) };
-        let dst = (AP_INFO_SCRATCH_PA + i * 16) as *mut u64;
+        // Linear alias: the BSP runs with the MMU on (kernel page table).
+        let dst = crate::mm::kspace::paddr_to_vaddr(AP_INFO_SCRATCH_PA + i * 16) as *mut u64;
         unsafe {
             core::ptr::write_volatile(dst, entry.stack_top() as u64);
             core::ptr::write_volatile(dst.byte_add(8), entry.cpu_local() as u64);
             core::arch::asm!(
                 "dc cvac, {addr}",
-                addr = in(reg) AP_INFO_SCRATCH_PA + i * 16,
+                addr = in(reg) dst as usize,
                 options(nostack, preserves_flags)
             );
         }
@@ -120,13 +151,30 @@ pub(crate) unsafe fn publish_ap_info_to_scratch(info_ptr: *const PerApRawInfo, n
     unsafe { core::arch::asm!("dsb ish", options(nostack, preserves_flags)) };
 }
 
+pub(crate) unsafe fn publish_kpt_root_to_scratch(root: Paddr) {
+    let dst = crate::mm::kspace::paddr_to_vaddr(KPT_ROOT_SCRATCH_PA) as *mut u64;
+    unsafe {
+        core::ptr::write_volatile(dst, root as u64);
+        core::arch::asm!(
+            "dc cvac, {addr}",
+            addr = in(reg) dst as usize,
+            options(nostack, preserves_flags)
+        );
+        core::arch::asm!("dsb ish", options(nostack, preserves_flags));
+    }
+}
+
 pub(crate) unsafe fn bringup_all_aps_virt(info_ptr: *const PerApRawInfo, _pt_ptr: Paddr, num_cpus: u32) {
     log::info!("[a2-smp] PSCI: START bringup_all_aps num_cpus={}", num_cpus);
 
     unsafe {
         publish_ap_info_to_scratch(info_ptr, num_cpus);
+        if let Some(root) = crate::mm::kspace::kernel_page_table_root_paddr() {
+            publish_kpt_root_to_scratch(root);
+        }
         __ap_boot_info_array_pointer = AP_INFO_SCRATCH_PA as *const PerApRawInfo;
         __boot_page_table_pointer = boot_root_paddr() as u64;
+        flush_ap_boot_globals();
     }
 
     let ap_entry_paddr =

@@ -9,6 +9,8 @@ edition = "2024"
 inventory.workspace = true
 log.workspace = true
 component-macro = { path = "../component-macro" }
+# TEMP-HW-DEBUG (revert before MR-1): `spin::Once` boot-marker hook below.
+spin.workspace = true
 
 [build-dependencies]
 json = "0.12.4"

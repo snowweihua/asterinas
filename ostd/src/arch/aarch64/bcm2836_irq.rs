@@ -127,13 +127,21 @@ fn core_id() -> usize {
 }
 
 unsafe fn read_reg(offset: usize) -> u32 {
-    unsafe { core::ptr::read_volatile((local_ic_base_va() + offset) as *const u32) }
+    mmio_read(local_ic_base_va() + offset)
 }
 
 unsafe fn write_reg(offset: usize, value: u32) {
-    unsafe {
-        core::ptr::write_volatile((local_ic_base_va() + offset) as *mut u32, value);
-    }
+    mmio_write(local_ic_base_va() + offset, value);
+}
+
+#[inline(always)]
+fn mmio_read(va: usize) -> u32 {
+    unsafe { core::ptr::read_volatile(va as *const u32) }
+}
+
+#[inline(always)]
+fn mmio_write(va: usize, value: u32) {
+    unsafe { core::ptr::write_volatile(va as *mut u32, value) }
 }
 
 pub unsafe fn init_on_bsp() {
@@ -146,21 +154,25 @@ pub unsafe fn init_on_bsp() {
 
     // Disable ARM-local timer IRQ on Core 0 (re-enabled later by enable_timer_irq).
     unsafe { write_reg(CORE0_TIMER_INT_CONTROL, 0) };
+    // TEMP-HW-DEBUG bisect: local-IC (linear-map) writes completed.
+    crate::arch::serial::marker(b'B');
 
     // Disable ALL BCM2835 peripheral interrupts AND FIQ.
     // Use the high-half mapping (Device memory) so the writes actually reach the
     // controller and are not trapped in an inner cache.
     let ic_va = peri_ic_base_va();
     unsafe {
-        core::ptr::write_volatile((ic_va + BCM2835_DISABLE_IRQS_1) as *mut u32, 0xFFFF_FFFF);
-        core::ptr::write_volatile((ic_va + BCM2835_DISABLE_IRQS_2) as *mut u32, 0xFFFF_FFFF);
-        core::ptr::write_volatile((ic_va + BCM2835_DISABLE_BASIC) as *mut u32, 0xFFFF_FFFF);
+        mmio_write(ic_va + BCM2835_DISABLE_IRQS_1, 0xFFFF_FFFF);
+        mmio_write(ic_va + BCM2835_DISABLE_IRQS_2, 0xFFFF_FFFF);
+        mmio_write(ic_va + BCM2835_DISABLE_BASIC, 0xFFFF_FFFF);
         // Clear FIQ enable bit.  U-Boot may have left the USB DWC or another
         // peripheral routed as FIQ.  Once the CPU F-bit is unmasked by
         // enable_local(), an unacknowledged FIQ fires in a tight storm and
         // starves all kernel threads.
-        core::ptr::write_volatile((ic_va + BCM2835_FIQ_CONTROL) as *mut u32, 0);
+        mmio_write(ic_va + BCM2835_FIQ_CONTROL, 0);
     }
+    // TEMP-HW-DEBUG bisect: peri-IC (high-half Device) writes completed.
+    crate::arch::serial::marker(b'C');
 }
 
 pub fn enable_cntpns_irq() {
@@ -176,32 +188,27 @@ pub fn enable_cntv_irq() {
 }
 
 pub unsafe fn init_on_ap() {
+    crate::arch::serial::marker(b'a');
     if crate::arch::board::BoardType::cached() != 2 {
+        crate::arch::serial::marker(b'z');
         return;
     }
+    crate::arch::serial::marker(b'b');
     let core = core_id();
     let timer_ctrl = CORE0_TIMER_INT_CONTROL + (core * CORE_REG_STRIDE);
-    let mbox_ctrl = CORE0_MAILBOX_INT_CONTROL + (core * CORE_REG_STRIDE);
 
-    // Mask ALL ARM-local IRQ sources for this core (timer + mailboxes) so no
-    // stray interrupt can fire once the CPU unmask bits (DAIF) are opened by
-    // enable_local().  The AP was woken via a mailbox-write SET (which leaves
-    // a pending mailbox IRQ); if left enabled it would re-enter irq_current in
-    // an infinite storm (acknowledge_interrupt only reads, never clears, and
-    // end_interrupt is a no-op on the BCM2836).
     unsafe {
         write_reg(timer_ctrl, 0);
-        write_reg(mbox_ctrl, 0);
-        // Clear any pending wake mailbox IRQ for this core.  The wake used
-        // CORE{n}_MAILBOX3_SET; its set bits live in CORE{n}_MAILBOX3_CLR and
-        // the interrupt stays asserted while non-zero.
-        const CORE0_MAILBOX3_CLR: usize = 0xCC; // stride 0x10 per core
+        crate::arch::serial::marker(b'c');
+        const CORE0_MAILBOX3_CLR: usize = 0xCC;
         const MAILBOX_CLR_STRIDE: usize = 0x10;
         write_reg(CORE0_MAILBOX3_CLR + (core * MAILBOX_CLR_STRIDE), 0xFFFF_FFFF);
         core::arch::asm!("dsb sy", "isb", options(nostack, nomem, preserves_flags));
-        // Route this core's non-secure physical timer IRQ to the CPU. The
-        // tick itself is armed right after by the timer init.
+        crate::arch::serial::marker(b'd');
         enable_cntpns_irq();
+        crate::arch::serial::marker(b'e');
+        enable_ipi_irq();
+        crate::arch::serial::marker(b'f');
     }
 }
 
@@ -238,11 +245,10 @@ pub fn reenable_miniuart_irq() {
 #[inline(always)]
 unsafe fn write_aux_irq_enable() {
     let ic_va = peri_ic_base_va();
-    core::ptr::write_volatile(
-        (ic_va + BCM2835_ENABLE_IRQS_1) as *mut u32,
-        AUX_PERI_IRQ_BIT,
-    );
-    core::arch::asm!("dsb sy", "isb", options(nostack, preserves_flags));
+    mmio_write(ic_va + BCM2835_ENABLE_IRQS_1, AUX_PERI_IRQ_BIT);
+    unsafe {
+        core::arch::asm!("dsb sy", "isb", options(nostack, preserves_flags));
+    }
 }
 
 /// Enable the BCM2835 PL011 UART IRQ (GPU IRQ 57).
@@ -256,12 +262,7 @@ pub fn enable_uart_irq() {
         return;
     }
     let ic_va = peri_ic_base_va();
-    unsafe {
-        core::ptr::write_volatile(
-            (ic_va + BCM2835_ENABLE_IRQS_2) as *mut u32,
-            UART_PERI_IRQ_BIT,
-        );
-    }
+    mmio_write(ic_va + BCM2835_ENABLE_IRQS_2, UART_PERI_IRQ_BIT);
 }
 
 pub fn acknowledge_interrupt() -> usize {
@@ -279,11 +280,20 @@ pub fn acknowledge_interrupt() -> usize {
         return 27;
     }
 
+    // Mailbox-0 doorbell IPI. Read-and-clear, like Linux: the CLR register
+    // is readable, and clearing here (before callbacks run) means a doorbell
+    // raised while handling re-fires instead of being lost. `end_interrupt`
+    // is therefore a no-op for this source.
+    let mbox0 = unsafe { read_reg(CORE_MBOX0_CLR_BASE + core * CORE_MBOX_STRIDE) };
+    if mbox0 != 0 {
+        unsafe { write_reg(CORE_MBOX0_CLR_BASE + core * CORE_MBOX_STRIDE, mbox0) };
+        return IPI_IRQ_NUM;
+    }
+
     if pending & GPU_IRQ_BIT != 0 {
         // A BCM2835 peripheral IRQ is pending.  Check which one.
         let ic_va = peri_ic_base_va();
-        let irq1 =
-            unsafe { core::ptr::read_volatile((ic_va + BCM2835_IRQS_PENDING_1) as *const u32) };
+        let irq1 = mmio_read(ic_va + BCM2835_IRQS_PENDING_1);
         if irq1 & AUX_PERI_IRQ_BIT != 0 {
             return MINIUART_IRQ_NUM; // AUX mini-UART RX
         }
@@ -295,23 +305,34 @@ pub fn acknowledge_interrupt() -> usize {
             const BCM2835_ST_CS: usize = 0x00;
             let st_va = crate::mm::kspace::KERNEL_BASE_VADDR + BCM2835_SYSTEM_TIMER_BASE_PA;
             unsafe {
-                core::ptr::write_volatile(
-                    (ic_va + BCM2835_DISABLE_IRQS_1) as *mut u32,
-                    SYSTEM_TIMER1_BIT,
-                );
+                mmio_write(ic_va + BCM2835_DISABLE_IRQS_1, SYSTEM_TIMER1_BIT);
                 core::arch::asm!("dsb sy", "isb", options(nostack, preserves_flags));
-                core::ptr::write_volatile((st_va + BCM2835_ST_CS) as *mut u32, SYSTEM_TIMER1_BIT);
+                mmio_write(st_va + BCM2835_ST_CS, SYSTEM_TIMER1_BIT);
                 core::arch::asm!("dsb sy", "isb", options(nostack, preserves_flags));
             }
             return 0;
         }
-        let irq2 =
-            unsafe { core::ptr::read_volatile((ic_va + BCM2835_IRQS_PENDING_2) as *const u32) };
+        let irq2 = mmio_read(ic_va + BCM2835_IRQS_PENDING_2);
         if irq2 & UART_PERI_IRQ_BIT != 0 {
             return UART_IRQ_NUM; // PL011 UART RX
         }
         // Unknown peripheral IRQ — silently ignore to avoid IRQ storms.
         return 0;
+    }
+
+    // Mailbox-0 doorbell IPI.  Bit 4 in the ARM-local source register
+    // indicates a mailbox interrupt is pending.  Read-and-clear the CLR
+    // register so a doorbell raised while handling re-fires instead of
+    // being lost.  `end_interrupt` is a no-op for this source.
+    //
+    // This check MUST come after the timer/GPU checks above (so timers
+    // are serviced first) but before the catch-all `return 0`.
+    if pending & (1 << 4) != 0 {
+        let mbox0 = unsafe { read_reg(CORE_MBOX0_CLR_BASE + core * CORE_MBOX_STRIDE) };
+        if mbox0 != 0 {
+            unsafe { write_reg(CORE_MBOX0_CLR_BASE + core * CORE_MBOX_STRIDE, mbox0) };
+        }
+        return IPI_IRQ_NUM;
     }
 
     if pending != 0 {
@@ -324,6 +345,54 @@ pub fn acknowledge_interrupt() -> usize {
 }
 
 pub fn end_interrupt(_irq: usize) {}
+
+/// Abstract IRQ number for inter-processor interrupts (mailbox 0 doorbell).
+///
+/// This number is synthesized by `acknowledge_interrupt()`; it must not
+/// collide with the other synthesized numbers (27/29/30/57). No device-tree
+/// node on the RPi3 yields this number.
+pub const IPI_IRQ_NUM: usize = 32;
+
+/// Mailbox 0 doorbell register bases (core-major layout per the QA7 manual:
+/// `BASE + 0x10 * core`). Linux uses mailbox 0 for IPIs; the IRQ stays
+/// asserted while any bit is set, so only bit 0 is ever used here.
+const CORE_MBOX0_SET_BASE: usize = 0x80;
+const CORE_MBOX0_CLR_BASE: usize = 0xC0;
+const CORE_MBOX_STRIDE: usize = 0x10;
+
+/// Mailbox 0 IRQ enable bit in the per-core mailbox interrupt control.
+/// FIQ routing bits (4-7) are intentionally left clear.
+const MBOX0_IRQ_BIT: u32 = 1 << 0;
+
+/// Enables the mailbox-0 IPI doorbell on the current core.
+///
+/// Stale bits are cleared first so enabling can never resurrect an old IRQ.
+pub fn enable_ipi_irq() {
+    let core = core_id();
+    unsafe {
+        write_reg(CORE_MBOX0_CLR_BASE + core * CORE_MBOX_STRIDE, 0xFFFF_FFFF);
+        let ctrl = CORE0_MAILBOX_INT_CONTROL + core * CORE_REG_STRIDE;
+        write_reg(ctrl, read_reg(ctrl) | MBOX0_IRQ_BIT);
+        core::arch::asm!("dsb sy", "isb", options(nostack, nomem, preserves_flags));
+    }
+}
+
+/// Sends a mailbox-0 doorbell IPI to the given core (MPIDR Aff0, 0-3).
+///
+/// A `dsb` makes normal-memory stores visible before the doorbell, matching
+/// Linux's `bcm2836_arm_irqchip_send_ipi`.
+pub fn send_ipi_to_core(core: u32) {
+    if core > 3 {
+        return;
+    }
+    unsafe {
+        core::arch::asm!("dsb sy", options(nostack, nomem, preserves_flags));
+        write_reg(
+            CORE_MBOX0_SET_BASE + (core as usize) * CORE_MBOX_STRIDE,
+            1,
+        );
+    }
+}
 
 /// Mailbox IRQ set register offsets (per core).
 /// Writing to COREn_MAILBOX0_SET generates a mailbox IRQ to core n.
@@ -350,7 +419,7 @@ pub unsafe fn trigger_mailbox_irq(core_id: u32) {
     let base_va = local_ic_base_va();
     let reg_addr = base_va + offset;
     unsafe {
-        core::ptr::write_volatile((reg_addr) as *mut u32, 1);
+        mmio_write(reg_addr, 1);
         core::arch::asm!("dsb ish", "sev", "isb", options(nostack, preserves_flags));
     }
 }
@@ -366,7 +435,7 @@ pub unsafe fn trigger_mailbox3_irq(core_id: u32) {
     let base_va = local_ic_base_va();
     let reg_addr = base_va + offset;
     unsafe {
-        core::ptr::write_volatile((reg_addr) as *mut u32, 1);
+        mmio_write(reg_addr, 1);
         core::arch::asm!("dsb sy", "sev", "dsb sy", options(nostack));
     }
 }
@@ -383,6 +452,13 @@ pub unsafe fn write_spin_table_mailbox(core_id: u32, entry_pa: u64) {
         _ => return,
     };
     unsafe {
+        // Single-copy-atomic 64-bit store: the AP may read this concurrently.
         core::ptr::write_volatile((local_ic_base_va() + offset) as *mut u64, entry_pa);
+        core::arch::asm!(
+            "dc cvac, {0}",
+            in(reg) local_ic_base_va() + offset,
+            options(nostack, preserves_flags)
+        );
+        core::arch::asm!("dsb ish", options(nostack, preserves_flags));
     }
 }

@@ -145,7 +145,8 @@ impl TryFrom<&CpuException> for PageFaultInfo {
     fn try_from(value: &CpuException) -> Result<Self, ()> {
         let (fault_addr, required_perms) = match value {
             CpuException::InstructionAbortLowerEL(addr) => (*addr, VmPerms::EXEC),
-            CpuException::DataAbortLowerEL(addr, is_write) => {
+            CpuException::DataAbortLowerEL(addr, is_write)
+            | CpuException::DataAbortCurrentEL(addr, is_write) => {
                 (*addr, if *is_write { VmPerms::WRITE } else { VmPerms::READ })
             }
             _ => return Err(()),

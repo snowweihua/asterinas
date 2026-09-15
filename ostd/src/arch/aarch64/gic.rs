@@ -109,6 +109,25 @@ pub(crate) fn acknowledge_interrupt() -> Option<usize> {
     }
 }
 
+/// Sends a software-generated interrupt to the given CPU interfaces.
+///
+/// `targets` is a bitmask of GIC CPU interfaces (bit `i` = interface `i`),
+/// matching MPIDR Aff0 numbering on QEMU `virt` with up to 8 CPUs.
+/// GICD is reached through the linear mapping, like the CPU interface.
+pub(crate) fn send_sgi(sgi_num: u8, targets: u8) {
+    const SGIR_OFFSET: usize = 0xF00;
+    // [25:24]=0 (forward to the CPUTargetList), [23:16]=targets,
+    // [15]=NSATT (non-secure), [3:0]=SGI id.
+    let value: u32 = ((targets as u32) << 16) | (1 << 15) | (sgi_num as u32);
+    unsafe {
+        core::arch::asm!("dsb ishst", options(nostack, nomem, preserves_flags));
+        core::ptr::write_volatile(
+            (crate::mm::kspace::paddr_to_vaddr(QEMU_VIRT_GICD_BASE) + SGIR_OFFSET) as *mut u32,
+            value,
+        );
+    }
+}
+
 pub(crate) fn end_interrupt(irq_num: usize) {
     if crate::arch::board::BoardType::cached() == 2 {
         crate::arch::bcm2836_irq::end_interrupt(irq_num);

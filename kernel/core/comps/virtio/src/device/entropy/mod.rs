@@ -24,7 +24,7 @@ fn register_device(name: String, device: Arc<EntropyDevice>) {
 
 /// Returns the first registered [`EntropyDevice`].
 pub fn first_device() -> Option<Arc<EntropyDevice>> {
-    let entropy_devs = ENTROPY_DEVICE_TABLE.get().unwrap().lock();
+    let entropy_devs = ENTROPY_DEVICE_TABLE.get()?.lock();
 
     entropy_devs.values().next().cloned()
 }

@@ -3,6 +3,7 @@
 //! Panic support.
 
 use crate::early_println;
+use crate::early_print;
 
 extern crate gimli;
 
@@ -27,7 +28,30 @@ pub fn __ostd_panic_handler(info: &core::panic::PanicInfo) -> ! {
 
     IN_PANIC.store(true);
 
-    early_println!("Non-resettable panic! {:#?}", info);
+    // TEMP-HW-DEBUG: compact one-line panic summary (pretty {:#?} is too
+    // long to survive the lossy HW serial channel). The paced re-emit below
+    // survives it; revert before MR-1.
+    if let Some(loc) = info.location() {
+        early_print!("PANIC! {}:{}:{} ", loc.file(), loc.line(), loc.column());
+        #[cfg(target_arch = "aarch64")]
+        {
+            crate::arch::serial::marker_str(loc.file());
+            crate::arch::serial::marker_hex(loc.line() as usize);
+        }
+    } else {
+        early_print!("PANIC! unknown-loc ");
+    }
+    if let Some(msg) = info.payload().downcast_ref::<&str>() {
+        early_println!("{}", msg);
+        #[cfg(target_arch = "aarch64")]
+        crate::arch::serial::marker_str(msg);
+    } else if let Some(msg) = info.payload().downcast_ref::<alloc::string::String>() {
+        early_println!("{}", msg);
+        #[cfg(target_arch = "aarch64")]
+        crate::arch::serial::marker_str(msg);
+    } else {
+        early_println!("(non-string payload)");
+    }
 
     print_stack_trace();
     abort();
@@ -80,6 +104,8 @@ pub use unwinding::panic::{begin_panic, catch_unwind};
 ///
 /// The printing procedure is protected by a spin lock to prevent interleaving.
 pub fn print_stack_trace() {
+    crate::early_println!("(stack trace suppressed for HW debug)");
+    return;
     use core::ffi::c_void;
 
     use gimli::Register;

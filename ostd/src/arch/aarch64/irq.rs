@@ -3,8 +3,69 @@
 //! Interrupts.
 use core::arch::asm;
 
+use spin::Once;
+
 use super::gic;
-use crate::{cpu::PinCurrentCpu, prelude::Result};
+use crate::{cpu::PinCurrentCpu, irq::IrqLine, prelude::Result};
+
+/// SGI number used for IPIs on GIC systems (QEMU `virt`).
+///
+/// SGIs 0-15 are unused by OSTD on AArch64; the timer uses PPIs and the
+/// UART uses an SPI.
+const SGI_IPI_NUM: u8 = 1;
+
+/// The allocated IPI line. Kept alive for the lifetime of the kernel so the
+/// inter-processor-call callback is never unregistered.
+static IPI_LINE: Once<IrqLine> = Once::new();
+
+/// Initializes IPI state on the BSP: registers the handler, then unmasks
+/// the doorbell on this core. APs boot after this, so their doorbells are
+/// always handled.
+///
+/// # Safety
+///
+/// Must run on the BSP before any AP can send an IPI to this core.
+pub(in crate::arch) unsafe fn init_ipi_on_bsp() {
+    let irq_num = ipi_irq_num();
+    let mut line =
+        IrqLine::alloc_specific(irq_num).expect("IPI IRQ line is already taken");
+    // SAFETY: The queued function runs in IRQ context on the target core,
+    // which is exactly what `do_inter_processor_call` requires.
+    line.on_active(|trap_frame| unsafe {
+        crate::smp::do_inter_processor_call(trap_frame)
+    });
+    IPI_LINE.call_once(|| line);
+    enable_ipi_on_current_core();
+}
+
+/// Unmasks the IPI doorbell on an AP.
+///
+/// # Safety
+///
+/// Must run before other cores can send IPIs to this core.
+pub(in crate::arch) unsafe fn init_ipi_on_ap() {
+    enable_ipi_on_current_core();
+}
+
+fn is_rpi3() -> bool {
+    crate::arch::board::BoardType::cached() == 2
+}
+
+fn ipi_irq_num() -> u8 {
+    if is_rpi3() {
+        crate::arch::bcm2836_irq::IPI_IRQ_NUM as u8
+    } else {
+        SGI_IPI_NUM
+    }
+}
+
+fn enable_ipi_on_current_core() {
+    if is_rpi3() {
+        crate::arch::bcm2836_irq::enable_ipi_irq();
+    } else {
+        super::gic::init_interrupt(SGI_IPI_NUM);
+    }
+}
 
 pub(crate) const IRQ_NUM_MIN: u8 = 0;
 pub(crate) const IRQ_NUM_MAX: u8 = 255;
@@ -158,11 +219,24 @@ impl HwCpuId {
 
 /// Sends a general inter-processor interrupt (IPI) to the specified CPU.
 ///
+/// On the Raspberry Pi 3 (no GIC) this rings the QA7 mailbox-0 doorbell of
+/// the target core; on GIC systems it sends an SGI.
+///
 /// # Safety
 ///
 /// The caller must ensure that the interrupt number is valid and that
 /// the corresponding handler is configured correctly on the remote CPU.
 /// Furthermore, invoking the interrupt handler must also be safe.
-pub(crate) fn send_ipi(_hw_cpu_id: HwCpuId, _guard: &dyn PinCurrentCpu) -> Result<()> {
-    unimplemented!()
+pub(crate) fn send_ipi(hw_cpu_id: HwCpuId, _guard: &dyn PinCurrentCpu) -> Result<()> {
+    if is_rpi3() {
+        crate::arch::bcm2836_irq::send_ipi_to_core(hw_cpu_id.0);
+        Ok(())
+    } else {
+        let cpu = hw_cpu_id.0;
+        if cpu >= 8 {
+            return Err(crate::error::Error::InvalidArgs);
+        }
+        super::gic::send_sgi(SGI_IPI_NUM, 1 << cpu);
+        Ok(())
+    }
 }

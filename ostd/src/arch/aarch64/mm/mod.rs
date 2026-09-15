@@ -169,7 +169,6 @@ pub unsafe fn activate_page_table(root_paddr: Paddr) {
         asm!("msr ttbr1_el1, {0}", in(reg) root_paddr, options(nostack, nomem, preserves_flags));
         asm!("isb", options(nostack, nomem, preserves_flags));
     }
-    // On real hardware, invalidate all TLB entries so the new mappings take effect.
     if crate::arch::board::IS_HARDWARE.load(core::sync::atomic::Ordering::Relaxed) {
         unsafe {
             asm!("tlbi vmalle1", options(nostack, nomem, preserves_flags));
@@ -361,6 +360,42 @@ impl fmt::Debug for PageTableEntry {
 
 pub(crate) fn can_sync_dma() -> bool {
     false
+}
+
+/// Flushes the instruction cache for a user-space range after mapping code.
+///
+/// File data reaches RAM through the data cache, but the instruction cache
+/// may hold stale lines for a recycled frame. Without this flush the CPU
+/// can execute stale bytes (or fault) on the first run of freshly loaded
+/// user code. Runs in the faulting process context so `ic ivau` applies.
+///
+/// This is safe to call from safe code: cache maintenance cannot violate
+/// memory safety (at worst a fault on an unmapped address, which is
+/// recoverable, or wasted work).
+pub fn flush_icache_range(start: Vaddr, len: usize) {
+    let ctr: usize;
+    unsafe {
+        core::arch::asm!("mrs {}, ctr_el0", out(reg) ctr, options(nostack, nomem, preserves_flags));
+    }
+    let line_size = 4usize << ((ctr >> 16) & 0xf);
+    let mut addr = start & !(line_size - 1);
+    let end = start + len;
+    unsafe {
+        while addr < end {
+            core::arch::asm!("dc cvau, {0}", in(reg) addr, options(nostack, preserves_flags));
+            addr += line_size;
+        }
+        core::arch::asm!("dsb ish", options(nostack, preserves_flags));
+    }
+    let mut addr = start & !(line_size - 1);
+    unsafe {
+        while addr < end {
+            core::arch::asm!("ic ivau, {0}", in(reg) addr, options(nostack, preserves_flags));
+            addr += line_size;
+        }
+        core::arch::asm!("dsb ish", options(nostack, preserves_flags));
+        core::arch::asm!("isb", options(nostack, preserves_flags));
+    }
 }
 
 pub(crate) unsafe fn sync_dma_range<D: DmaDirection>(_range: Range<Vaddr>) {

@@ -104,6 +104,9 @@ impl<'a, G: PinCurrentCpu> TlbFlusher<'a, G> {
                 flush_ops.push_from(&self.ops_stack);
             }
 
+            // TEMP-HW-DEBUG (revert before MR-1): tag IPI source.
+            #[cfg(target_arch = "aarch64")]
+            crate::arch::serial::marker_str("TLB");
             let pending_ipis = ipi_sender.inter_processor_call(&target_cpus, do_remote_flush);
             self.pending_ipis.extend(&pending_ipis);
         }

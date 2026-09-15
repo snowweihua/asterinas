@@ -298,6 +298,61 @@ pub fn init_kernel_page_table(meta_pages: Segment<MetaPageMeta>) {
     KERNEL_PAGE_TABLE.call_once(|| kpt);
 }
 
+/// TEMP-HW-DEBUG: read back the first word of the kernel-page-table
+/// singleton so BSP and AP views can be compared on the lossy serial
+/// (see `marker_hex`). Revert before MR-1.
+pub(crate) fn debug_read_kpt_word() -> usize {
+    unsafe { core::ptr::read_volatile(core::ptr::addr_of!(KERNEL_PAGE_TABLE) as *const usize) }
+}
+
+/// TEMP-HW-DEBUG: same word through the linear alias (same physical line,
+/// different window). If HIGH and LINEAR disagree on one CPU, the windows
+/// diverge; if they agree, compare against the other CPU's view. Revert.
+pub(crate) fn debug_read_kpt_linear() -> usize {
+    let pa = (core::ptr::addr_of!(KERNEL_PAGE_TABLE) as usize).wrapping_sub(kernel_loaded_offset());
+    unsafe { core::ptr::read_volatile(paddr_to_vaddr(pa) as *const usize) }
+}
+
+/// TEMP-HW-DEBUG experiment: push the kernel-page-table singleton to the
+/// point of coherency before APs are released. The AP reads this static
+/// through the boot tables while the BSP last touched it long before; if
+/// the line is invisible to the AP (stale view), the AP faults on garbage.
+/// A pre-release clean distinguishes visibility failure (fixed) from a
+/// mapping problem (persists). Revert-or-promote after validation.
+pub(crate) unsafe fn flush_kpt_for_ap() {
+    let base = core::ptr::addr_of!(KERNEL_PAGE_TABLE) as usize;
+    let len = core::mem::size_of_val(&KERNEL_PAGE_TABLE);
+    let mut va = base & !63;
+    let end = base + len;
+    unsafe {
+        while va < end {
+            core::arch::asm!("dc cvac, {0}", in(reg) va, options(nostack, preserves_flags));
+            va += 64;
+        }
+        core::arch::asm!("dsb ish", options(nostack, preserves_flags));
+    }
+}
+
+/// TEMP-HW-DEBUG: BSP-side read of the runtime kernel-page-table root for
+/// explicit publication to APs via scratch (bypasses the AP-side `Once`
+/// read that faults with `ldxr` on HW). Revert-or-promote after validation.
+pub(crate) fn kernel_page_table_root_paddr() -> Option<super::Paddr> {
+    let result = KERNEL_PAGE_TABLE.get().map(|kpt| kpt.root_paddr());
+    // TEMP-HW-DEBUG: show KPT PA on first call only
+    use core::sync::atomic::{AtomicBool, Ordering};
+    static SHOWN: AtomicBool = AtomicBool::new(false);
+    if !SHOWN.load(Ordering::Relaxed) {
+        SHOWN.store(true, Ordering::Relaxed);
+        if let Some(pa) = result {
+            crate::arch::serial::marker_str("KPT");
+            crate::arch::serial::marker_hex(pa);
+        } else {
+            crate::arch::serial::marker_str("KPTN");
+        }
+    }
+    result
+}
+
 /// Activates the kernel page table.
 ///
 /// All address translation of symbols in the boot sections must be manually
@@ -310,6 +365,9 @@ pub unsafe fn activate_kernel_page_table() {
     let kpt = KERNEL_PAGE_TABLE
         .get()
         .expect("The kernel page table is not initialized yet");
+    // TEMP-HW-DEBUG: dump the KPT root PA before activation. Revert before MR-1.
+    crate::arch::serial::marker_str("KRPA");
+    crate::arch::serial::marker_hex(kpt.root_paddr());
     // SAFETY: the kernel page table is initialized properly.
     unsafe {
         kpt.first_activate_unchecked();

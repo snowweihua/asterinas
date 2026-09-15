@@ -197,13 +197,36 @@ fn pl011_base_va() -> usize {
 }
 
 #[inline(always)]
+pub(crate) fn cache_invalidate_va(va: usize) {
+    // MMIO through the linear map is Normal cacheable memory; invalidate the
+    // line so register reads observe device state instead of stale cache.
+    unsafe {
+        core::arch::asm!("dc ivac, {0}", in(reg) va, options(nostack, preserves_flags));
+        core::arch::asm!("dsb ish", options(nostack, preserves_flags));
+    }
+}
+
+#[inline(always)]
+pub(crate) fn cache_clean_va(va: usize) {
+    // Push MMIO writes out of the cache so they reach the device.
+    unsafe {
+        core::arch::asm!("dc cvac, {0}", in(reg) va, options(nostack, preserves_flags));
+        core::arch::asm!("dsb ish", options(nostack, preserves_flags));
+    }
+}
+
+#[inline(always)]
 fn read_fr() -> u32 {
-    unsafe { core::ptr::read_volatile((pl011_base_va() + 0x018) as *const u32) }
+    let va = pl011_base_va() + 0x018;
+    cache_invalidate_va(va);
+    unsafe { core::ptr::read_volatile(va as *const u32) }
 }
 
 #[inline(always)]
 fn read_dr() -> u32 {
-    unsafe { core::ptr::read_volatile((pl011_base_va() + 0x000) as *const u32) }
+    let va = pl011_base_va() + 0x000;
+    cache_invalidate_va(va);
+    unsafe { core::ptr::read_volatile(va as *const u32) }
 }
 
 /// Ensure the QEMU PL011 is enabled before any TX/RX.
@@ -317,13 +340,8 @@ pub fn irq_num() -> u8 {
 }
 
 pub fn init_rx_irq() {
-    if is_rpi3() {
-        set_im(IM_RXIM);
-    } else {
-        set_im(IM_RXIM);
-    }
+    set_im(IM_RXIM);
 }
-
 
 pub fn reenable_rx_irq() {
     if is_rpi3() {
@@ -332,36 +350,92 @@ pub fn reenable_rx_irq() {
 }
 
 pub fn has_data() -> bool {
-    if is_rpi3() {
-        (read_fr() & FR_RXFE) == 0
-    } else {
-        (read_fr() & FR_RXFE) == 0
-    }
+    (read_fr() & FR_RXFE) == 0
 }
 
 pub fn receive() -> u8 {
-    if is_rpi3() {
-        while read_fr() & FR_RXFE != 0 {}
-        (read_dr() & 0xff) as u8
-    } else {
-        while read_fr() & FR_RXFE != 0 {}
-        (read_dr() & 0xff) as u8
+    while read_fr() & FR_RXFE != 0 {}
+    (read_dr() & 0xff) as u8
+}
+
+/// TEMP-HW-DEBUG: spin for ~`ms` milliseconds using the generic counter.
+/// The USB-serial path drops bursts; pacing output keeps markers alive.
+/// Uses CNTFRQ (firmware-set) so it works on HW and QEMU. Revert before MR-1.
+#[inline(always)]
+pub(crate) fn spin_delay_ms(ms: u64) {
+    let frq: u64;
+    let start: u64;
+    unsafe {
+        core::arch::asm!("mrs {0}, cntfrq_el0", out(reg) frq, options(nostack, nomem, preserves_flags));
+        core::arch::asm!("mrs {0}, cntvct_el0", out(reg) start, options(nostack, nomem, preserves_flags));
+    }
+    let delta = frq.saturating_mul(ms).saturating_div(1000).max(1);
+    loop {
+        let now: u64;
+        unsafe {
+            core::arch::asm!("mrs {0}, cntvct_el0", out(reg) now, options(nostack, nomem, preserves_flags));
+        }
+        if now.wrapping_sub(start) >= delta {
+            break;
+        }
+    }
+}
+
+pub fn marker(c: u8) {
+    for b in [b'\n', b'[', b'M', c, b']', b'\n'] {
+        send(b);
+    }
+    spin_delay_ms(2);
+}
+
+pub fn marker_hex(v: usize) {
+    for shift in (0..16).rev().map(|i| i * 4) {
+        let n = ((v >> shift) & 0xf) as u8;
+        marker(if n < 10 { b'0' + n } else { b'a' + n - 10 });
+    }
+}
+
+pub fn marker_str(s: &str) {
+    for &b in s.as_bytes() {
+        marker(b);
+    }
+}
+
+/// Upper bound for spinning on the PL011 flag register.
+///
+/// A stuck status bit (e.g. a stale cached read on a platform mapping UART
+/// as Normal memory) must never wedge the whole kernel, so give up waiting
+/// after a generous number of polls and proceed anyway.
+const FR_POLL_LIMIT: u32 = 10_000_000;
+
+#[inline(always)]
+fn wait_tx_ready() {
+    let mut polls = 0;
+    while read_fr() & FR_TXFF != 0 {
+        polls += 1;
+        if polls >= FR_POLL_LIMIT {
+            break;
+        }
     }
 }
 
 pub fn send(data: u8) {
     if is_rpi3() {
         pl011_ensure_init();
-        while read_fr() & FR_TXFF != 0 {}
+        wait_tx_ready();
+        let va = pl011_base_va() + 0x000;
         unsafe {
-            core::ptr::write_volatile((pl011_base_va() + 0x000) as *mut u32, data as u32);
+            core::ptr::write_volatile(va as *mut u32, data as u32);
         }
+        cache_clean_va(va);
     } else {
         pl011_ensure_init();
-        while read_fr() & FR_TXFF != 0 {}
+        wait_tx_ready();
+        let va = pl011_base_va() + 0x000;
         unsafe {
-            core::ptr::write_volatile((pl011_base_va() + 0x000) as *mut u32, data as u32);
+            core::ptr::write_volatile(va as *mut u32, data as u32);
         }
+        cache_clean_va(va);
     }
 }
 

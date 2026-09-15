@@ -94,10 +94,24 @@ impl SystemConsole {
                 .get()
                 .and_then(|consoles| consoles.first().map(|s| s.as_str()))
                 .unwrap_or("tty0");
+            let console_name = console_name.split(',').next().unwrap_or(console_name);
+
+            // TEMP-HW-DEBUG: verdict marker for HW console routing (revert before MR-1).
+            #[cfg(target_arch = "aarch64")]
+            {
+                ostd::arch::serial::marker(b'G');
+                ostd::arch::serial::marker(match console_name {
+                    "ttyS0" | "ttyAMA0" | "serial0" | "serial1" => b'D',
+                    "tty0" => b'H',
+                    _ => b'O',
+                });
+            }
 
             let device = match console_name {
                 "tty0" => Some(Arc::new(Tty0Device) as _),
-                "ttyS0" | "ttyAMA0" => serial0_device().cloned().map(|device| device as _),
+                "ttyS0" | "ttyAMA0" | "serial0" | "serial1" => {
+                    serial0_device().cloned().map(|device| device as _)
+                }
                 "hvc0" => hvc0_device().cloned().map(|device| device as _),
                 _ => None,
             };

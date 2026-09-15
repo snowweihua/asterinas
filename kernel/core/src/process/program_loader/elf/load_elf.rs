@@ -453,6 +453,13 @@ fn map_segment_vmo(
         anonymous_map_options.build()?;
     }
 
+    #[cfg(target_arch = "aarch64")]
+    if perms.contains(VmPerms::EXEC) {
+        // Newly mapped code must be visible to the instruction cache before
+        // user space runs it; file data only reaches the data cache.
+        ostd::arch::mm::flush_icache_range(offset, total_map_size);
+    }
+
     Ok(())
 }
 

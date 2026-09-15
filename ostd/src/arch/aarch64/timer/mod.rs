@@ -79,11 +79,23 @@ pub(super) unsafe fn init() {
     set_next_timer();
 }
 
-/// Arms the physical timer tick on an AP.
+/// Prepares the physical timer interrupt on an AP without arming the counter.
 ///
 /// The BSP's [`init`] already allocated the shared IRQ line and published
-/// the tick interval; each AP only arms its own per-core counter here.
+/// the tick interval; per-core routing is enabled in the interrupt
+/// controller path. Arming is deferred to [`arm_timer_on_ap`]: an early
+/// tick would run into uninitialized per-CPU scheduler/timer state and
+/// fault the AP (observed on RPi3 hardware).
 pub(super) unsafe fn init_on_ap() {
+    // Intentionally no `set_next_timer()` here; see above.
+}
+
+/// Arms the physical timer tick on the current AP.
+///
+/// Call this once per AP after its per-CPU scheduler and timer state is
+/// initialized (e.g., from `ap_init`). Arming any earlier risks a tick
+/// firing into uninitialized per-CPU state.
+pub fn arm_timer_on_ap() {
     set_next_timer();
 }
 

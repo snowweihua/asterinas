@@ -155,7 +155,7 @@ impl<'a> Record<'a> {
 // The same feature should activate the corresponding `log` crate feature
 // (e.g., `log/max_level_info`)
 // so that both OSTD macros and third-party `log::info!()` calls are filtered uniformly.
-pub const STATIC_MAX_LEVEL: LevelFilter = LevelFilter::Debug;
+pub const STATIC_MAX_LEVEL: LevelFilter = LevelFilter::Warning;
 
 /// Run-time maximum log level.
 static DYNAMIC_MAX_LEVEL: AtomicU8 = {

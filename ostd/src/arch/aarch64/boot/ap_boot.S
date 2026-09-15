@@ -20,6 +20,8 @@
 .equ AP_SPSR_EL3_VALUE, ((7 << 6) | 0b1001)
 
 .global ap_boot_entry
+.global __ap_boot_start
+__ap_boot_start:
 ap_boot_entry:
 /* FIRST: Save x0 (context ID / PerApRawInfo pointer) to x19.
  * PSCI CPU_ON passes the context ID in x0; QEMU's spin-table stub zeroes
@@ -94,6 +96,19 @@ ap_el2_start:
     mrs     x0, HCR_EL2
     orr     x0, x0, #(1 << 31)      /* RW bit */
     msr     HCR_EL2, x0
+
+    /* CPACR_EL1: FPEN=0b11 → no FP/SIMD trap at EL0 or EL1.
+     * Rust release builds can emit SIMD/FP instructions; without this the
+     * AP faults with EC=0x07 as soon as it executes one. */
+    mov     x0, #(3 << 20)
+    msr     cpacr_el1, x0
+    isb
+
+    /* CPTR_EL2: clear TFP (bit 10) so FP/SIMD from EL1 is not trapped to EL2. */
+    mrs     x0, cptr_el2
+    bic     x0, x0, #(1 << 10)
+    msr     cptr_el2, x0
+    isb
 
     /* Set up EL1 system registers (accessible from EL2).
      * These have no effect until we actually enter EL1. */
@@ -259,3 +274,6 @@ ap_putchar:
     ldr     x1, =0x3F201000
     str     x0, [x1]            /* Write character to UART DATA register */
     ret
+
+.global __ap_boot_end
+__ap_boot_end:

@@ -70,7 +70,7 @@ fn generate_fault_signal(exception: CpuException, ctx: &Context, user_ctx: &User
 
 pub(super) fn page_fault_handler(info: &CpuException) -> Result<(), ()> {
     let task = Task::current().unwrap();
-    let page_fault_info = info.try_into().unwrap();
+    let page_fault_info = info.try_into()?;
 
     if let Some(thread_local) = task.as_thread_local() {
         if thread_local.is_page_fault_disabled() {

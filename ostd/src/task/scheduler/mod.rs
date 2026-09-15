@@ -512,6 +512,9 @@ fn set_need_preempt(cpu_id: CpuId) {
     if preempt_guard.current_cpu() == cpu_id {
         cpu_local::set_need_preempt();
     } else {
+        // TEMP-HW-DEBUG (revert before MR-1): tag IPI source.
+        #[cfg(target_arch = "aarch64")]
+        crate::arch::serial::marker_str("SCH");
         crate::smp::inter_processor_call(&CpuSet::from(cpu_id), || {
             cpu_local::set_need_preempt();
         });

@@ -70,7 +70,7 @@ fn register_device(name: String, device: Arc<SocketDevice>) {
 
 /// Returns the registered virtio-vsock device named `name`, if any.
 pub fn get_device(name: &str) -> Option<Arc<SocketDevice>> {
-    let component = COMPONENT.get().unwrap();
+    let component = COMPONENT.get()?;
     component.devices.lock().get(name).cloned()
 }
 

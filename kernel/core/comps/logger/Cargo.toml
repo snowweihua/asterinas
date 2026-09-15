@@ -12,7 +12,8 @@ ostd.workspace = true
 owo-colors = { workspace = true, optional = true }
 
 [features]
-default = ["log_color"]
+# TEMP-HW-DEBUG: default off so serial output has no ANSI escapes.
+default = []
 log_color = ["dep:owo-colors"]
 
 [lints]

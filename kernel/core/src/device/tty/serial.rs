@@ -4,6 +4,8 @@ use alloc::format;
 
 use aster_console::AnyConsoleDevice;
 use ostd::mm::Infallible;
+#[cfg(target_arch = "aarch64")]
+use ostd::task::{Task, TaskOptions};
 use spin::Once;
 
 use super::{Tty, TtyDriver};
@@ -84,6 +86,7 @@ pub(super) fn init_in_first_process() -> Result<()> {
         SERIAL0.call_once(|| serial0.clone());
         char::register(serial0.clone())?;
 
+        #[cfg(not(target_arch = "aarch64"))]
         serial_console.register_callback(Box::leak(Box::new(
             move |mut reader: VmReader<Infallible>| {
                 let mut chs = vec![0u8; reader.remain()];
@@ -91,6 +94,21 @@ pub(super) fn init_in_first_process() -> Result<()> {
                 let _ = serial0.push_input(chs.as_slice());
             },
         )));
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            let serial0 = serial0.clone();
+            let _ = TaskOptions::new(move || loop {
+                if ostd::arch::serial::has_data() {
+                    let ch = ostd::arch::serial::receive();
+                    let _ = serial0.push_input(&[ch]);
+                } else {
+                    Task::yield_now();
+                }
+            })
+            .data(())
+            .spawn();
+        }
     }
 
     Ok(())

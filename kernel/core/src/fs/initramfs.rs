@@ -59,11 +59,19 @@ pub(crate) fn init_in_first_kthread(path_resolver: &PathResolver) -> Result<()> 
         }
         _ => {
             println!("[kernel] unpacking initramfs.cpio to rootfs ...");
+            #[cfg(target_arch = "aarch64")]
+            ostd::arch::serial::marker(b'u');
             unpack_to_rootfs(CpioDecoder::new(Cursor::new(initramfs_buf)), path_resolver)?;
+            #[cfg(target_arch = "aarch64")]
+            ostd::arch::serial::marker(b'v');
         }
     };
 
+    #[cfg(target_arch = "aarch64")]
+    ostd::arch::serial::marker(b'w');
     ensure_dev_console(path_resolver)?;
+    #[cfg(target_arch = "aarch64")]
+    ostd::arch::serial::marker(b'x');
 
     println!("[kernel] initramfs is ready");
     Ok(())

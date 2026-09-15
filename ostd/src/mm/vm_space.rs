@@ -128,6 +128,32 @@ impl VmSpace {
 
         let last_ptr = ACTIVATED_VM_SPACE.load();
 
+        // TEMP-HW-DEBUG: silent ring record of activations vs skips.
+        // Revert before MR-1.
+        #[cfg(target_arch = "aarch64")]
+        {
+            let ttbr0: usize;
+            unsafe {
+                core::arch::asm!(
+                    "mrs {0}, ttbr0_el1",
+                    out(reg) ttbr0,
+                    options(nostack, nomem, preserves_flags)
+                );
+            }
+            let tag: u64 = if last_ptr == Arc::as_ptr(self) {
+                ACT_TAG_SKP
+            } else {
+                ACT_TAG_ACT
+            };
+            // Layout: tag[8] | cpu[8] | root>>12 [24] | ttbr0>>12 [24].
+            let entry = (tag << 56)
+                | ((u32::from(cpu) as u64) << 48)
+                | (((self.pt.root_paddr() >> 12) as u64) << 24)
+                | ((ttbr0 >> 12) as u64 & 0xFF_FFFF);
+            let idx = ACT_LOG_IDX.fetch_add(1, Ordering::Relaxed) % ACT_LOG_LEN;
+            ACT_LOG[idx].store(entry, Ordering::Relaxed);
+        }
+
         if last_ptr == Arc::as_ptr(self) {
             return;
         }
@@ -567,6 +593,31 @@ cpu_local_cell! {
     // CPU, rather than merely the activated `VmSpace`. When ASID is enabled,
     // the non-active `VmSpace`s can still have their TLB entries in the CPU!
     static ACTIVATED_VM_SPACE: *const VmSpace = core::ptr::null();
+}
+
+// TEMP-HW-DEBUG: silent activation-history ring. Revert before MR-1.
+#[cfg(target_arch = "aarch64")]
+const ACT_LOG_LEN: usize = 32;
+#[cfg(target_arch = "aarch64")]
+const ACT_TAG_ACT: u64 = 0xAC;
+#[cfg(target_arch = "aarch64")]
+const ACT_TAG_SKP: u64 = 0x5C;
+#[cfg(target_arch = "aarch64")]
+static ACT_LOG: [core::sync::atomic::AtomicU64; ACT_LOG_LEN] =
+    [const { core::sync::atomic::AtomicU64::new(0) }; ACT_LOG_LEN];
+#[cfg(target_arch = "aarch64")]
+static ACT_LOG_IDX: core::sync::atomic::AtomicUsize =
+    core::sync::atomic::AtomicUsize::new(0);
+
+/// TEMP-HW-DEBUG: dump the activation history via paced markers.
+/// Revert before MR-1.
+#[cfg(target_arch = "aarch64")]
+pub(crate) fn dump_act_log() {
+    crate::arch::serial::marker_str("ACTLOG");
+    crate::arch::serial::marker_hex(ACT_LOG_IDX.load(Ordering::Relaxed));
+    for entry in ACT_LOG.iter() {
+        crate::arch::serial::marker_hex(entry.load(Ordering::Relaxed) as usize);
+    }
 }
 
 #[cfg(ktest)]

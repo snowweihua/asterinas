@@ -579,6 +579,13 @@ impl VmMapping {
                     // have cached a negative TLB entry.
                     TlbFlushOp::for_range(page_aligned_addr..page_aligned_addr + PAGE_SIZE)
                         .perform_on_current();
+                    #[cfg(target_arch = "aarch64")]
+                    if vm_perms.contains(VmPerms::EXEC) {
+                        ostd::arch::mm::flush_icache_range(
+                            page_aligned_addr,
+                            PAGE_SIZE,
+                        )
+                    }
                     rss_delta.add(self.rss_type(), 1);
                 }
             }
@@ -698,6 +705,10 @@ impl VmMapping {
                         // A fresh mapping needs a TLB flush: the faulting walk
                         // may have cached a negative TLB entry.
                         TlbFlushOp::for_range(mapped..mapped + PAGE_SIZE).perform_on_current();
+                        #[cfg(target_arch = "aarch64")]
+                        if vm_perms.contains(VmPerms::EXEC) {
+                            ostd::arch::mm::flush_icache_range(mapped, PAGE_SIZE)
+                        }
                         rss_delta_ref.add(self.rss_type(), 1);
                     } else {
                         let next_addr = cursor.virt_addr() + PAGE_SIZE;

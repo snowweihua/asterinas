@@ -44,6 +44,14 @@ static VIRTIO_BLOCK_MAJOR_ID: Once<MajorIdOwner> = Once::new();
 fn virtio_component_init() -> Result<(), ComponentInitError> {
     VIRTIO_BLOCK_MAJOR_ID.call_once(|| aster_block::allocate_major().unwrap());
 
+    // The RPi3 has no virtio devices (no PCI ECAM, no virtio-mmio nodes), so
+    // probing is a no-op but the network buffer allocation that follows can
+    // stall boot when APs are not yet ready for IPI-driven TLB flushes.
+    #[cfg(target_arch = "aarch64")]
+    if ostd::arch::is_rpi3() {
+        return Ok(());
+    }
+
     // Find all devices and register them to the corresponding crate
     transport::init();
 

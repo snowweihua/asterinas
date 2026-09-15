@@ -115,10 +115,18 @@ unsafe fn init() {
 
     // SAFETY: This function is called only once on the BSP.
     unsafe { mm::kspace::activate_kernel_page_table() };
+    crate::arch::serial::marker(b'1');
 
     sync::init();
+    crate::arch::serial::marker(b'2');
+    // TEMP-HW-DEBUG: early BSP view of the KPT singleton word (quiet window,
+    // survives transport). Compare with late-K (pre-release) and AP-J/L to
+    // separate overwrite (early≠late) from view divergence (BSP≠AP). Revert.
+    crate::arch::serial::marker(b'E');
+    crate::arch::serial::marker_hex(crate::mm::kspace::debug_read_kpt_word());
 
     boot::init_after_heap();
+    crate::arch::serial::marker(b'3');
 
     // SAFETY: This function is called only once on the BSP.
     unsafe { arch::late_init_on_bsp() };

@@ -80,8 +80,10 @@ static HW_CPU_ID_MAP: SpinLock<BTreeMap<u32, HwCpuId>> = SpinLock::new(BTreeMap:
 /// This function can only be called in the boot context of the BSP where APs have
 /// not yet been booted.
 pub(crate) unsafe fn boot_all_aps() {
+    crate::arch::serial::marker(b'9');
     // Mark the BSP as started.
     report_online_and_hw_cpu_id(crate::cpu::CpuId::bsp().as_usize().try_into().unwrap());
+    crate::arch::serial::marker(b'0');
 
     let num_cpus = crate::cpu::num_cpus();
 
@@ -135,6 +137,14 @@ pub fn register_ap_entry(entry: fn()) {
     AP_LATE_ENTRY.call_once(|| entry);
 }
 
+/// TEMP-HW-DEBUG: per-AP step markers (step letter + cpu digit) so concurrent
+/// AP traces disambiguate on the lossy serial. Revert before MR-1.
+#[inline(always)]
+fn ap_mark(step: u8, cpu: u32) {
+    crate::arch::serial::marker(step);
+    crate::arch::serial::marker(b'0' + (cpu as u8));
+}
+
 /// The AP's entry point of the Rust code portion of Asterinas.
 ///
 /// # Safety
@@ -145,30 +155,62 @@ pub fn register_ap_entry(entry: fn()) {
 // SAFETY: The name does not collide with other symbols.
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn ap_early_entry(cpu_id: u32) -> ! {
+    ap_mark(b'P', cpu_id);
+    // TEMP-HW-DEBUG: AP-side view of the KPT singleton word (compare with
+    // the BSP-side [MK] stream). Revert before MR-1.
+    crate::arch::serial::marker(b'J');
+    crate::arch::serial::marker_hex(crate::mm::kspace::debug_read_kpt_word());
+    crate::arch::serial::marker(b'L');
+    crate::arch::serial::marker_hex(crate::mm::kspace::debug_read_kpt_linear());
     // SAFETY:
     // 1. We're in the boot context of an AP.
     // 2. The CPU ID of the AP is correct.
     unsafe { crate::cpu::init_on_ap(cpu_id) };
+    ap_mark(b'Q', cpu_id);
 
     crate::arch::enable_cpu_features();
+    ap_mark(b'R', cpu_id);
 
     // SAFETY: This is called only once on this AP in the boot context.
     unsafe { crate::arch::trap::init_on_cpu() };
+    ap_mark(b'S', cpu_id);
 
-    // SAFETY: This function is only called once on this AP.
-    unsafe { crate::mm::kspace::activate_kernel_page_table() };
+    // TEMP-HW-DEBUG: root-explicit switch via the proven scratch channel.
+    // The AP-side `Once` read faults with `ldxr` on HW, so use the runtime
+    // root the BSP published to scratch instead. Revert-or-promote.
+    let kpt_root = unsafe {
+        core::ptr::read_volatile(
+            crate::mm::kspace::paddr_to_vaddr(
+                crate::arch::boot::smp::KPT_ROOT_SCRATCH_PA,
+            ) as *const u64,
+        ) as usize
+    };
+    crate::arch::serial::marker(b'N');
+    crate::arch::serial::marker_hex(kpt_root);
+    if kpt_root != 0 {
+        unsafe {
+            crate::arch::mm::activate_page_table(kpt_root);
+            crate::arch::mm::tlb_flush_all_including_global();
+        }
+    } else {
+        unsafe { crate::mm::kspace::activate_kernel_page_table() };
+    }
+    crate::arch::serial::marker(b'T');
 
     // SAFETY: This function is only called once on this AP, after the BSP has
     // done the architecture-specific initialization.
     unsafe { crate::arch::init_on_ap() };
+    ap_mark(b'U', cpu_id);
 
     crate::arch::irq::enable_local();
+    ap_mark(b'V', cpu_id);
 
     // SAFETY:
     // 1. The kernel page table is activated on this AP.
     // 2. The function is called only once on this AP.
     // 3. No remaining `with_borrow` invocations on this CPU from now on.
     unsafe { crate::mm::page_table::boot_pt::dismiss() };
+    ap_mark(b'W', cpu_id);
 
     crate::info!("Processor {} started. Spinning for tasks.", cpu_id);
 
@@ -178,7 +220,9 @@ pub(crate) unsafe extern "C" fn ap_early_entry(cpu_id: u32) -> ! {
     // From here to the following `tlb_flush_all_excluding_global`, there is no
     // TLB coherence because the BSP may not be able to send IPIs to flush the
     // TLBs. Do not perform complex operations during this period.
+    ap_mark(b'X', cpu_id);
     report_online_and_hw_cpu_id(cpu_id);
+    ap_mark(b'Y', cpu_id);
     let ap_late_entry = AP_LATE_ENTRY.wait();
     crate::arch::mm::tlb_flush_all_excluding_global();
 

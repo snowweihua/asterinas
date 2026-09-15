@@ -225,8 +225,15 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
     let boot_root = super::smp::boot_root_paddr();
     unsafe {
         super::smp::publish_ap_info_to_scratch(info_ptr, num_cpus);
+        if let Some(root) = crate::mm::kspace::kernel_page_table_root_paddr() {
+            super::smp::publish_kpt_root_to_scratch(root);
+        }
         __ap_boot_info_array_pointer = super::smp::AP_INFO_SCRATCH_PA as *const PerApRawInfo;
         __boot_page_table_pointer = boot_root as u64;
+        super::smp::flush_ap_boot_globals();
+        // TEMP-HW-DEBUG: coerce the KPT singleton (read by APs during their
+        // page-table switch) to PoC before release. See flush_kpt_for_ap.
+        crate::mm::kspace::flush_kpt_for_ap();
     }
 
     let ap_boot_size = unsafe {
@@ -256,12 +263,24 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
 
     let ap_entry_paddr = ap_boot_dst_pa as u64;
 
-    // Clear marker region before waking APs
+    // Clear marker region before waking APs (linear alias: BSP runs with
+    // the MMU on and its TTBR0 has no low-half mappings).
     unsafe {
-        core::ptr::write_volatile(0x41000 as *mut u8, 0x55);
+        let marker_va = crate::mm::kspace::paddr_to_vaddr(0x41000);
+        core::ptr::write_volatile(marker_va as *mut u8, 0x55);
     }
 
+    // TEMP-HW-DEBUG: BSP-side view of the KPT singleton word for comparison
+    // against the AP-side view (loss-tolerant nibble markers). Revert.
+    crate::arch::serial::marker(b'K');
+    crate::arch::serial::marker_hex(crate::mm::kspace::debug_read_kpt_word());
+
     // Try PSCI via SMC first
+    #[cfg(target_arch = "aarch64")]
+    // TEMP-HW-DEBUG: when PSCI is available, use it exclusively. The extra
+    // mailbox/spin-table writes below can release TF-A-held secondaries
+    // WITHOUT PSCI context (garbage x0), which then fault on garbage
+    // stack/TPIDR. Revert before MR-1.
     #[cfg(target_arch = "aarch64")]
     if is_psci_available() {
         for cpu_id in 1..num_cpus {
@@ -298,7 +317,7 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
         }
         let spin_table_addr = ARM_LOCAL_PA + CPU_SPIN_TABLE_OFFSETS[cpu_idx];
 
-        let info_base_va = AP_INFO_BASE;
+        let info_base_va = crate::mm::kspace::paddr_to_vaddr(AP_INFO_BASE);
 
         unsafe {
             core::arch::asm!(
@@ -340,21 +359,35 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
         }
 
         #[cfg(target_arch = "aarch64")]
-        if is_psci_available() {
+        if false && is_psci_available() {
             use crate::arch::bcm2836_irq::CORE1_MAILBOX3_SET;
-            // Use identity-mapped address for ARM_LOCAL during early boot
+            // Use the linear alias: the BSP runs with the MMU on (kernel
+            // page table, no low-half mappings), unlike early boot code.
             let mailbox_offset = ARM_LOCAL_PA + CORE1_MAILBOX3_SET + 16 * (cpu_id as usize - 1);
+            let mailbox_va =
+                crate::mm::kspace::paddr_to_vaddr(mailbox_offset);
             unsafe {
-                core::ptr::write_volatile((mailbox_offset) as *mut u32, ap_entry_paddr as u32);
+                core::ptr::write_volatile(mailbox_va as *mut u32, ap_entry_paddr as u32);
+                core::arch::asm!(
+                    "dc cvac, {addr}",
+                    addr = in(reg) mailbox_va,
+                    options(nostack, preserves_flags),
+                );
                 core::arch::asm!("dsb sy", "sev", options(nostack, preserves_flags));
             }
         }
 
         #[cfg(target_arch = "aarch64")]
-        if is_psci_available() {
+        if false && is_psci_available() {
             unsafe {
-                // Use identity-mapped spin_table_addr
-                core::ptr::write_volatile(spin_table_addr as *mut u64, ap_entry_paddr);
+                // Linear alias (see above); the AP reads it with the MMU off.
+                let spin_va = crate::mm::kspace::paddr_to_vaddr(spin_table_addr);
+                core::ptr::write_volatile(spin_va as *mut u64, ap_entry_paddr);
+                core::arch::asm!(
+                    "dc cvac, {addr}",
+                    addr = in(reg) spin_va,
+                    options(nostack, preserves_flags),
+                );
                 core::arch::asm!("dsb ish", "sev", options(nostack, preserves_flags));
             }
         }
@@ -365,11 +398,12 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
         #[cfg(target_arch = "aarch64")]
         if !is_psci_available() {
             let slot_pa = 0xD8usize + (cpu_id as usize) * 8;
+            let slot_va = crate::mm::kspace::paddr_to_vaddr(slot_pa);
             unsafe {
-                core::ptr::write_volatile(slot_pa as *mut u64, ap_entry_paddr);
+                core::ptr::write_volatile(slot_va as *mut u64, ap_entry_paddr);
                 core::arch::asm!(
                     "dc cvac, {addr}",
-                    addr = in(reg) slot_pa,
+                    addr = in(reg) slot_va,
                     options(nostack, preserves_flags),
                 );
                 core::arch::asm!("dsb sy", "sev", options(nostack, preserves_flags));
