@@ -82,9 +82,6 @@ fn raw_send_byte(base: usize, b: u8) {
 }
 
 /// Write a hex nibble directly to the fault-dump UART.
-///
-/// TEMP-HW-DEBUG: RPi3 UART only (the QEMU-alias write doubled burst volume
-/// on the lossy channel for zero benefit on HW). Revert before MR-1.
 #[inline(always)]
 fn raw_put_hex_nibble(v: u8) {
     let ch: u8 = if v < 10 { b'0' + v } else { b'a' + v - 10 };
@@ -99,8 +96,6 @@ fn raw_put_hex(v: usize) {
 }
 
 /// Print a static string byte-by-byte to the fault-dump UART.
-///
-/// TEMP-HW-DEBUG: RPi3 UART only, same rationale as `raw_put_hex_nibble`.
 fn raw_puts(s: &[u8]) {
     for &b in s {
         raw_send_byte(raw_uart_bases().0, b);
@@ -117,8 +112,6 @@ fn sync_exception_dump_once(f: &mut TrapFrame) -> bool {
         () => {
             put_char!(b'\r');
             put_char!(b'\n');
-            // TEMP-HW-DEBUG: pace dump lines for the lossy channel. Revert.
-            crate::arch::serial::spin_delay_ms(8);
         };
     }
     macro_rules! put_hex_nibble {
@@ -169,36 +162,6 @@ fn sync_exception_dump_once(f: &mut TrapFrame) -> bool {
     put_crlf!();
     put_str!(b"[EL1-SYNC]");
     put_crlf!();
-    // TEMP-HW-DEBUG: paced ESR/ELR/FAR markers; the lossy channel eats the
-    // text dump lines. Revert before MR-1.
-    crate::arch::serial::marker_str("ESR");
-    crate::arch::serial::marker_hex(f.esr_el1 as usize);
-    crate::arch::serial::marker_str("ELR");
-    crate::arch::serial::marker_hex(f.elr_el1 as usize);
-    crate::arch::serial::marker_str("FAR");
-    crate::arch::serial::marker_hex(FAR_EL1.get() as usize);
-    // TEMP-HW-DEBUG: TTBRs + EL0 SP identify wrong-table vs missing-mapping.
-    // Revert before MR-1.
-    crate::arch::serial::marker_str("TT0");
-    let ttbr0: usize;
-    unsafe {
-        core::arch::asm!("mrs {0}, ttbr0_el1", out(reg) ttbr0, options(nostack, nomem, preserves_flags));
-    }
-    crate::arch::serial::marker_hex(ttbr0);
-    crate::arch::serial::marker_str("TT1");
-    let ttbr1: usize;
-    unsafe {
-        core::arch::asm!("mrs {0}, ttbr1_el1", out(reg) ttbr1, options(nostack, nomem, preserves_flags));
-    }
-    crate::arch::serial::marker_hex(ttbr1);
-    crate::arch::serial::marker_str("SP0");
-    let sp0: usize;
-    unsafe {
-        core::arch::asm!("mrs {0}, sp_el0", out(reg) sp0, options(nostack, nomem, preserves_flags));
-    }
-    crate::arch::serial::marker_hex(sp0);
-    // TEMP-HW-DEBUG: activation history ring. Revert before MR-1.
-    crate::mm::vm_space::dump_act_log();
     put_str!(b" ESR=");
     put_hex!(f.esr_el1);
     crate::arch::serial::spin_delay_ms(100);
@@ -224,18 +187,6 @@ fn sync_exception_dump_once(f: &mut TrapFrame) -> bool {
     put_hex!((mpidr & 0x3) as usize);
     put_str!(b" TASK=");
     put_hex!(task_ptr);
-    put_crlf!();
-    // TEMP-HW-DEBUG: TPIDR/SP pinpoint wild-pointer faults. Revert before MR-1.
-    let tpidr: u64;
-    let sp_val: usize;
-    unsafe {
-        core::arch::asm!("mrs {0}, tpidr_el1", out(reg) tpidr, options(nostack, nomem, preserves_flags));
-        core::arch::asm!("mov {0}, sp", out(reg) sp_val, options(nostack, nomem, preserves_flags));
-    }
-    put_str!(b" TPIDR=");
-    put_hex!(tpidr as usize);
-    put_str!(b" SP=");
-    put_hex!(sp_val);
     put_crlf!();
     put_str!(b" x0=");
     put_hex!(f.general.x0);
@@ -315,17 +266,12 @@ fn sync_exception_dump_once(f: &mut TrapFrame) -> bool {
     false
 }
 
-/// TEMP-HW-DEBUG: repeat the fault dump; the lossy HW serial drops bursts
-/// and identical repeats let fragments be reassembled. Revert before MR-1.
 #[unsafe(no_mangle)]
 extern "C" fn sync_exception_current(f: &mut TrapFrame) {
-    for _ in 0..6 {
-        if sync_exception_dump_once(&mut *f) {
-            return;
+    if !sync_exception_dump_once(&mut *f) {
+        loop {
+            core::hint::spin_loop();
         }
-    }
-    loop {
-        core::hint::spin_loop();
     }
 }
 
