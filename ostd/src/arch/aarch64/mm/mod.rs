@@ -378,11 +378,33 @@ pub fn flush_icache_range(start: Vaddr, len: usize) {
         core::arch::asm!("mrs {}, ctr_el0", out(reg) ctr, options(nostack, nomem, preserves_flags));
     }
     let line_size = 4usize << ((ctr >> 16) & 0xf);
+
+    // Cache maintenance by VA faults on addresses with no translation (the
+    // bulk flush covers not-yet-committed pages). Probe each line with AT and
+    // skip the ones that are unmapped; committed pages are flushed per-page
+    // once they are actually faulted in.
+    let mapped = |addr: usize| -> bool {
+        let par: usize;
+        unsafe {
+            core::arch::asm!(
+                "at s1e0r, {addr}",
+                "isb",
+                "mrs {par}, par_el1",
+                addr = in(reg) addr,
+                par = out(reg) par,
+                options(nostack, nomem, preserves_flags),
+            );
+        }
+        par & 1 == 0
+    };
+
     let mut addr = start & !(line_size - 1);
     let end = start + len;
     unsafe {
         while addr < end {
-            core::arch::asm!("dc cvau, {0}", in(reg) addr, options(nostack, preserves_flags));
+            if mapped(addr) {
+                core::arch::asm!("dc cvau, {0}", in(reg) addr, options(nostack, preserves_flags));
+            }
             addr += line_size;
         }
         core::arch::asm!("dsb ish", options(nostack, preserves_flags));
@@ -390,7 +412,9 @@ pub fn flush_icache_range(start: Vaddr, len: usize) {
     let mut addr = start & !(line_size - 1);
     unsafe {
         while addr < end {
-            core::arch::asm!("ic ivau, {0}", in(reg) addr, options(nostack, preserves_flags));
+            if mapped(addr) {
+                core::arch::asm!("ic ivau, {0}", in(reg) addr, options(nostack, preserves_flags));
+            }
             addr += line_size;
         }
         core::arch::asm!("dsb ish", options(nostack, preserves_flags));
