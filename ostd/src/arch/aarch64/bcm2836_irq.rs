@@ -136,12 +136,19 @@ unsafe fn write_reg(offset: usize, value: u32) {
 
 #[inline(always)]
 fn mmio_read(va: usize) -> u32 {
+    // The ARM-local registers are reached through the kernel linear mapping,
+    // which the kernel page table maps as Normal write-back cacheable memory.
+    // Invalidate the line first so the read observes device state instead of a
+    // stale cached copy.
+    crate::arch::serial::cache_invalidate_va(va);
     unsafe { core::ptr::read_volatile(va as *const u32) }
 }
 
 #[inline(always)]
 fn mmio_write(va: usize, value: u32) {
-    unsafe { core::ptr::write_volatile(va as *mut u32, value) }
+    unsafe { core::ptr::write_volatile(va as *mut u32, value) };
+    // Clean the line out of the cache so the write reaches the device.
+    crate::arch::serial::cache_clean_va(va);
 }
 
 pub unsafe fn init_on_bsp() {
