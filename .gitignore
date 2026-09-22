@@ -42,3 +42,10 @@ distro/etc_nixos/_config_for_test.nix
 
 # RustRover
 .idea
+# Local build/toolchain caches and artifacts (not part of the repo)
+.cargo/
+nix/store/
+test/build/
+tools/logs/
+usr/bin/
+/mnt/

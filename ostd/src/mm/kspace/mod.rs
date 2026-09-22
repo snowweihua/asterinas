@@ -338,18 +338,6 @@ pub(crate) unsafe fn flush_kpt_for_ap() {
 /// read that faults with `ldxr` on HW). Revert-or-promote after validation.
 pub(crate) fn kernel_page_table_root_paddr() -> Option<super::Paddr> {
     let result = KERNEL_PAGE_TABLE.get().map(|kpt| kpt.root_paddr());
-    // TEMP-HW-DEBUG: show KPT PA on first call only
-    use core::sync::atomic::{AtomicBool, Ordering};
-    static SHOWN: AtomicBool = AtomicBool::new(false);
-    if !SHOWN.load(Ordering::Relaxed) {
-        SHOWN.store(true, Ordering::Relaxed);
-        if let Some(pa) = result {
-            crate::arch::serial::marker_str("KPT");
-            crate::arch::serial::marker_hex(pa);
-        } else {
-            crate::arch::serial::marker_str("KPTN");
-        }
-    }
     result
 }
 
@@ -365,9 +353,6 @@ pub unsafe fn activate_kernel_page_table() {
     let kpt = KERNEL_PAGE_TABLE
         .get()
         .expect("The kernel page table is not initialized yet");
-    // TEMP-HW-DEBUG: dump the KPT root PA before activation. Revert before MR-1.
-    crate::arch::serial::marker_str("KRPA");
-    crate::arch::serial::marker_hex(kpt.root_paddr());
     // SAFETY: the kernel page table is initialized properly.
     unsafe {
         kpt.first_activate_unchecked();

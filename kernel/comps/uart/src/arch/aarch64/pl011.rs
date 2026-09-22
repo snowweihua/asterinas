@@ -57,8 +57,12 @@ impl Uart for SpinLock<Pl011, ostd::sync::LocalIrqDisabled> {
 
     fn flush(&self) {
         let uart = self.lock();
-        uart.write_reg(OFFSET_UARTIMSC, INT_RXIM);
-        uart.write_reg(OFFSET_UARTICR, INT_RXIM);
+        // RPi3 polls RX (no IRQ): keep the mask clear so error bits cannot
+        // raise a GPU IRQ storm; QEMU keeps the IRQ path.
+        if !ostd::arch::is_rpi3() {
+            uart.write_reg(OFFSET_UARTIMSC, INT_RXIM);
+        }
+        uart.write_reg(OFFSET_UARTICR, 0x7FF);
     }
 }
 
@@ -137,27 +141,33 @@ fn interrupt_id(node: &FdtNode) -> Option<u8> {
 }
 
 pub(super) fn init(node: FdtNode) {
+    ostd::arch::serial::marker_str("PE");
     let Some(reg) = node.reg().and_then(|mut regs| regs.next()) else {
+        ostd::arch::serial::marker_str("P1");
         ostd::info!("Failed to read 'reg' property from PL011 node");
         return;
     };
     let Some(reg_size) = reg.size else {
+        ostd::arch::serial::marker_str("P2");
         ostd::info!("Incomplete 'reg' property found in PL011 node");
         return;
     };
 
     let reg_addr = translate_soc_address(reg.starting_address as usize);
     let Ok(io_mem) = IoMem::acquire(reg_addr..reg_addr + reg_size) else {
+        ostd::arch::serial::marker_str("P3");
         ostd::info!("I/O memory is not available for PL011");
         return;
     };
 
     let Some(intid) = interrupt_id(&node) else {
+        ostd::arch::serial::marker_str("P4");
         ostd::info!("Failed to read 'interrupts' property from PL011 node");
         return;
     };
 
     let Ok(mut irq_line) = IrqLine::alloc_specific(intid) else {
+        ostd::arch::serial::marker_str("P5");
         ostd::info!("IRQ line is not available for PL011");
         return;
     };
@@ -174,5 +184,6 @@ pub(super) fn init(node: FdtNode) {
     IRQ_LINE.call_once(move || irq_line);
     uart_console.uart().flush();
 
+    ostd::arch::serial::marker_str("P9");
     ostd::info!("Registered PL011 as a console");
 }

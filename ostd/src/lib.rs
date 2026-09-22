@@ -119,11 +119,6 @@ unsafe fn init() {
 
     sync::init();
     crate::arch::serial::marker(b'2');
-    // TEMP-HW-DEBUG: early BSP view of the KPT singleton word (quiet window,
-    // survives transport). Compare with late-K (pre-release) and AP-J/L to
-    // separate overwrite (early≠late) from view divergence (BSP≠AP). Revert.
-    crate::arch::serial::marker(b'E');
-    crate::arch::serial::marker_hex(crate::mm::kspace::debug_read_kpt_word());
 
     boot::init_after_heap();
     crate::arch::serial::marker(b'3');

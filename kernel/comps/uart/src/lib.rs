@@ -26,6 +26,7 @@ mod console;
 
 #[init_component]
 fn init() -> Result<(), ComponentInitError> {
+    ostd::arch::serial::marker_str("UE");
     arch::init();
     Ok(())
 }

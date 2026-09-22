@@ -156,12 +156,6 @@ fn ap_mark(step: u8, cpu: u32) {
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn ap_early_entry(cpu_id: u32) -> ! {
     ap_mark(b'P', cpu_id);
-    // TEMP-HW-DEBUG: AP-side view of the KPT singleton word (compare with
-    // the BSP-side [MK] stream). Revert before MR-1.
-    crate::arch::serial::marker(b'J');
-    crate::arch::serial::marker_hex(crate::mm::kspace::debug_read_kpt_word());
-    crate::arch::serial::marker(b'L');
-    crate::arch::serial::marker_hex(crate::mm::kspace::debug_read_kpt_linear());
     // SAFETY:
     // 1. We're in the boot context of an AP.
     // 2. The CPU ID of the AP is correct.
@@ -175,9 +169,6 @@ pub(crate) unsafe extern "C" fn ap_early_entry(cpu_id: u32) -> ! {
     unsafe { crate::arch::trap::init_on_cpu() };
     ap_mark(b'S', cpu_id);
 
-    // TEMP-HW-DEBUG: root-explicit switch via the proven scratch channel.
-    // The AP-side `Once` read faults with `ldxr` on HW, so use the runtime
-    // root the BSP published to scratch instead. Revert-or-promote.
     let kpt_root = unsafe {
         core::ptr::read_volatile(
             crate::mm::kspace::paddr_to_vaddr(
@@ -186,7 +177,6 @@ pub(crate) unsafe extern "C" fn ap_early_entry(cpu_id: u32) -> ! {
         ) as usize
     };
     crate::arch::serial::marker(b'N');
-    crate::arch::serial::marker_hex(kpt_root);
     if kpt_root != 0 {
         unsafe {
             crate::arch::mm::activate_page_table(kpt_root);

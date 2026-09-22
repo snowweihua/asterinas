@@ -20,46 +20,23 @@ use crate::{
     thread::kernel_thread::ThreadOptions,
 };
 
-// TEMP-HW-DEBUG: single-char stage marker for HW boot bisection (revert before MR-1).
-#[cfg(target_arch = "aarch64")]
-#[inline(always)]
-fn stage(c: u8) {
-    ostd::arch::serial::marker(c);
-}
-#[cfg(not(target_arch = "aarch64"))]
-#[inline(always)]
-fn stage(_c: u8) {}
-
 pub(super) fn main() {
     // Initialize the global states for all CPUs.
     ostd::early_println!("OSTD initialized. Preparing components.");
-    // TEMP-HW-DEBUG (revert before MR-1): paced per-component markers show
-    // on lossy HW serial which init was running if Bootstrap panics.
-    #[cfg(target_arch = "aarch64")]
-    component::set_boot_marker_hook(|path| {
-        ostd::arch::serial::marker(b'<');
-        ostd::arch::serial::marker_str(path);
-        ostd::arch::serial::marker(b'>');
-    });
     component::init_all(InitStage::Bootstrap, component::parse_metadata!()).unwrap();
-    stage(b'!');
     init();
-    stage(b'@');
 
     // Initialize the per-CPU states for BSP.
     init_on_each_cpu();
-    stage(b'#');
 
     // Enable APs.
     ostd::boot::smp::register_ap_entry(ap_init);
-    stage(b'$');
 
     // Give the control of the BSP to the idle thread.
     ThreadOptions::new(bsp_idle_loop)
         .cpu_affinity(CpuId::bsp().into())
         .sched_policy(SchedPolicy::Idle)
         .spawn();
-    stage(b'%');
 }
 
 pub(super) fn on_first_process_startup(ctx: &Context) {
@@ -70,25 +47,15 @@ pub(super) fn on_first_process_startup(ctx: &Context) {
 
 fn init() {
     crate::arch::init();
-    stage(b'(');
     crate::thread::init();
-    stage(b')');
     crate::util::random::init();
-    stage(b'-');
     crate::driver::init();
-    stage(b'+');
     crate::time::init();
-    stage(b'=');
     crate::net::init();
-    stage(b',');
     crate::sched::init();
-    stage(b';');
     crate::process::init();
-    stage(b':');
     crate::fs::init();
-    stage(b'?');
     crate::security::init();
-    stage(b'/');
 }
 
 fn init_on_each_cpu() {
@@ -133,10 +100,8 @@ fn ap_init() {
 
 fn bsp_idle_loop() {
     ostd::info!("Idle thread for CPU #0 started");
-    stage(b'^');
 
     // Spawn the first non-idle kernel thread on BSP.
-    stage(b'&');
     ThreadOptions::new(first_kthread)
         .cpu_affinity(CpuId::bsp().into())
         .sched_policy(SchedPolicy::default())
@@ -181,9 +146,6 @@ fn ap_idle_loop() {
 // The main function of the first (non-idle) kernel thread
 fn first_kthread() {
     println!("Spawn the first kernel thread");
-    // TEMP-HW-DEBUG: verdict markers for HW userspace reach (revert before MR-1).
-    #[cfg(target_arch = "aarch64")]
-    ostd::arch::serial::marker(b'Z');
 
     let init_mnt_ns = MountNamespace::get_init_singleton();
     let fs_resolver = init_mnt_ns.new_path_resolver();
@@ -193,6 +155,8 @@ fn first_kthread() {
     print_banner();
 
     INIT_PROCESS.call_once(|| {
+        // TEMP-HW-DEBUG: diagnostic marker to confirm init spawn on HW (revert before MR-1)
+        ostd::arch::serial::marker_str("ISI");
         let karg = INIT_PROC_ARGS.get().unwrap();
         let argv = karg.argv().to_vec();
         let envp = karg.envp().to_vec();
@@ -200,9 +164,6 @@ fn first_kthread() {
             .spawn(argv, envp)
             .expect("failed to run the init process")
     });
-    // TEMP-HW-DEBUG: init process spawned (revert before MR-1).
-    #[cfg(target_arch = "aarch64")]
-    ostd::arch::serial::marker(b'I');
 }
 
 struct BootInit {

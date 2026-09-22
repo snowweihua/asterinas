@@ -115,6 +115,8 @@ impl SystemConsole {
                 "hvc0" => hvc0_device().cloned().map(|device| device as _),
                 _ => None,
             };
+            #[cfg(target_arch = "aarch64")]
+            ostd::arch::serial::marker_str(if device.is_some() { "DZ1" } else { "DZ0" });
             let inner = device.unwrap_or_else(|| {
                 warn!(
                     "'{}' console not found, falling back to 'tty0'",

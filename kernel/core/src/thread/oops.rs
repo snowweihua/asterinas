@@ -73,50 +73,14 @@ const MAX_OOPS_COUNT: usize = 10_000;
 
 static OOPS_COUNT: AtomicUsize = AtomicUsize::new(0);
 
-// TEMP-HW-DEBUG: stack-buffer writer so the panic message can be re-emitted
-// via paced markers without heap allocation. Revert before MR-1.
-#[cfg(target_arch = "aarch64")]
-struct MarkerMsgBuf {
-    buf: [u8; 128],
-    len: usize,
-}
-
-#[cfg(target_arch = "aarch64")]
-impl core::fmt::Write for MarkerMsgBuf {
-    fn write_str(&mut self, s: &str) -> core::fmt::Result {
-        let free = self.buf.len().saturating_sub(self.len);
-        let n = core::cmp::min(s.len(), free);
-        self.buf[self.len..self.len + n].copy_from_slice(&s.as_bytes()[..n]);
-        self.len += n;
-        Ok(())
-    }
-}
-
 #[ostd::panic_handler]
 fn panic_handler(info: &core::panic::PanicInfo) -> ! {
     let message = info.message();
 
-    // TEMP-HW-DEBUG: paced re-emit of the panic location so it survives the
-    // lossy HW serial channel (error! logs are silenced). Revert before MR-1.
     #[cfg(target_arch = "aarch64")]
     if let Some(loc) = info.location() {
         ostd::arch::serial::marker_str(loc.file());
         ostd::arch::serial::marker_hex(loc.line() as usize);
-        ostd::arch::serial::marker_hex(loc.column() as usize);
-    }
-    // TEMP-HW-DEBUG: paced re-emit of the panic message for ANY payload type
-    // via info.message(). Revert before MR-1.
-    #[cfg(target_arch = "aarch64")]
-    {
-        use core::fmt::Write as _;
-        let mut w = MarkerMsgBuf {
-            buf: [0u8; 128],
-            len: 0,
-        };
-        let _ = write!(w, "{}", info.message());
-        for &b in &w.buf[..w.len] {
-            ostd::arch::serial::marker(b);
-        }
     }
 
     if let Some(thread) = Thread::current() {

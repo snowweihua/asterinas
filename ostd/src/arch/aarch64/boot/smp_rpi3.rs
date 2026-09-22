@@ -270,10 +270,7 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
         core::ptr::write_volatile(marker_va as *mut u8, 0x55);
     }
 
-    // TEMP-HW-DEBUG: BSP-side view of the KPT singleton word for comparison
-    // against the AP-side view (loss-tolerant nibble markers). Revert.
     crate::arch::serial::marker(b'K');
-    crate::arch::serial::marker_hex(crate::mm::kspace::debug_read_kpt_word());
 
     // Try PSCI via SMC first
     #[cfg(target_arch = "aarch64")]

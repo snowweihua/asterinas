@@ -88,6 +88,9 @@ pub(crate) fn init_in_first_process(ctx: &Context) {
     file_table.insert(Arc::new(stdin), FdFlags::empty());
     file_table.insert(Arc::new(stdout), FdFlags::empty());
     file_table.insert(Arc::new(stderr), FdFlags::empty());
+
+    // TEMP-HW-DEBUG: console stdio fds installed (revert before MR-1).
+    ostd::arch::serial::marker_str("FSF");
 }
 
 fn lookup_or_create_dev(path_resolver: &PathResolver) -> Result<Path> {

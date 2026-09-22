@@ -52,7 +52,29 @@ fn parse_kernel_commandline() -> &'static str {
     if crate::arch::board::BoardType::cached() != 2 {
         return "init=/init console=ttyAMA0";
     }
-    DEVICE_TREE.get().unwrap().chosen().bootargs().unwrap_or("")
+    let bootargs = DEVICE_TREE.get().unwrap().chosen().bootargs().unwrap_or("");
+    // The RPi3 bootloader (U-Boot `boot.scr`) sets `bootargs` to just `init=/init`,
+    // so `console=` is usually absent. Without it, `SystemConsole` falls back to
+    // `tty0` and all user-space output is silently dropped. Append the serial
+    // console default when the bootloader did not request one explicitly.
+    if bootargs.contains("console=") {
+        return bootargs;
+    }
+    const DEFAULT_CONSOLE: &str = " console=ttyAMA0";
+    const CMDLINE_BUF_LEN: usize = 256;
+    static mut CMDLINE_BUF: [u8; CMDLINE_BUF_LEN] = [0; CMDLINE_BUF_LEN];
+    let args = bootargs.as_bytes();
+    let default = DEFAULT_CONSOLE.as_bytes();
+    let len = args.len() + default.len();
+    if len >= CMDLINE_BUF_LEN {
+        return bootargs;
+    }
+    let buf = core::ptr::addr_of_mut!(CMDLINE_BUF).cast::<u8>();
+    unsafe {
+        core::ptr::copy_nonoverlapping(args.as_ptr(), buf, args.len());
+        core::ptr::copy_nonoverlapping(default.as_ptr(), buf.add(args.len()), default.len());
+        core::str::from_utf8_unchecked(core::slice::from_raw_parts(buf, len))
+    }
 }
 
 /// Hardcoded initramfs location used by QEMU virt.

@@ -87,27 +87,49 @@ const ATTRINDX_UNCACHEABLE: usize = 0b010 << 2;
 const SH_MASK: usize = 0b11 << 8;
 const SH_INNER_SHAREABLE: usize = 0b11 << 8;
 
-pub(crate) fn tlb_flush_addr(vaddr: Vaddr) {
-    if crate::arch::board::IS_HARDWARE.load(core::sync::atomic::Ordering::Relaxed) {
-        unsafe {
-            asm!("dsb ishst", options(nostack, nomem, preserves_flags));
-            asm!("tlbi vaae1, {0}", in(reg) vaddr, options(nostack, nomem, preserves_flags));
-            asm!("dsb ish", options(nostack, nomem, preserves_flags));
-            asm!("isb", options(nostack, nomem, preserves_flags));
-        }
-    } else {
-        // QEMU 6.2 hangs on ANY TLBI instruction (`vaae1`, `vmalle1`, etc.)
-        // once any user-space PTE has been written, so flush the soft-TLB by
-        // rewriting TTBR0_EL1 instead. Skipping the flush entirely is wrong:
-        // the faulting walk caches a negative TLB entry and the freshly
-        // mapped page would fault forever.
-        unsafe {
-            asm!("dsb ishst", options(nostack, nomem, preserves_flags));
-            asm!("tlbi vaae1, {0}", in(reg) vaddr, options(nostack, nomem, preserves_flags));
-            asm!("dsb ish", options(nostack, nomem, preserves_flags));
-            asm!("isb", options(nostack, nomem, preserves_flags));
-        }
+/// Invalidates the local TLB and walk cache.
+///
+/// On Cortex-A53, `tlbi vmalle1` leaves stale intermediate walk-cache entries.
+/// A TTBR0_EL1 rewrite only takes effect if the value changes (same-value
+/// writes are elided), so toggle ASID bit 56 and restore: BADDR is preserved,
+/// keeping transient speculative walks valid, while the changed value
+/// guarantees the walk cache is flushed.
+pub(crate) fn flush_tlb_and_walk_cache() {
+    unsafe {
+        // LOCAL `tlbi vmalle1` only. The inner-shareable variant (`vmalle1is`)
+        // broadcasts to every PE in the domain; on the BCM2836 that includes
+        // the VideoCore, and a broadcast the firmware does not ACK makes the
+        // trailing `dsb ish` spin forever on the BSP (silent whole-system
+        // stop). Each PE that modifies a page table flushes its own TLB via
+        // the TTBR0 toggle below; cross-PE coherence is handled by the
+        // `dispatch_tlb_flush` IPI path.
+        asm!("tlbi vmalle1", options(nostack, nomem, preserves_flags));
+        asm!("dsb ish", options(nostack, nomem, preserves_flags));
+        asm!("isb", options(nostack, nomem, preserves_flags));
+
+        // Kernel executes from the TTBR1 half, so transiently changing TTBR0 is safe.
+        let ttbr0: u64;
+        asm!("mrs {0}, ttbr0_el1", out(reg) ttbr0, options(nostack, nomem, preserves_flags));
+        asm!("dsb sy", options(nostack, nomem, preserves_flags));
+        asm!(
+            "msr ttbr0_el1, {0}",
+            in(reg) ttbr0 ^ (1u64 << 56),
+            options(nostack, nomem, preserves_flags)
+        );
+        asm!("isb", options(nostack, nomem, preserves_flags));
+        asm!("msr ttbr0_el1, {0}", in(reg) ttbr0, options(nostack, nomem, preserves_flags));
+        asm!("isb", options(nostack, nomem, preserves_flags));
+        asm!("dsb sy", options(nostack, nomem, preserves_flags));
     }
+}
+
+pub(crate) fn tlb_flush_addr(vaddr: Vaddr) {
+    let _ = vaddr;
+    // Use TTBR0 rewrite on all platforms for reliable TLB + walk-cache
+    // invalidation. On BCM2836/Cortex-A53, `tlbi vmalle1` invalidates TLB
+    // entries but the page-table walker may retain stale intermediate-level
+    // translations. Rewriting TTBR0_EL1 forces a full walk-cache flush.
+    flush_tlb_and_walk_cache();
 }
 
 pub(crate) fn tlb_flush_addr_range(range: &Range<Vaddr>) {
@@ -117,46 +139,15 @@ pub(crate) fn tlb_flush_addr_range(range: &Range<Vaddr>) {
 }
 
 pub(crate) fn tlb_flush_all_excluding_global() {
-    if crate::arch::board::IS_HARDWARE.load(core::sync::atomic::Ordering::Relaxed) {
-        unsafe {
-            asm!("dsb ishst", options(nostack, nomem, preserves_flags));
-            asm!("tlbi vmalle1", options(nostack, nomem, preserves_flags));
-            asm!("dsb ish", options(nostack, nomem, preserves_flags));
-            asm!("isb", options(nostack, nomem, preserves_flags));
-        }
-    } else {
-        // WORKAROUND: QEMU 6.2 AArch64 TCG deadlocks on `tlbi vmalle1` when called
-        // after user-space PTEs have been written. Instead, trigger QEMU's soft-TLB
-        // flush by writing TTBR0_EL1 to itself (any write causes tlb_flush_by_mmuidx).
-        // This clears negative/stale TLB entries without corrupting the page walk state.
-        unsafe {
-            let ttbr0: u64;
-            asm!("mrs {0}, ttbr0_el1", out(reg) ttbr0, options(nostack, nomem, preserves_flags));
-            asm!("dsb sy", options(nostack, nomem, preserves_flags));
-            asm!("msr ttbr0_el1, {0}", in(reg) ttbr0, options(nostack, nomem, preserves_flags));
-            asm!("isb", options(nostack, nomem, preserves_flags));
-        }
-    }
+    // Use TTBR0 rewrite on all platforms, mirroring `tlb_flush_addr`: on
+    // BCM2836/Cortex-A53, `tlbi vmalle1` fails to evict stale intermediate-level
+    // walk-cache entries, so a full TTBR0 rewrite is required.
+    flush_tlb_and_walk_cache();
 }
 
 pub(crate) fn tlb_flush_all_including_global() {
-    if crate::arch::board::IS_HARDWARE.load(core::sync::atomic::Ordering::Relaxed) {
-        unsafe {
-            asm!("dsb ishst", options(nostack, nomem, preserves_flags));
-            asm!("tlbi vmalle1", options(nostack, nomem, preserves_flags));
-            asm!("dsb ish", options(nostack, nomem, preserves_flags));
-            asm!("isb", options(nostack, nomem, preserves_flags));
-        }
-    } else {
-        // Same QEMU workaround as `tlb_flush_all_excluding_global`.
-        unsafe {
-            let ttbr0: u64;
-            asm!("mrs {0}, ttbr0_el1", out(reg) ttbr0, options(nostack, nomem, preserves_flags));
-            asm!("dsb sy", options(nostack, nomem, preserves_flags));
-            asm!("msr ttbr0_el1, {0}", in(reg) ttbr0, options(nostack, nomem, preserves_flags));
-            asm!("isb", options(nostack, nomem, preserves_flags));
-        }
-    }
+    // Use TTBR0 rewrite on all platforms, mirroring `tlb_flush_addr`.
+    flush_tlb_and_walk_cache();
 }
 
 pub unsafe fn activate_page_table(root_paddr: Paddr) {

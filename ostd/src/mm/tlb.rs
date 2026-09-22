@@ -104,9 +104,6 @@ impl<'a, G: PinCurrentCpu> TlbFlusher<'a, G> {
                 flush_ops.push_from(&self.ops_stack);
             }
 
-            // TEMP-HW-DEBUG (revert before MR-1): tag IPI source.
-            #[cfg(target_arch = "aarch64")]
-            crate::arch::serial::marker_str("TLB");
             let pending_ipis = ipi_sender.inter_processor_call(&target_cpus, do_remote_flush);
             self.pending_ipis.extend(&pending_ipis);
         }
@@ -252,7 +249,6 @@ cpu_local! {
 }
 
 fn do_remote_flush() {
-    // No races because we are in IRQs or have disabled preemption.
     let current_cpu = crate::cpu::CpuId::current_racy();
 
     let mut new_op_queue = OpsStack::new();

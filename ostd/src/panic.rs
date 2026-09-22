@@ -28,9 +28,6 @@ pub fn __ostd_panic_handler(info: &core::panic::PanicInfo) -> ! {
 
     IN_PANIC.store(true);
 
-    // TEMP-HW-DEBUG: compact one-line panic summary (pretty {:#?} is too
-    // long to survive the lossy HW serial channel). The paced re-emit below
-    // survives it; revert before MR-1.
     if let Some(loc) = info.location() {
         early_print!("PANIC! {}:{}:{} ", loc.file(), loc.line(), loc.column());
         #[cfg(target_arch = "aarch64")]

@@ -512,9 +512,6 @@ fn set_need_preempt(cpu_id: CpuId) {
     if preempt_guard.current_cpu() == cpu_id {
         cpu_local::set_need_preempt();
     } else {
-        // TEMP-HW-DEBUG (revert before MR-1): tag IPI source.
-        #[cfg(target_arch = "aarch64")]
-        crate::arch::serial::marker_str("SCH");
         crate::smp::inter_processor_call(&CpuSet::from(cpu_id), || {
             cpu_local::set_need_preempt();
         });
@@ -586,6 +583,18 @@ where
                 return;
             }
             ReschedAction::Retry => {
+                // TEMP-HW-DEBUG: scheduler busy-spin census (every 1024th retry)
+                // to detect park_current spinning with no context switch.
+                // Revert before MR-1.
+                #[cfg(target_arch = "aarch64")]
+                {
+                    use core::sync::atomic::{AtomicU64, Ordering};
+                    static RETRY_COUNT: AtomicU64 = AtomicU64::new(0);
+                    let rn = RETRY_COUNT.fetch_add(1, Ordering::Relaxed);
+                    if rn & 0x3ff == 0 {
+                        crate::arch::serial::marker(b'r');
+                    }
+                }
                 continue;
             }
             ReschedAction::SwitchTo(next_task) => {

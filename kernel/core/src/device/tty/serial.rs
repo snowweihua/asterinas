@@ -5,7 +5,7 @@ use alloc::format;
 use aster_console::AnyConsoleDevice;
 use ostd::mm::Infallible;
 #[cfg(target_arch = "aarch64")]
-use ostd::task::{Task, TaskOptions};
+use ostd::task::Task;
 use spin::Once;
 
 use super::{Tty, TtyDriver};
@@ -16,6 +16,7 @@ use crate::{
     },
     fs::{devtmpfs::DevtmpfsNodeMeta, file::PerOpenFileOps},
     prelude::*,
+    thread::kernel_thread::ThreadOptions,
 };
 
 /// The driver for serial devices.
@@ -86,27 +87,40 @@ pub(super) fn init_in_first_process() -> Result<()> {
         SERIAL0.call_once(|| serial0.clone());
         char::register(serial0.clone())?;
 
-        #[cfg(not(target_arch = "aarch64"))]
+        // On RPi3 the PL011 RX IRQ is not routed (see ostd
+        // `pl011_init`); poll the FIFO instead so serial input works.
+        // QEMU keeps the IRQ-callback path below.
+        let callback_serial0 = serial0.clone();
         serial_console.register_callback(Box::leak(Box::new(
             move |mut reader: VmReader<Infallible>| {
                 let mut chs = vec![0u8; reader.remain()];
                 reader.read(&mut VmWriter::from(chs.as_mut_slice()));
-                let _ = serial0.push_input(chs.as_slice());
+                let _ = callback_serial0.push_input(chs.as_slice());
             },
         )));
 
         #[cfg(target_arch = "aarch64")]
-        {
-            let serial0 = serial0.clone();
-            let _ = TaskOptions::new(move || loop {
-                if ostd::arch::serial::has_data() {
-                    let ch = ostd::arch::serial::receive();
-                    let _ = serial0.push_input(&[ch]);
-                } else {
-                    Task::yield_now();
+        if ostd::arch::is_rpi3() {
+            // Pin to the BSP: `select_cpu` would otherwise put this task on an
+            // AP where it may starve (the R29 devtmpfsd stall class), and the
+            // BSP is guaranteed to tick.
+            let _ = ThreadOptions::new(move || {
+                ostd::arch::serial::marker_str("PL1");
+                // Drain residual RX FIFO bytes (power-on line noise) so the
+                // first real input byte is not mistaken for stale garbage.
+                while ostd::arch::serial::has_data() {
+                    let _ = ostd::arch::serial::receive();
+                }
+                loop {
+                    if ostd::arch::serial::has_data() {
+                        let ch = ostd::arch::serial::receive();
+                        let _ = serial0.push_input(&[ch]);
+                    } else {
+                        ostd::task::Task::yield_now();
+                    }
                 }
             })
-            .data(())
+            .cpu_affinity(ostd::cpu::CpuId::bsp().into())
             .spawn();
         }
     }

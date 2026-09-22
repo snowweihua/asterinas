@@ -177,8 +177,15 @@ fn pl011_init() {
             (base + PL011_ICR_OFFSET) as *mut u32,
             0x7FF,
         );
-        set_im(IM_RXIM);
-        crate::arch::bcm2836_irq::enable_uart_irq();
+        // On RPi3, the PL011 RX IRQ is NOT enabled: the lossy USB-serial link
+        // and the BCM2836 GPU IRQ routing make the RX interrupt path
+        // unreliable (silent IRQ storms from RX error bits that nothing
+        // clears). Input is polled instead (see `has_data`/`receive`). QEMU
+        // keeps the IRQ path (exercised by `tty/serial.rs` callbacks).
+        if !is_rpi3() {
+            set_im(IM_RXIM);
+            crate::arch::bcm2836_irq::enable_uart_irq();
+        }
     }
     core::sync::atomic::fence(Ordering::SeqCst);
 }
@@ -340,13 +347,13 @@ pub fn irq_num() -> u8 {
 }
 
 pub fn init_rx_irq() {
-    set_im(IM_RXIM);
+    if !is_rpi3() {
+        set_im(IM_RXIM);
+    }
 }
 
 pub fn reenable_rx_irq() {
-    if is_rpi3() {
-        crate::arch::bcm2836_irq::enable_uart_irq();
-    }
+    // RPi3 polls RX instead (see `pl011_init`); no peripheral IRQ routing.
 }
 
 pub fn has_data() -> bool {
@@ -381,7 +388,20 @@ pub(crate) fn spin_delay_ms(ms: u64) {
     }
 }
 
+/// TEMP-HW-DEBUG: when set, `marker*` output is dropped. Set once an
+/// EL1-SYNC dump starts so other CPUs' scheduler/IPI marker floods do not
+/// interleave with — and corrupt — the fault dump on the lossy USB serial.
+/// Revert before MR-1.
+static MARKER_SUPPRESSED: AtomicBool = AtomicBool::new(false);
+
+pub fn set_marker_suppressed(suppressed: bool) {
+    MARKER_SUPPRESSED.store(suppressed, Ordering::Relaxed);
+}
+
 pub fn marker(c: u8) {
+    if MARKER_SUPPRESSED.load(Ordering::Relaxed) {
+        return;
+    }
     for b in [b'\n', b'[', b'M', c, b']', b'\n'] {
         send(b);
     }
