@@ -248,6 +248,8 @@ impl<'a> VmarMapOptions<'a> {
     ///
     /// On success, the virtual address of the new mapping is returned.
     pub(crate) fn build(self) -> Result<Vaddr> {
+        #[cfg(target_arch = "aarch64")]
+        ostd::arch::serial::marker(b'5');
         self.check_options()?;
         let Self {
             parent,
@@ -263,7 +265,11 @@ impl<'a> VmarMapOptions<'a> {
             handle_page_faults_around,
         } = self;
 
+        #[cfg(target_arch = "aarch64")]
+        ostd::arch::serial::marker(b'6');
         let mut inner = parent.inner.write();
+        #[cfg(target_arch = "aarch64")]
+        ostd::arch::serial::marker(b'7');
 
         inner
             .check_extra_size_fits_rlimit(map_size)
@@ -362,7 +368,11 @@ impl<'a> VmarMapOptions<'a> {
         );
 
         let vmo_for_rmap = vm_mapping.vmo_for_rmap().cloned();
+        #[cfg(target_arch = "aarch64")]
+        ostd::arch::serial::marker(b'8');
         let mut rmap = vmo_for_rmap.as_ref().map(|vmo| vmo.rmap().lock());
+        #[cfg(target_arch = "aarch64")]
+        ostd::arch::serial::marker(b'9');
 
         // Populate device memory if needed before adding to VMAR.
         //

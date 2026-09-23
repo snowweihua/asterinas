@@ -105,15 +105,16 @@ pub(super) fn init_in_first_process() -> Result<()> {
             // AP where it may starve (the R29 devtmpfsd stall class), and the
             // BSP is guaranteed to tick.
             let _ = ThreadOptions::new(move || {
-                // Drain residual RX FIFO bytes (power-on line noise) so the
-                // first real input byte is not mistaken for stale garbage.
-                while ostd::arch::serial::has_data() {
-                    let _ = ostd::arch::serial::receive();
-                }
+                // TEMP-HW-DEBUG: filter RX noise — only push printable/CR/LF
+                // bytes so power-on line noise cannot flood the TTY echo
+                // (which would hold the paced UART lock with IRQs off and
+                // starve the BSP's exec path).
                 loop {
                     if ostd::arch::serial::has_data() {
                         let ch = ostd::arch::serial::receive();
-                        let _ = serial0.push_input(&[ch]);
+                        if ch.is_ascii_graphic() || ch == b'\r' || ch == b'\n' || ch == b'\t' {
+                            let _ = serial0.push_input(&[ch]);
+                        }
                     } else {
                         ostd::task::Task::yield_now();
                     }

@@ -99,6 +99,14 @@ impl<'a, G: PinCurrentCpu> TlbFlusher<'a, G> {
         }
 
         if let Some(ipi_sender) = self.ipi_sender {
+            // TEMP-HW-DEBUG: remote-flush census (revert before MR-1).
+            #[cfg(target_arch = "aarch64")]
+            if !target_cpus.is_empty() {
+                crate::arch::serial::marker(b'i');
+                for c in target_cpus.iter() {
+                    crate::arch::serial::marker(b'0' + (u32::from(c) as u8));
+                }
+            }
             for cpu in target_cpus.iter() {
                 let mut flush_ops = FLUSH_OPS.get_on_cpu(cpu).lock();
                 flush_ops.push_from(&self.ops_stack);
