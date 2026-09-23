@@ -247,14 +247,6 @@ fn sync_exception_dump_once(f: &mut TrapFrame) -> bool {
 
 #[unsafe(no_mangle)]
 extern "C" fn sync_exception_current(f: &mut TrapFrame) {
-    // TEMP-HW-DEBUG: EL1 sync-exception census (every 4th) to distinguish a
-    // silent refault storm from a halt/spin. Revert before MR-1.
-    use core::sync::atomic::{AtomicU64, Ordering};
-    static SYNC_COUNT: AtomicU64 = AtomicU64::new(0);
-    let n = SYNC_COUNT.fetch_add(1, Ordering::Relaxed);
-    if n % 4096 == 0 {
-        crate::arch::serial::marker(b'S');
-    }
     if !sync_exception_dump_once(&mut *f) {
         loop {
             core::hint::spin_loop();
@@ -265,14 +257,6 @@ extern "C" fn sync_exception_current(f: &mut TrapFrame) {
 /// Handle IRQ from current EL.
 #[unsafe(no_mangle)]
 extern "C" fn irq_current(f: &mut TrapFrame) {
-    // TEMP-HW-DEBUG: IRQ census (every 65536th) to detect an IRQ storm.
-    // Revert before MR-1.
-    use core::sync::atomic::{AtomicU64, Ordering};
-    static IRQ_COUNT: AtomicU64 = AtomicU64::new(0);
-    let n = IRQ_COUNT.fetch_add(1, Ordering::Relaxed);
-    if n & 0xfffff == 0 {
-        crate::arch::serial::marker(b'I');
-    }
     if let Some(irq_num) = super::gic::acknowledge_interrupt() {
         let hw_irq_line = crate::arch::irq::HwIrqLine::new(irq_num as u8);
         call_irq_callback_functions(f, &hw_irq_line, PrivilegeLevel::Kernel);

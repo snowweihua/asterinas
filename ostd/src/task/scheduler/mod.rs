@@ -583,18 +583,6 @@ where
                 return;
             }
             ReschedAction::Retry => {
-                // TEMP-HW-DEBUG: scheduler busy-spin census (every 1024th retry)
-                // to detect park_current spinning with no context switch.
-                // Revert before MR-1.
-                #[cfg(target_arch = "aarch64")]
-                {
-                    use core::sync::atomic::{AtomicU64, Ordering};
-                    static RETRY_COUNT: AtomicU64 = AtomicU64::new(0);
-                    let rn = RETRY_COUNT.fetch_add(1, Ordering::Relaxed);
-                    if rn & 0x3ff == 0 {
-                        crate::arch::serial::marker(b'r');
-                    }
-                }
                 continue;
             }
             ReschedAction::SwitchTo(next_task) => {

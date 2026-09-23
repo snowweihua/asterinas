@@ -14,15 +14,6 @@ use crate::{
 };
 
 pub(super) fn handle_exception(ctx: &Context, user_ctx: &UserContext, exception: CpuException) {
-    #[cfg(target_arch = "aarch64")]
-    {
-        use core::sync::atomic::{AtomicU64, Ordering};
-        static EXC_COUNT: AtomicU64 = AtomicU64::new(0);
-        let n = EXC_COUNT.fetch_add(1, Ordering::Relaxed);
-        if n & 0xfff == 0 {
-            ostd::arch::serial::marker(b'E');
-        }
-    }
     debug!("handle exception: {:#x?}", exception);
 
     if let Ok(page_fault_info) = PageFaultInfo::try_from(&exception) {

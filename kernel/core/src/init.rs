@@ -156,7 +156,6 @@ fn first_kthread() {
 
     INIT_PROCESS.call_once(|| {
         // TEMP-HW-DEBUG: diagnostic marker to confirm init spawn on HW (revert before MR-1)
-        ostd::arch::serial::marker_str("ISI");
         let karg = INIT_PROC_ARGS.get().unwrap();
         let argv = karg.argv().to_vec();
         let envp = karg.envp().to_vec();

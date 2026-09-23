@@ -369,7 +369,7 @@ pub fn receive() -> u8 {
 /// The USB-serial path drops bursts; pacing output keeps markers alive.
 /// Uses CNTFRQ (firmware-set) so it works on HW and QEMU. Revert before MR-1.
 #[inline(always)]
-pub(crate) fn spin_delay_ms(ms: u64) {
+pub fn spin_delay_ms(ms: u64) {
     let frq: u64;
     let start: u64;
     unsafe {

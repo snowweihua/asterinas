@@ -34,8 +34,6 @@ pub(crate) fn init_cvm_guest() {
 
 pub(crate) unsafe fn late_init_on_bsp() {
     unsafe { trap::init() };
-    // TEMP-HW-DEBUG bisect: confirm VBAR write returns.
-    crate::arch::serial::marker(b'A');
     // Board dispatch is resolved once; RPi3 (no GIC) takes the BCM2836 path.
     let is_rpi3_board = crate::arch::board::BoardType::cached() == 2;
     if is_rpi3_board {

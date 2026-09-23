@@ -100,14 +100,6 @@ pub fn arm_timer_on_ap() {
 }
 
 fn timer_callback(trapframe: &TrapFrame) {
-    // TEMP-HW-DEBUG: heartbeat census (every 64th tick) to tell "alive but
-    // wedged" from "dead". Revert before MR-1.
-    use core::sync::atomic::{AtomicU64, Ordering};
-    static TICK_COUNT: AtomicU64 = AtomicU64::new(0);
-    let n = TICK_COUNT.fetch_add(1, Ordering::Relaxed);
-    if n & 0xffff == 0 {
-        crate::arch::serial::marker(b'T');
-    }
     crate::timer::call_timer_callback_functions(trapframe);
 
     set_next_timer();

@@ -270,7 +270,6 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
         core::ptr::write_volatile(marker_va as *mut u8, 0x55);
     }
 
-    crate::arch::serial::marker(b'K');
 
     // Try PSCI via SMC first
     #[cfg(target_arch = "aarch64")]

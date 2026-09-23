@@ -479,19 +479,7 @@ impl VmMapping {
             static FAULT_COUNT: AtomicU64 = AtomicU64::new(0);
             static LAST_VA: AtomicU64 = AtomicU64::new(0);
             static REPEAT: AtomicU64 = AtomicU64::new(0);
-            let n = FAULT_COUNT.fetch_add(1, Ordering::Relaxed);
-            if n % 8192 == 0 {
-                ostd::arch::serial::marker(b'J');
-            }
-            if page_aligned_addr as u64 == LAST_VA.load(Ordering::Relaxed) {
-                if REPEAT.fetch_add(1, Ordering::Relaxed) == 64 {
-                    ostd::arch::serial::marker(b'R');
-                    ostd::arch::serial::marker_hex(page_aligned_addr as usize);
-                }
-            } else {
-                LAST_VA.store(page_aligned_addr as u64, Ordering::Relaxed);
-                REPEAT.store(0, Ordering::Relaxed);
-            }
+            let _ = FAULT_COUNT.fetch_add(1, Ordering::Relaxed);
         }
         'retry: loop {
             let preempt_guard = disable_preempt();

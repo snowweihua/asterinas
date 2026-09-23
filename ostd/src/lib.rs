@@ -115,13 +115,10 @@ unsafe fn init() {
 
     // SAFETY: This function is called only once on the BSP.
     unsafe { mm::kspace::activate_kernel_page_table() };
-    crate::arch::serial::marker(b'1');
 
     sync::init();
-    crate::arch::serial::marker(b'2');
 
     boot::init_after_heap();
-    crate::arch::serial::marker(b'3');
 
     // SAFETY: This function is called only once on the BSP.
     unsafe { arch::late_init_on_bsp() };

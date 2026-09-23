@@ -162,7 +162,6 @@ pub unsafe fn init_on_bsp() {
     // Disable ARM-local timer IRQ on Core 0 (re-enabled later by enable_timer_irq).
     unsafe { write_reg(CORE0_TIMER_INT_CONTROL, 0) };
     // TEMP-HW-DEBUG bisect: local-IC (linear-map) writes completed.
-    crate::arch::serial::marker(b'B');
 
     // Disable ALL BCM2835 peripheral interrupts AND FIQ.
     // Use the high-half mapping (Device memory) so the writes actually reach the
@@ -179,7 +178,6 @@ pub unsafe fn init_on_bsp() {
         mmio_write(ic_va + BCM2835_FIQ_CONTROL, 0);
     }
     // TEMP-HW-DEBUG bisect: peri-IC (high-half Device) writes completed.
-    crate::arch::serial::marker(b'C');
 }
 
 pub fn enable_cntpns_irq() {
@@ -195,27 +193,20 @@ pub fn enable_cntv_irq() {
 }
 
 pub unsafe fn init_on_ap() {
-    crate::arch::serial::marker(b'a');
     if crate::arch::board::BoardType::cached() != 2 {
-        crate::arch::serial::marker(b'z');
         return;
     }
-    crate::arch::serial::marker(b'b');
     let core = core_id();
     let timer_ctrl = CORE0_TIMER_INT_CONTROL + (core * CORE_REG_STRIDE);
 
     unsafe {
         write_reg(timer_ctrl, 0);
-        crate::arch::serial::marker(b'c');
         const CORE0_MAILBOX3_CLR: usize = 0xCC;
         const MAILBOX_CLR_STRIDE: usize = 0x10;
         write_reg(CORE0_MAILBOX3_CLR + (core * MAILBOX_CLR_STRIDE), 0xFFFF_FFFF);
         core::arch::asm!("dsb sy", "isb", options(nostack, nomem, preserves_flags));
-        crate::arch::serial::marker(b'd');
         enable_cntpns_irq();
-        crate::arch::serial::marker(b'e');
         enable_ipi_irq();
-        crate::arch::serial::marker(b'f');
     }
 }
 

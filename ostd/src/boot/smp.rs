@@ -80,10 +80,8 @@ static HW_CPU_ID_MAP: SpinLock<BTreeMap<u32, HwCpuId>> = SpinLock::new(BTreeMap:
 /// This function can only be called in the boot context of the BSP where APs have
 /// not yet been booted.
 pub(crate) unsafe fn boot_all_aps() {
-    crate::arch::serial::marker(b'9');
     // Mark the BSP as started.
     report_online_and_hw_cpu_id(crate::cpu::CpuId::bsp().as_usize().try_into().unwrap());
-    crate::arch::serial::marker(b'0');
 
     let num_cpus = crate::cpu::num_cpus();
 
@@ -142,7 +140,6 @@ pub fn register_ap_entry(entry: fn()) {
 #[inline(always)]
 fn ap_mark(step: u8, cpu: u32) {
     crate::arch::serial::marker(step);
-    crate::arch::serial::marker(b'0' + (cpu as u8));
 }
 
 /// The AP's entry point of the Rust code portion of Asterinas.
@@ -176,7 +173,6 @@ pub(crate) unsafe extern "C" fn ap_early_entry(cpu_id: u32) -> ! {
             ) as *const u64,
         ) as usize
     };
-    crate::arch::serial::marker(b'N');
     if kpt_root != 0 {
         unsafe {
             crate::arch::mm::activate_page_table(kpt_root);
@@ -185,7 +181,6 @@ pub(crate) unsafe extern "C" fn ap_early_entry(cpu_id: u32) -> ! {
     } else {
         unsafe { crate::mm::kspace::activate_kernel_page_table() };
     }
-    crate::arch::serial::marker(b'T');
 
     // SAFETY: This function is only called once on this AP, after the BSP has
     // done the architecture-specific initialization.

@@ -39,6 +39,13 @@ impl Uart for SpinLock<Pl011, ostd::sync::LocalIrqDisabled> {
                 core::hint::spin_loop();
             }
             uart.write_reg(OFFSET_UARTDR, *byte as u32);
+            // TEMP-HW-DEBUG: pace user-space console output so the lossy USB
+            // serial relay does not drop the burst (markers are paced and
+            // survive; raw text bursts do not). Revert before MR-1.
+            #[cfg(target_arch = "aarch64")]
+            if ostd::arch::is_rpi3() {
+                ostd::arch::serial::spin_delay_ms(2);
+            }
         }
     }
 

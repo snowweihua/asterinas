@@ -105,7 +105,6 @@ pub(super) fn init_in_first_process() -> Result<()> {
             // AP where it may starve (the R29 devtmpfsd stall class), and the
             // BSP is guaranteed to tick.
             let _ = ThreadOptions::new(move || {
-                ostd::arch::serial::marker_str("PL1");
                 // Drain residual RX FIFO bytes (power-on line noise) so the
                 // first real input byte is not mistaken for stale garbage.
                 while ostd::arch::serial::has_data() {
