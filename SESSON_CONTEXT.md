@@ -6,11 +6,10 @@ with only arch-scoped changes; keep QEMU `raspi3b` and HW RPi3B parity (SMP/shel
 
 ## Branch / base
 - Branch: `aarch64_support_pure`
-- Base: `4d395b885` (pre-arm); last committed HEAD `6e85bf329`
-  "aarch64/mm: probe AT before icache flush to skip unmapped pages (R52)".
-- **Uncommitted delta (R55-R67) = "HW interactive-shell push"** — see the
-  diff; the functional fixes are: local `tlbi vmalle1` (R63), console bootargs
-  append, RX callback + BSP-pinned poller, RX-IRQ disabled on RPi3.
+- Base: `4d395b885` (pre-arm); last committed HEAD `18cac1b4e`
+  "aarch64: pin new tasks to the spawning CPU on RPi3 — init script progresses".
+- Committed in this session: `b947122ae` (local tlbi/console/RX fixes),
+  `18cac1b4e` (select_cpu pin + EL1-SYNC diagnostics).
 
 ## Environment / workflow
 - Dev in WSL2 (`/home/snow/asterinas`); TFTP root `D:/pi_sd/` = `/mnt/d/pi_sd/`;
