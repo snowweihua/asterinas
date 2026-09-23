@@ -159,24 +159,71 @@ fn sync_exception_dump_once(f: &mut TrapFrame) -> bool {
         return true;
     }
 
-    crate::arch::serial::set_marker_suppressed(true);
-    put_crlf!();
-    put_str!(b"[EL1-SYNC]");
-    put_crlf!();
-    put_str!(b" ESR=");
-    put_hex!(f.esr_el1);
-    crate::arch::serial::spin_delay_ms(100);
-    put_str!(b" ELR=");
-    put_hex!(f.elr_el1);
-    crate::arch::serial::spin_delay_ms(100);
-    put_str!(b" FAR=");
-    put_hex!(FAR_EL1.get() as usize);
-    crate::arch::serial::spin_delay_ms(20);
-    put_crlf!();
-    // Diagnostic: which CPU and which task took the fault (spawner hunt).
-    // Raw MPIDR read (same Aff0 masking as HwCpuId) and the current task
-    // pointer are both lock-free, hence safe in trap context. A TASK of
-    // zero means bootstrap/IRQ context with no current task.
+    // Diagnostics are emitted on the MARKER channel (short, spaced, proven to
+    // survive the lossy USB serial), BEFORE marker suppression is enabled.
+    macro_rules! m {
+        ($c:expr) => {
+            crate::arch::serial::marker($c)
+        };
+    }
+    macro_rules! mhex {
+        ($v:expr) => {
+            crate::arch::serial::marker_hex($v as usize)
+        };
+    }
+    m!(b'F');
+    mhex!(f.esr_el1);
+    mhex!(f.elr_el1);
+    mhex!(FAR_EL1.get() as usize);
+    let ttbr0: usize;
+    let ttbr1: usize;
+    unsafe {
+        core::arch::asm!("mrs {0}, ttbr0_el1", out(reg) ttbr0, options(nostack, preserves_flags));
+        core::arch::asm!("mrs {0}, ttbr1_el1", out(reg) ttbr1, options(nostack, preserves_flags));
+    }
+    mhex!(ttbr0);
+    mhex!(ttbr1);
+    // AT-walk the faulting address: F=0 => translation found (stale
+    // TLB/walk-cache); F=1 => the table really lacks the entry.
+    let par: usize;
+    unsafe {
+        core::arch::asm!(
+            "at s1e1r, {far}",
+            "isb",
+            "mrs {par}, par_el1",
+            far = in(reg) far,
+            par = out(reg) par,
+            options(nostack, preserves_flags),
+        );
+    }
+    mhex!(par);
+    // Top-level slot probes in the active TTBR1 root: linear (256),
+    // frame-meta (448), kernel (511). F=0 => present; F=1 level 0 => absent.
+    macro_rules! slot {
+        ($va:expr) => {{
+            let p: usize;
+            unsafe {
+                core::arch::asm!(
+                    "at s1e1r, {va}",
+                    "isb",
+                    "mrs {p}, par_el1",
+                    va = in(reg) $va,
+                    p = out(reg) p,
+                    options(nostack, preserves_flags),
+                );
+            }
+            mhex!(p);
+        }};
+    }
+    slot!(0xffff_8000_0000_0000usize);
+    slot!(0xffff_e000_0000_0000usize);
+    slot!(0xffff_ffff_0000_0000usize);
+    // The KPT singleton root paddr — does the faulting root match it?
+    match crate::mm::kspace::kernel_page_table_root_paddr() {
+        Some(pa) => mhex!(pa),
+        None => m!(b'x'),
+    }
+    // CPU + task pointer.
     let mpidr: u64;
     unsafe {
         core::arch::asm!("mrs {0}, mpidr_el1", out(reg) mpidr, options(nostack, nomem, preserves_flags))
@@ -184,83 +231,14 @@ fn sync_exception_dump_once(f: &mut TrapFrame) -> bool {
     let task_ptr = crate::task::Task::current()
         .map(|t| &*t as *const crate::task::Task as usize)
         .unwrap_or(0);
-    put_str!(b" CPU=");
-    put_hex!((mpidr & 0x3) as usize);
-    put_str!(b" TASK=");
-    put_hex!(task_ptr);
+    mhex!((mpidr & 0x3) as usize);
+    mhex!(task_ptr);
+    mhex!(f.general.x0);
+    mhex!(f.general.x1);
+
+    crate::arch::serial::set_marker_suppressed(true);
     put_crlf!();
-    put_str!(b" x0=");
-    put_hex!(f.general.x0);
-    put_str!(b" x1=");
-    put_hex!(f.general.x1);
-    put_str!(b" x2=");
-    put_hex!(f.general.x2);
-    put_str!(b" x3=");
-    put_hex!(f.general.x3);
-    put_crlf!();
-    put_str!(b" x4=");
-    put_hex!(f.general.x4);
-    put_str!(b" x5=");
-    put_hex!(f.general.x5);
-    put_str!(b" x6=");
-    put_hex!(f.general.x6);
-    put_str!(b" x7=");
-    put_hex!(f.general.x7);
-    put_crlf!();
-    put_str!(b" x8=");
-    put_hex!(f.general.x8);
-    put_str!(b" x9=");
-    put_hex!(f.general.x9);
-    put_str!(b" x10=");
-    put_hex!(f.general.x10);
-    put_str!(b" x11=");
-    put_hex!(f.general.x11);
-    put_crlf!();
-    put_str!(b" x12=");
-    put_hex!(f.general.x12);
-    put_str!(b" x13=");
-    put_hex!(f.general.x13);
-    put_str!(b" x14=");
-    put_hex!(f.general.x14);
-    put_str!(b" x15=");
-    put_hex!(f.general.x15);
-    put_crlf!();
-    put_str!(b" x16=");
-    put_hex!(f.general.x16);
-    put_str!(b" x17=");
-    put_hex!(f.general.x17);
-    put_str!(b" x18=");
-    put_hex!(f.general.x18);
-    put_str!(b" x19=");
-    put_hex!(f.general.x19);
-    put_crlf!();
-    put_str!(b" x20=");
-    put_hex!(f.general.x20);
-    put_str!(b" x21=");
-    put_hex!(f.general.x21);
-    put_str!(b" x22=");
-    put_hex!(f.general.x22);
-    put_str!(b" x23=");
-    put_hex!(f.general.x23);
-    put_crlf!();
-    put_str!(b" x24=");
-    put_hex!(f.general.x24);
-    put_str!(b" x25=");
-    put_hex!(f.general.x25);
-    put_str!(b" x26=");
-    put_hex!(f.general.x26);
-    put_str!(b" x27=");
-    put_hex!(f.general.x27);
-    put_crlf!();
-    put_str!(b" x28=");
-    put_hex!(f.general.x28);
-    put_str!(b" x29=");
-    put_hex!(f.general.x29);
-    put_str!(b" lr=");
-    put_hex!(f.lr);
-    put_crlf!();
-    put_str!(b" spsr=");
-    put_hex!(f.spsr_el1);
+    put_str!(b"[EL1-SYNC]");
     put_crlf!();
     put_str!(b"### EL1 HALT ###");
     put_crlf!();

@@ -146,6 +146,8 @@ fn map_vmos_and_build_aux_vec(
     parsed_elf: &ElfHeaders,
     elf_file: &Arc<dyn FileLike>,
 ) -> Result<(ElfMappedInfo, Vaddr, AuxVec)> {
+    #[cfg(target_arch = "aarch64")]
+    ostd::arch::serial::marker(b'e');
     let ldso_load_info = if let Some((ldso_file, ldso_elf)) = ldso {
         Some(load_ldso(vmar, &ldso_file, &ldso_elf)?)
     } else {
@@ -420,6 +422,8 @@ fn map_segment_vmo(
     let offset = map_at.align_down(PAGE_SIZE);
 
     if segment_size != 0 {
+        #[cfg(target_arch = "aarch64")]
+        ostd::arch::serial::marker(b'1');
         let vm_map_options = vmar
             .new_map(segment_size, perms)
             .mappable(elf_file)?
@@ -427,6 +431,8 @@ fn map_segment_vmo(
             .offset(VmarMapOffset::FixedReplace(offset))
             .handle_page_faults_around();
         let map_addr = vm_map_options.build()?;
+        #[cfg(target_arch = "aarch64")]
+        ostd::arch::serial::marker(b'2');
 
         // Write zero as paddings if the tail is not page-aligned and map size
         // is larger than file size (e.g., `.bss`). The mapping is by default
@@ -452,6 +458,8 @@ fn map_segment_vmo(
             .offset(VmarMapOffset::FixedReplace(offset + segment_size));
         anonymous_map_options.build()?;
     }
+    #[cfg(target_arch = "aarch64")]
+    ostd::arch::serial::marker(b'3');
 
     #[cfg(target_arch = "aarch64")]
     if perms.contains(VmPerms::EXEC) {
@@ -459,6 +467,8 @@ fn map_segment_vmo(
         // user space runs it; file data only reaches the data cache.
         ostd::arch::mm::flush_icache_range(offset, total_map_size);
     }
+    #[cfg(target_arch = "aarch64")]
+    ostd::arch::serial::marker(b'4');
 
     Ok(())
 }

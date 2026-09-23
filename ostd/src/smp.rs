@@ -86,7 +86,15 @@ impl PendingIpis {
             // Note that if new IPIs arrive to that CPU in the meantime, we
             // will also wait for them. This is fine because there usually
             // aren't too many IPIs in common cases.
+            let mut spins: u64 = 0;
             while HAS_PENDING_IPIS.get_on_cpu(cpu_id).load(Ordering::Acquire) {
+                spins += 1;
+                // TEMP-HW-DEBUG: a stuck IPI wait (every ~1M spins) tells us
+                // the remote flush was lost on RPi3. Revert before MR-1.
+                if spins % 1_000_000 == 0 {
+                    crate::arch::serial::marker(b'w');
+                    crate::arch::serial::marker(b'0' + (cpu_id.as_usize() as u8));
+                }
                 core::hint::spin_loop();
             }
         }

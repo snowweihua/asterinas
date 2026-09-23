@@ -105,18 +105,8 @@ fn timer_callback(trapframe: &TrapFrame) {
     use core::sync::atomic::{AtomicU64, Ordering};
     static TICK_COUNT: AtomicU64 = AtomicU64::new(0);
     let n = TICK_COUNT.fetch_add(1, Ordering::Relaxed);
-    if n & 0xfff == 0 {
+    if n & 0xffff == 0 {
         crate::arch::serial::marker(b'T');
-        // Per-CPU tick census: which CPUs actually service timer IRQs.
-        let mpidr: u64;
-        unsafe {
-            core::arch::asm!(
-                "mrs {0}, mpidr_el1",
-                out(reg) mpidr,
-                options(nostack, nomem, preserves_flags)
-            );
-        }
-        crate::arch::serial::marker(b'0' + ((mpidr & 0x3) as u8));
     }
     crate::timer::call_timer_callback_functions(trapframe);
 

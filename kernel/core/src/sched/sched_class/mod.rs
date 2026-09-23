@@ -288,6 +288,14 @@ impl ClassScheduler {
         }
         debug_assert!(flags == EnqueueFlags::Spawn);
 
+        // TEMP-HW-DEBUG: on RPi3, newly spawned tasks that land on an AP may
+        // never be picked (the R29 devtmpfsd / poller starvation class). Pin
+        // new tasks to the current CPU as a test; revert for MR-1.
+        #[cfg(target_arch = "aarch64")]
+        if ostd::arch::is_rpi3() {
+            return ostd::cpu::CpuId::current_racy();
+        }
+
         let guard = disable_local();
 
         let mut selected = guard.current_cpu();
