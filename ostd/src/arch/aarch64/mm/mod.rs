@@ -363,6 +363,24 @@ pub(crate) fn can_sync_dma() -> bool {
 /// This is safe to call from safe code: cache maintenance cannot violate
 /// memory safety (at worst a fault on an unmapped address, which is
 /// recoverable, or wasted work).
+/// TEMP-HW-DEBUG: AT-walk the linear window base. Returns false if the walk
+/// fails — i.e. the active TTBR1 root has lost its linear PGD slot (the
+/// R47-50 root corruption). Revert before MR-1.
+pub fn linear_window_ok() -> bool {
+    let par: usize;
+    unsafe {
+        core::arch::asm!(
+            "at s1e1r, {va}",
+            "isb",
+            "mrs {par}, par_el1",
+            va = in(reg) crate::mm::kspace::LINEAR_MAPPING_BASE_VADDR,
+            par = out(reg) par,
+            options(nostack, preserves_flags),
+        );
+    }
+    par & 1 == 0
+}
+
 pub fn flush_icache_range(start: Vaddr, len: usize) {
     let ctr: usize;
     unsafe {

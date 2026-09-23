@@ -215,9 +215,9 @@ fn sync_exception_dump_once(f: &mut TrapFrame) -> bool {
             mhex!(p);
         }};
     }
-    slot!(0xffff_8000_0000_0000usize);
-    slot!(0xffff_e000_0000_0000usize);
-    slot!(0xffff_ffff_0000_0000usize);
+    slot!(crate::mm::kspace::LINEAR_MAPPING_BASE_VADDR);
+    slot!(0xffff_fff0_0000_0000usize); // frame-meta window (slot 511 area)
+    slot!(0xffff_ffff_0000_0000usize); // kernel code window (slot 511)
     // The KPT singleton root paddr — does the faulting root match it?
     match crate::mm::kspace::kernel_page_table_root_paddr() {
         Some(pa) => mhex!(pa),
