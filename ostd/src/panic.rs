@@ -30,22 +30,13 @@ pub fn __ostd_panic_handler(info: &core::panic::PanicInfo) -> ! {
 
     if let Some(loc) = info.location() {
         early_print!("PANIC! {}:{}:{} ", loc.file(), loc.line(), loc.column());
-        #[cfg(target_arch = "aarch64")]
-        {
-            crate::arch::serial::marker_str(loc.file());
-            crate::arch::serial::marker_hex(loc.line() as usize);
-        }
     } else {
         early_print!("PANIC! unknown-loc ");
     }
     if let Some(msg) = info.payload().downcast_ref::<&str>() {
         early_println!("{}", msg);
-        #[cfg(target_arch = "aarch64")]
-        crate::arch::serial::marker_str(msg);
     } else if let Some(msg) = info.payload().downcast_ref::<alloc::string::String>() {
         early_println!("{}", msg);
-        #[cfg(target_arch = "aarch64")]
-        crate::arch::serial::marker_str(msg);
     } else {
         early_println!("(non-string payload)");
     }

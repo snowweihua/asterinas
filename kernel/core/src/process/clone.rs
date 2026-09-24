@@ -295,8 +295,6 @@ pub(crate) fn clone_child(
     parent_context: &UserContext,
     clone_args: CloneArgs,
 ) -> Result<Tid> {
-    #[cfg(target_arch = "aarch64")]
-    ostd::arch::serial::marker(b'c');
     clone_args.check(ctx)?;
 
     if clone_args.flags.contains(CloneFlags::CLONE_THREAD) {

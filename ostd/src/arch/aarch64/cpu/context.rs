@@ -196,13 +196,9 @@ impl UserContextApiInternal for UserContext {
     fn execute<T: UserModeHooks>(&mut self, hooks: &T) -> ReturnReason {
         // Return when it is syscall or cpu exception type is Fault or Trap.
         let ret = loop {
-            // TEMP-HW-DEBUG: execute-loop entry.
-            crate::arch::serial::marker(b'V');
             scheduler::might_preempt();
             self.activate_tls_pointer();
             self.user_context.run();
-            // TEMP-HW-DEBUG: run() returned, an EL0 exception was taken.
-            crate::arch::serial::marker(b'Z');
             self.tls = TPIDR_EL0.get() as usize;
 
             let far_el1 = FAR_EL1.get() as usize;

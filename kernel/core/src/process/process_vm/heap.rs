@@ -111,12 +111,8 @@ impl Heap {
         let user_space = ctx.user_space();
         let vmar = user_space.vmar();
 
-        #[cfg(target_arch = "aarch64")]
-        ostd::arch::serial::marker(b'r'); // modify_heap_end entry
         let mut inner = self.inner.lock();
         let inner = inner.as_mut().expect("Heap is not initialized");
-        #[cfg(target_arch = "aarch64")]
-        ostd::arch::serial::marker(b's'); // heap lock acquired
 
         let heap_start = inner.heap_range.start;
         let current_heap_end = inner.heap_range.end;
@@ -160,11 +156,7 @@ impl Heap {
                 vmar.new_map(expansion_size, perms)
                     .offset(VmarMapOffset::FixedNoReplace(expansion_start))
             };
-            #[cfg(target_arch = "aarch64")]
-            ostd::arch::serial::marker(b't'); // pre build()
             vmar_map_options.build().map_err(|_| current_heap_end)?;
-            #[cfg(target_arch = "aarch64")]
-            ostd::arch::serial::marker(b'u'); // post build()
         }
 
         inner.heap_range = new_heap_range;

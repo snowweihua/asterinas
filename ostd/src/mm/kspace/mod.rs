@@ -298,21 +298,6 @@ pub fn init_kernel_page_table(meta_pages: Segment<MetaPageMeta>) {
     KERNEL_PAGE_TABLE.call_once(|| kpt);
 }
 
-/// TEMP-HW-DEBUG: read back the first word of the kernel-page-table
-/// singleton so BSP and AP views can be compared on the lossy serial
-/// (see `marker_hex`). Revert before MR-1.
-pub(crate) fn debug_read_kpt_word() -> usize {
-    unsafe { core::ptr::read_volatile(core::ptr::addr_of!(KERNEL_PAGE_TABLE) as *const usize) }
-}
-
-/// TEMP-HW-DEBUG: same word through the linear alias (same physical line,
-/// different window). If HIGH and LINEAR disagree on one CPU, the windows
-/// diverge; if they agree, compare against the other CPU's view. Revert.
-pub(crate) fn debug_read_kpt_linear() -> usize {
-    let pa = (core::ptr::addr_of!(KERNEL_PAGE_TABLE) as usize).wrapping_sub(kernel_loaded_offset());
-    unsafe { core::ptr::read_volatile(paddr_to_vaddr(pa) as *const usize) }
-}
-
 /// TEMP-HW-DEBUG experiment: push the kernel-page-table singleton to the
 /// point of coherency before APs are released. The AP reads this static
 /// through the boot tables while the BSP last touched it long before; if

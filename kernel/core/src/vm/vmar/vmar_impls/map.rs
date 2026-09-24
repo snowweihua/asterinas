@@ -250,12 +250,10 @@ impl<'a> VmarMapOptions<'a> {
     pub(crate) fn build(self) -> Result<Vaddr> {
         #[cfg(target_arch = "aarch64")]
         {
-            ostd::arch::serial::marker(b'5');
             // Linear-window health probe: if the AT walk of the linear base
             // fails, the active TTBR1 root has lost its linear window (the
             // R47-50 corruption) — the likely cause of the lock spin / fault.
             if !ostd::arch::mm::linear_window_ok() {
-                ostd::arch::serial::marker(b'L');
             }
         }
         self.check_options()?;
@@ -273,11 +271,7 @@ impl<'a> VmarMapOptions<'a> {
             handle_page_faults_around,
         } = self;
 
-        #[cfg(target_arch = "aarch64")]
-        ostd::arch::serial::marker(b'6');
         let mut inner = parent.inner.write();
-        #[cfg(target_arch = "aarch64")]
-        ostd::arch::serial::marker(b'7');
 
         inner
             .check_extra_size_fits_rlimit(map_size)
@@ -376,11 +370,7 @@ impl<'a> VmarMapOptions<'a> {
         );
 
         let vmo_for_rmap = vm_mapping.vmo_for_rmap().cloned();
-        #[cfg(target_arch = "aarch64")]
-        ostd::arch::serial::marker(b'8');
         let mut rmap = vmo_for_rmap.as_ref().map(|vmo| vmo.rmap().lock());
-        #[cfg(target_arch = "aarch64")]
-        ostd::arch::serial::marker(b'9');
 
         // Populate device memory if needed before adding to VMAR.
         //

@@ -112,8 +112,6 @@ impl RawUserContext {
         // Return to userspace with interrupts disabled. Otherwise, interrupts
         // after switching `sscratch` will mess up the CPU state.
         crate::arch::irq::disable_local();
-        // TEMP-HW-DEBUG: about to enter EL0 via eret.
-        crate::arch::serial::marker(b'O');
         unsafe { run_user(self) }
     }
 }

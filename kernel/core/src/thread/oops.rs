@@ -77,12 +77,6 @@ static OOPS_COUNT: AtomicUsize = AtomicUsize::new(0);
 fn panic_handler(info: &core::panic::PanicInfo) -> ! {
     let message = info.message();
 
-    #[cfg(target_arch = "aarch64")]
-    if let Some(loc) = info.location() {
-        ostd::arch::serial::marker_str(loc.file());
-        ostd::arch::serial::marker_hex(loc.line() as usize);
-    }
-
     if let Some(thread) = Thread::current() {
         let panic_on_oops = PANIC_ON_OOPS.load(Ordering::Relaxed);
         if !panic_on_oops && info.can_unwind() {

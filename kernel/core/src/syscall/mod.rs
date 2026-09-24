@@ -386,7 +386,6 @@ pub(crate) fn handle_syscall(ctx: &Context, user_ctx: &mut UserContext) {
         let sn = syscall_frame.syscall_number as usize;
         for shift in [12usize, 8, 4, 0] {
             let n = ((sn >> shift) & 0xf) as u8;
-            ostd::arch::serial::marker(if n < 10 { b'0' + n } else { b'a' + n - 10 });
         }
     }
     let syscall_return = arch::syscall_dispatch(
@@ -395,8 +394,6 @@ pub(crate) fn handle_syscall(ctx: &Context, user_ctx: &mut UserContext) {
         ctx,
         user_ctx,
     );
-    #[cfg(target_arch = "aarch64")]
-    ostd::arch::serial::marker(b'A'); // syscall dispatch returned
 
     match syscall_return {
         Ok(return_value) => {

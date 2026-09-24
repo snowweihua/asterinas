@@ -365,9 +365,11 @@ pub fn receive() -> u8 {
     (read_dr() & 0xff) as u8
 }
 
-/// TEMP-HW-DEBUG: spin for ~`ms` milliseconds using the generic counter.
-/// The USB-serial path drops bursts; pacing output keeps markers alive.
-/// Uses CNTFRQ (firmware-set) so it works on HW and QEMU. Revert before MR-1.
+/// Spins for approximately `ms` milliseconds using the generic counter.
+///
+/// The RPi3 USB-serial path drops output bursts; pacing the console output
+/// keeps it intact. Uses CNTFRQ (firmware-set), so it works on both hardware
+/// and QEMU.
 #[inline(always)]
 pub fn spin_delay_ms(ms: u64) {
     let frq: u64;
@@ -385,39 +387,6 @@ pub fn spin_delay_ms(ms: u64) {
         if now.wrapping_sub(start) >= delta {
             break;
         }
-    }
-}
-
-/// TEMP-HW-DEBUG: when set, `marker*` output is dropped. Set once an
-/// EL1-SYNC dump starts so other CPUs' scheduler/IPI marker floods do not
-/// interleave with — and corrupt — the fault dump on the lossy USB serial.
-/// Revert before MR-1.
-static MARKER_SUPPRESSED: AtomicBool = AtomicBool::new(false);
-
-pub fn set_marker_suppressed(suppressed: bool) {
-    MARKER_SUPPRESSED.store(suppressed, Ordering::Relaxed);
-}
-
-pub fn marker(c: u8) {
-    if MARKER_SUPPRESSED.load(Ordering::Relaxed) {
-        return;
-    }
-    for b in [b'\n', b'[', b'M', c, b']', b'\n'] {
-        send(b);
-    }
-    spin_delay_ms(2);
-}
-
-pub fn marker_hex(v: usize) {
-    for shift in (0..16).rev().map(|i| i * 4) {
-        let n = ((v >> shift) & 0xf) as u8;
-        marker(if n < 10 { b'0' + n } else { b'a' + n - 10 });
-    }
-}
-
-pub fn marker_str(s: &str) {
-    for &b in s.as_bytes() {
-        marker(b);
     }
 }
 

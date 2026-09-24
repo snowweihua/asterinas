@@ -64,8 +64,6 @@ pub(crate) fn create_new_user_task(
         current_thread_local.vmar().borrow().as_ref().map(|vmar| {
             vmar.vm_space().activate();
         });
-        #[cfg(target_arch = "aarch64")]
-        ostd::arch::serial::marker(b'j'); // task entry running, user page table active
 
         let ctx = Context {
             process: current_process,
@@ -79,8 +77,6 @@ pub(crate) fn create_new_user_task(
         if ctx.posix_thread.tid() == FIRST_POSIX_TID {
             crate::init::on_first_process_startup(&ctx);
         }
-        #[cfg(target_arch = "aarch64")]
-        ostd::arch::serial::marker(b'k'); // pre first user_mode.execute
 
         while !current_thread.is_exited() {
             // Execute the user code
@@ -101,12 +97,8 @@ pub(crate) fn create_new_user_task(
                     let res = ctx.posix_thread.ptrace_may_stop_on_syscall(&ctx, user_ctx);
                     if !matches!(res, PtraceStopResult::Interrupted) {
                         handle_syscall(&ctx, user_ctx);
-                        #[cfg(target_arch = "aarch64")]
-                        ostd::arch::serial::marker(b'D'); // post handle_syscall
 
                         ctx.posix_thread.ptrace_may_stop_on_syscall(&ctx, user_ctx);
-                        #[cfg(target_arch = "aarch64")]
-                        ostd::arch::serial::marker(b'E'); // post ptrace stop
                     }
                 }
                 ReturnReason::KernelEvent => {
@@ -120,11 +112,7 @@ pub(crate) fn create_new_user_task(
             }
 
             // Handle signals
-            #[cfg(target_arch = "aarch64")]
-            ostd::arch::serial::marker(b'H'); // pre handle_pending_signal
             handle_pending_signal(user_ctx, &ctx);
-            #[cfg(target_arch = "aarch64")]
-            ostd::arch::serial::marker(b'G'); // post handle_pending_signal
 
             // Handle signals while the thread is stopped
             // FIXME: Currently, we handle all signals when the process is stopped.
@@ -141,8 +129,6 @@ pub(crate) fn create_new_user_task(
                 );
                 handle_pending_signal(user_ctx, &ctx);
             }
-            #[cfg(target_arch = "aarch64")]
-            ostd::arch::serial::marker(b'I'); // post is_stopped loop
         }
     };
 

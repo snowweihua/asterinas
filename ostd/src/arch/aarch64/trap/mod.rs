@@ -114,21 +114,6 @@ fn sync_exception_dump_once(f: &mut TrapFrame) -> bool {
             put_char!(b'\n');
         };
     }
-    macro_rules! put_hex_nibble {
-        ($v:expr) => {{
-            let nibble = (($v as usize) & 0xf) as u8;
-            let c = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
-            put_char!(c);
-        }};
-    }
-    macro_rules! put_hex {
-        ($v:expr) => {{
-            let mut val = $v as usize;
-            for i in (0..16).rev() {
-                put_hex_nibble!((val >> (i * 4)) & 0xf);
-            }
-        }};
-    }
     macro_rules! put_str {
         ($s:expr) => {{
             for &ch in $s {
@@ -144,7 +129,6 @@ fn sync_exception_dump_once(f: &mut TrapFrame) -> bool {
     // faulting instruction so that functions like __memcpy_fallible can return
     // an EFAULT-style failure instead of hanging the kernel.
     let esr = f.esr_el1;
-    let elr = f.elr_el1;
     let far = FAR_EL1.get() as usize;
     if matches!(
         CpuException::from_esr(esr, far),
@@ -159,84 +143,6 @@ fn sync_exception_dump_once(f: &mut TrapFrame) -> bool {
         return true;
     }
 
-    // Diagnostics are emitted on the MARKER channel (short, spaced, proven to
-    // survive the lossy USB serial), BEFORE marker suppression is enabled.
-    macro_rules! m {
-        ($c:expr) => {
-            crate::arch::serial::marker($c)
-        };
-    }
-    macro_rules! mhex {
-        ($v:expr) => {
-            crate::arch::serial::marker_hex($v as usize)
-        };
-    }
-    m!(b'F');
-    mhex!(f.esr_el1);
-    mhex!(f.elr_el1);
-    mhex!(FAR_EL1.get() as usize);
-    let ttbr0: usize;
-    let ttbr1: usize;
-    unsafe {
-        core::arch::asm!("mrs {0}, ttbr0_el1", out(reg) ttbr0, options(nostack, preserves_flags));
-        core::arch::asm!("mrs {0}, ttbr1_el1", out(reg) ttbr1, options(nostack, preserves_flags));
-    }
-    mhex!(ttbr0);
-    mhex!(ttbr1);
-    // AT-walk the faulting address: F=0 => translation found (stale
-    // TLB/walk-cache); F=1 => the table really lacks the entry.
-    let par: usize;
-    unsafe {
-        core::arch::asm!(
-            "at s1e1r, {far}",
-            "isb",
-            "mrs {par}, par_el1",
-            far = in(reg) far,
-            par = out(reg) par,
-            options(nostack, preserves_flags),
-        );
-    }
-    mhex!(par);
-    // Top-level slot probes in the active TTBR1 root: linear (256),
-    // frame-meta (448), kernel (511). F=0 => present; F=1 level 0 => absent.
-    macro_rules! slot {
-        ($va:expr) => {{
-            let p: usize;
-            unsafe {
-                core::arch::asm!(
-                    "at s1e1r, {va}",
-                    "isb",
-                    "mrs {p}, par_el1",
-                    va = in(reg) $va,
-                    p = out(reg) p,
-                    options(nostack, preserves_flags),
-                );
-            }
-            mhex!(p);
-        }};
-    }
-    slot!(crate::mm::kspace::LINEAR_MAPPING_BASE_VADDR);
-    slot!(0xffff_fff0_0000_0000usize); // frame-meta window (slot 511 area)
-    slot!(0xffff_ffff_0000_0000usize); // kernel code window (slot 511)
-    // The KPT singleton root paddr — does the faulting root match it?
-    match crate::mm::kspace::kernel_page_table_root_paddr() {
-        Some(pa) => mhex!(pa),
-        None => m!(b'x'),
-    }
-    // CPU + task pointer.
-    let mpidr: u64;
-    unsafe {
-        core::arch::asm!("mrs {0}, mpidr_el1", out(reg) mpidr, options(nostack, nomem, preserves_flags))
-    };
-    let task_ptr = crate::task::Task::current()
-        .map(|t| &*t as *const crate::task::Task as usize)
-        .unwrap_or(0);
-    mhex!((mpidr & 0x3) as usize);
-    mhex!(task_ptr);
-    mhex!(f.general.x0);
-    mhex!(f.general.x1);
-
-    crate::arch::serial::set_marker_suppressed(true);
     put_crlf!();
     put_str!(b"[EL1-SYNC]");
     put_crlf!();

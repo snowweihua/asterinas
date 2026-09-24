@@ -89,9 +89,6 @@ fn machine_halt() -> ! {
     // TODO: `inter_processor_call` may panic again (e.g., if there is an out-of-memory error). We
     // should find a way to make it panic-free.
     if let Some(ipi_sender) = crate::smp::IPI_SENDER.get() {
-        // TEMP-HW-DEBUG (revert before MR-1): tag IPI source.
-        #[cfg(target_arch = "aarch64")]
-        crate::arch::serial::marker_str("PWR");
         ipi_sender.inter_processor_call(&CpuSet::new_full(), || disable_local_and_halt());
     }
     disable_local_and_halt();

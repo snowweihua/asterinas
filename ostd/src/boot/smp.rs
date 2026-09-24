@@ -135,13 +135,6 @@ pub fn register_ap_entry(entry: fn()) {
     AP_LATE_ENTRY.call_once(|| entry);
 }
 
-/// TEMP-HW-DEBUG: per-AP step markers (step letter + cpu digit) so concurrent
-/// AP traces disambiguate on the lossy serial. Revert before MR-1.
-#[inline(always)]
-fn ap_mark(step: u8, cpu: u32) {
-    crate::arch::serial::marker(step);
-}
-
 /// The AP's entry point of the Rust code portion of Asterinas.
 ///
 /// # Safety
@@ -152,19 +145,15 @@ fn ap_mark(step: u8, cpu: u32) {
 // SAFETY: The name does not collide with other symbols.
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn ap_early_entry(cpu_id: u32) -> ! {
-    ap_mark(b'P', cpu_id);
     // SAFETY:
     // 1. We're in the boot context of an AP.
     // 2. The CPU ID of the AP is correct.
     unsafe { crate::cpu::init_on_ap(cpu_id) };
-    ap_mark(b'Q', cpu_id);
 
     crate::arch::enable_cpu_features();
-    ap_mark(b'R', cpu_id);
 
     // SAFETY: This is called only once on this AP in the boot context.
     unsafe { crate::arch::trap::init_on_cpu() };
-    ap_mark(b'S', cpu_id);
 
     let kpt_root = unsafe {
         core::ptr::read_volatile(
@@ -185,17 +174,14 @@ pub(crate) unsafe extern "C" fn ap_early_entry(cpu_id: u32) -> ! {
     // SAFETY: This function is only called once on this AP, after the BSP has
     // done the architecture-specific initialization.
     unsafe { crate::arch::init_on_ap() };
-    ap_mark(b'U', cpu_id);
 
     crate::arch::irq::enable_local();
-    ap_mark(b'V', cpu_id);
 
     // SAFETY:
     // 1. The kernel page table is activated on this AP.
     // 2. The function is called only once on this AP.
     // 3. No remaining `with_borrow` invocations on this CPU from now on.
     unsafe { crate::mm::page_table::boot_pt::dismiss() };
-    ap_mark(b'W', cpu_id);
 
     crate::info!("Processor {} started. Spinning for tasks.", cpu_id);
 
@@ -205,9 +191,7 @@ pub(crate) unsafe extern "C" fn ap_early_entry(cpu_id: u32) -> ! {
     // From here to the following `tlb_flush_all_excluding_global`, there is no
     // TLB coherence because the BSP may not be able to send IPIs to flush the
     // TLBs. Do not perform complex operations during this period.
-    ap_mark(b'X', cpu_id);
     report_online_and_hw_cpu_id(cpu_id);
-    ap_mark(b'Y', cpu_id);
     let ap_late_entry = AP_LATE_ENTRY.wait();
     crate::arch::mm::tlb_flush_all_excluding_global();
 
