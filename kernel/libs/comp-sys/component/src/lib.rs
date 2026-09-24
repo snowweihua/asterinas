@@ -18,7 +18,6 @@ use alloc::{
 
 pub use component_macro::*;
 pub use inventory::submit;
-use spin::Once;
 // This crate intentionally uses the `log` crate directly (not `ostd::log`)
 // because it is a standalone framework crate that does not depend on OSTD.
 // Messages are forwarded to the OSTD logger via the `LogCrateBridge`.
@@ -135,16 +134,6 @@ pub enum ComponentSystemInitError {
     NotIncludeAllComponent(String),
 }
 
-// TEMP-HW-DEBUG (revert before MR-1): optional per-component boot marker.
-// The kernel sets this before `init_all`; `match_and_call` invokes it with
-// each component path so HW serial shows the init running at a panic.
-static BOOT_MARKER_HOOK: Once<fn(&str)> = Once::new();
-
-/// Sets the TEMP-HW-DEBUG per-component boot marker. Revert before MR-1.
-pub fn set_boot_marker_hook(emit: fn(&str)) {
-    let _ = BOOT_MARKER_HOOK.call_once(|| emit);
-}
-
 /// Initializes the component system for a specific stage.
 ///
 /// It collects all functions marked with the `init_component` macro, filters them
@@ -225,11 +214,6 @@ fn match_and_call(
 
     for info in infos {
         info!("Component initializing: {:?}", info);
-        // TEMP-HW-DEBUG (revert before MR-1): the lossy HW serial channel
-        // drops log lines, so an optional boot marker reports each init.
-        if let Some(emit) = BOOT_MARKER_HOOK.get() {
-            emit(&info.path);
-        }
         if let Err(res) = (info.function.unwrap())() {
             error!("Component initialize error: {:?}", res);
         } else {

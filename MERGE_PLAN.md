@@ -224,12 +224,22 @@ hardening locally and keep the tree MR-ready, but do not open a PR yet.
 - **MR-2 (generic)**: entropy/vsock registry leniency
   (`virtio/device/{entropy,socket}/mod.rs`); `cmdline/early.rs`;
   `fs/initramfs.rs` + `init.rs` boot glue; the AT-probe icache-flush
-  correctness in `ostd/src/arch/aarch64/mm/mod.rs` (arch file, generic intent).
-- **NEEDS-REVIEW / workarounds (cfg-gate)**: virtio skip
-  (`kernel/core/comps/virtio/src/lib.rs`); `select_cpu` pin
-  (`sched_class/mod.rs:~295`); RX poller (`tty/serial.rs:~103`); PL011
-  pacing (`uart/.../pl011.rs:~46`); vmar QEMU-TLB workaround
-  (`vm/vmar/vm_mapping.rs`).
+  correctness in `ostd/src/arch/aarch64/mm/mod.rs` (arch file, generic intent);
+  fault-path TLB flush after a fresh mapping (`vm/vmar/vm_mapping.rs` — flushes
+  a stale negative TLB entry, generic correctness).
+- **Workarounds (arch-gated `is_rpi3()` + documented)**: virtio skip
+  (`virtio/src/lib.rs`); `select_cpu` pin (`sched_class/mod.rs`); RX poller
+  (`tty/serial.rs`); PL011 pacing (`uart/.../pl011.rs`).
+
+### L1 progress (2026-09-24)
+- `rust-toolchain.toml`: added `aarch64-unknown-none-softfloat` (was missing).
+- `OSDK.toml`: dropped the redundant/stale `[scheme."aarch64"]` (virt/cortex-a72);
+  kept `[scheme."aarch64-rpi3"]`.
+- Normalized trailing-whitespace / EOF-newline in
+  `ostd/src/arch/aarch64/{mm/mod.rs,serial.rs}` and
+  `osdk/src/base_crate/aarch64.ld.template`.
+- Reworked the stale `TEMP-HW-DEBUG` workaround comments
+  (`sched_class/mod.rs`, `uart/.../pl011.rs`) into plain rationale + TODOs.
 - **DROP verified absent/untouched**: `device/mod.rs` heap test;
   `ramfs/fs.rs` HashMap test; `time/softirq.rs` empty-`if`s; `waitid.rs`
   `info!`s; logger untouched by the port.

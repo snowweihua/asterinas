@@ -89,7 +89,7 @@ SECTIONS
         KEEP(*(.component_registry))
         __component_registry_end = .;
     }
-    
+
     # A list of the sensitive IoPort ranges in OSTD which will be used during
     # the initialization of IoPortAllocator.
     .sensitive_io_ports     : AT(ADDR(.sensitive_io_ports) - KERNEL_VMA_OFFSET) {

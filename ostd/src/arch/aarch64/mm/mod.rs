@@ -434,4 +434,3 @@ pub fn flush_icache_range(start: Vaddr, len: usize) {
 pub(crate) unsafe fn sync_dma_range<D: DmaDirection>(_range: Range<Vaddr>) {
     debug_assert!(can_sync_dma());
 }
-

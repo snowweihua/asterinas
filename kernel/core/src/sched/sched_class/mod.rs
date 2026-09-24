@@ -288,9 +288,10 @@ impl ClassScheduler {
         }
         debug_assert!(flags == EnqueueFlags::Spawn);
 
-        // TEMP-HW-DEBUG: on RPi3, newly spawned tasks that land on an AP may
-        // never be picked (the R29 devtmpfsd / poller starvation class). Pin
-        // new tasks to the current CPU as a test; revert for MR-1.
+        // RPi3: newly spawned tasks that land on an AP may never be picked
+        // (the devtmpfsd / poller starvation class) because the AP tick/preempt
+        // path is unreliable. Pin new tasks to the spawning CPU.
+        // TODO(merge): fix reliable AP tick delivery and drop this pin.
         #[cfg(target_arch = "aarch64")]
         if ostd::arch::is_rpi3() {
             return ostd::cpu::CpuId::current_racy();

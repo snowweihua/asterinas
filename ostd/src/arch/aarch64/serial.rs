@@ -439,4 +439,3 @@ pub fn send_burst_with_irq_disabled(data: &[u8]) {
     }
     drop(irq_guard);
 }
-

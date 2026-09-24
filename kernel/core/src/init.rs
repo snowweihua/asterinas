@@ -155,7 +155,6 @@ fn first_kthread() {
     print_banner();
 
     INIT_PROCESS.call_once(|| {
-        // TEMP-HW-DEBUG: diagnostic marker to confirm init spawn on HW (revert before MR-1)
         let karg = INIT_PROC_ARGS.get().unwrap();
         let argv = karg.argv().to_vec();
         let envp = karg.envp().to_vec();
