@@ -21,7 +21,13 @@ Root cause of the hardware-only boot stall was found and fixed:
   (`/bin/sh: ... not found`, `/ #`), and processes console input. This also
   unblocked the previously-missing console output (the poller had been holding
   the paced UART lock). Committed `75bac8b57`.
-- Remaining: revert ALL TEMP-HW-DEBUG markers before MR-1.
+- TEMP-HW-DEBUG markers reverted (R96, `e9a8c77a9`): all serial marker call
+  sites and helpers removed (22 files); marker-free kernel re-verified on
+  hardware — boots to `/ #` and runs the AUTO-TEST. Kept functional RPi3
+  workarounds (poller yield bound, UART pacing, select_cpu pin, AP-bringup
+  helpers) and the raw EL1-SYNC dump.
+- Remaining (separate, non-fatal): `Unimplemented syscall number 293` and
+  `SA_RESTORER fallback mechanism not implemented` warnings; lossy RX input.
 
 ## User Directive (verbatim, still binding)
 "you should see shell prefix such as '# /' first then try to send commands.
