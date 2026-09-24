@@ -175,3 +175,64 @@ squash-merge would hide the 482-commit history either way.
   - Serial RX (PL011 input) unproven on both QEMU and HW.
   These must be resolved before P2 (HW boot to prompt + auto-test on the
   ported tree) can pass on the RPi3.
+
+## 9. R47-R96 outcomes (2026-09-24) — hardware bring-up COMPLETE
+
+All three §8 open blockers are now resolved:
+- initramfs-unpack hang -> R51 (`1d57a794d`, bcm2836 local-IC cache maintenance)
+- init-startup EL1 fault -> R52 (`6e85bf329`, AT-probe before icache flush)
+  plus EL1 user-page-fault routing (`cb4eefe48`)
+- serial RX -> R95 (`75bac8b57`, RX-poller drain bound + always yield)
+
+Result: RPi3B boots **marker-free to an interactive `/ #` shell** and runs the
+AUTO-TEST (`hello-from-init`, `ls /`, `ls /bin`) — **P2 gate met on hardware**.
+All TEMP-HW-DEBUG markers reverted (`e9a8c77a9`); the tree is clean.
+
+### Branch decision
+- `aarch64_support_clean` **ABANDONED**: current upstream already ships AArch64
+  as `ostd/src/arch/arm/`, so rebasing the clean branch onto it was too
+  conflicted.
+- `aarch64_support_pure` rebased on `4d395b885` — the commit immediately before
+  upstream's 16-commit AArch64 series (`67b232116`..`414f27702`) — and is the
+  working port branch. Port: 20 commits, 96 files, +9530/-99 vs the base.
+
+### Merge decision (Q1, user)
+**Local-first.** No upstream MR/push until the upstream author approves. Keep
+hardening locally and keep the tree MR-ready, but do not open a PR yet.
+
+## 10. Local-first plan (2026-09-24; supersedes the push-oriented tail of §6)
+
+| Phase | Work | Gate |
+|---|---|---|
+| L0 | Lock classification: MR-1 manifest, MR-2 generic list, DROP/NEEDS-REVIEW, `is_rpi3()` cfg-gate table | agreed lists |
+| L1 | Build/config hygiene: add `aarch64-unknown-none-softfloat` toolchain target; drop stale `[scheme."aarch64"]`; normalize newline noise; apply cfg-gate decisions | 3-arch `cargo check` + x86 boot |
+| L2 | Close userspace gaps: aarch64 `SA_RESTORER` fallback; syscall 293; RX-input robustness | fully usable interactive shell |
+| L3 | Stability validation: N consecutive HW + QEMU `raspi3b` boots | N/N clean boots |
+| L4 | MR-2 generic bundle (item-by-item, x86-first) | per-item x86 + ARM boot |
+| L5 | (deferred) upstream push + MR-1/MR-2 once approved | review-ready |
+
+### L0 classification (2026-09-24)
+- **MR-1 (arch support)**: `ostd/src/arch/aarch64/` (35 files);
+  `kernel/core/src/arch/aarch64/{cpu,mod,signal}.rs`;
+  `kernel/comps/uart/src/arch/aarch64/*`;
+  `kernel/core/comps/{pci,virtio}/.../arch/aarch64*`;
+  `kernel/core/src/syscall/arch/aarch64.rs`; signal arch glue
+  (`process/signal/{c_types,mod,rt_sigreturn}.rs`); OSDK enablers
+  (`base_crate/aarch64*.ld.template`, `base_crate/mod.rs`,
+  `commands/build/*`, `config/mod.rs`); root `Cargo.toml`/`OSDK.toml`;
+  generic companions `ostd/src/{boot/smp,lib,mm/io/mod,mm/kspace/mod}.rs`.
+- **MR-2 (generic)**: entropy/vsock registry leniency
+  (`virtio/device/{entropy,socket}/mod.rs`); `cmdline/early.rs`;
+  `fs/initramfs.rs` + `init.rs` boot glue; the AT-probe icache-flush
+  correctness in `ostd/src/arch/aarch64/mm/mod.rs` (arch file, generic intent).
+- **NEEDS-REVIEW / workarounds (cfg-gate)**: virtio skip
+  (`kernel/core/comps/virtio/src/lib.rs`); `select_cpu` pin
+  (`sched_class/mod.rs:~295`); RX poller (`tty/serial.rs:~103`); PL011
+  pacing (`uart/.../pl011.rs:~46`); vmar QEMU-TLB workaround
+  (`vm/vmar/vm_mapping.rs`).
+- **DROP verified absent/untouched**: `device/mod.rs` heap test;
+  `ramfs/fs.rs` HashMap test; `time/softirq.rs` empty-`if`s; `waitid.rs`
+  `info!`s; logger untouched by the port.
+- Remaining non-fatal userspace warnings seen on HW: `Unimplemented syscall
+  number 293` and `SA_RESTORER fallback mechanism not implemented`
+  (L2 targets).
