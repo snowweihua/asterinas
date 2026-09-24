@@ -6,16 +6,30 @@ console input to reproduce the deterministic `[EL1-SYNC]` crash, capture a
 marker-suppressed (lossless) ESR/ELR/FAR dump, fix the root cause, then revert
 ALL TEMP-HW-DEBUG instrumentation before MR-1.
 
+## STATUS (R95, 2026-09-24): SHELL REACHED ON HARDWARE
+Root cause of the hardware-only boot stall was found and fixed:
+- The RPi3 serial RX poller thread (kernel/core/src/device/tty/serial.rs,
+  spawned only when `is_rpi3()`, pinned to the BSP) only yielded when
+  `serial::has_data()` was false. A stuck PL011 RX condition (e.g. an
+  overrun/error bit keeping `has_data()` true) made it spin forever and
+  monopolize the BSP. The init task is pinned to the same BSP (select_cpu
+  workaround), so it was starved -> the observed `[MV][MJ]` (preempt) then
+  silence. Hardware-only because the poller exists only on RPi3.
+- Fix: cap the RX drain at 64 bytes per iteration and ALWAYS call
+  `Task::yield_now()`.
+- Result: RPi3 boots to an interactive `/ #` shell, emits userspace text
+  (`/bin/sh: ... not found`, `/ #`), and processes console input. This also
+  unblocked the previously-missing console output (the poller had been holding
+  the paced UART lock). Committed `75bac8b57`.
+- Remaining: revert ALL TEMP-HW-DEBUG markers before MR-1.
+
 ## User Directive (verbatim, still binding)
 "you should see shell prefix such as '# /' first then try to send commands.
 and one more thing, if too much storm debug message make debug too hard,
 please remove them first. please continue"
 
-Do NOT write to serial until `# /` is visible. No `# /` has ever been seen on
-any build, so no console command has ever been sent.
-(NOTE: as of R80-R87, HW serial input now reaches the kernel and interactive
-input was exercised on QEMU; on HW the input path is poller-based and the
-shell itself is not yet visible.)
+(Now satisfied: `# /`/`/ #` is visible on hardware and console input reaches
+userspace.)
 
 ## Environment / workflow
 - Dev in WSL2 (`/home/snow/asterinas`); TFTP root `D:/pi_sd/` = `/mnt/d/pi_sd/`
