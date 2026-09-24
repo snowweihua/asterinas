@@ -14,6 +14,8 @@ use crate::{
 };
 
 pub(super) fn handle_exception(ctx: &Context, user_ctx: &UserContext, exception: CpuException) {
+    #[cfg(target_arch = "aarch64")]
+    ostd::arch::serial::marker(b'N'); // user exception (fault/trap) entry
     debug!("handle exception: {:#x?}", exception);
 
     if let Ok(page_fault_info) = PageFaultInfo::try_from(&exception) {

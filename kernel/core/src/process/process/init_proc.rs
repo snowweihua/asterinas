@@ -42,6 +42,8 @@ pub(crate) fn spawn_init_process(
     set_bootstrap_session_and_group(&process);
 
     process.run();
+    #[cfg(target_arch = "aarch64")]
+    ostd::arch::serial::marker(b'm'); // init scheduled via run()
 
     Ok(process)
 }
@@ -118,6 +120,8 @@ fn create_init_task(
 
         (elf_load_info, executable_abs_path)
     };
+    #[cfg(target_arch = "aarch64")]
+    ostd::arch::serial::marker(b'g'); // ELF load complete (ElfLoadInfo returned)
 
     let mut user_ctx = UserContext::default();
     user_ctx.set_instruction_pointer(elf_load_info.entry_point as _);
@@ -129,5 +133,7 @@ fn create_init_task(
         PosixThreadBuilder::new(tid, thread_name, Box::new(user_ctx), credentials, vmar)
             .process(Arc::downgrade(process))
             .fs(Arc::new(fs));
+    #[cfg(target_arch = "aarch64")]
+    ostd::arch::serial::marker(b'h'); // init task built
     Ok(thread_builder.build())
 }

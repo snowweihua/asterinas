@@ -109,15 +109,20 @@ pub(super) fn init_in_first_process() -> Result<()> {
                 // bytes so power-on line noise cannot flood the TTY echo
                 // (which would hold the paced UART lock with IRQs off and
                 // starve the BSP's exec path).
+                // Drain at most 64 bytes per iteration and ALWAYS yield: a
+                // stuck RX (an overrun/error bit can keep `has_data()` true)
+                // must not spin here forever and monopolize the BSP, starving
+                // the init task (this was the R92-R94 boot stall).
                 loop {
-                    if ostd::arch::serial::has_data() {
+                    let mut drained = 0;
+                    while drained < 64 && ostd::arch::serial::has_data() {
                         let ch = ostd::arch::serial::receive();
                         if ch.is_ascii_graphic() || ch == b'\r' || ch == b'\n' || ch == b'\t' {
                             let _ = serial0.push_input(&[ch]);
                         }
-                    } else {
-                        ostd::task::Task::yield_now();
+                        drained += 1;
                     }
+                    ostd::task::Task::yield_now();
                 }
             })
             .cpu_affinity(ostd::cpu::CpuId::bsp().into())

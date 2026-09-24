@@ -289,6 +289,8 @@ impl VmarInner {
         let mut vm_mapping = vm_mapping;
         let addr = vm_mapping.map_to_addr();
 
+        #[cfg(target_arch = "aarch64")]
+        ostd::arch::serial::marker(b'n'); // ITM entry, pre find_prev
         if let Some(prev) = self.vm_mappings.find_prev(&addr) {
             let (new_mapping, to_remove) = vm_mapping.try_merge_with(prev);
             vm_mapping = new_mapping;
@@ -299,6 +301,8 @@ impl VmarInner {
                 }
             }
         }
+        #[cfg(target_arch = "aarch64")]
+        ostd::arch::serial::marker(b'o'); // prev-merge done
 
         if let Some(next) = self.vm_mappings.find_next(&addr) {
             let (new_mapping, to_remove) = vm_mapping.try_merge_with(next);
@@ -310,6 +314,8 @@ impl VmarInner {
                 }
             }
         }
+        #[cfg(target_arch = "aarch64")]
+        ostd::arch::serial::marker(b'p'); // next-merge done
 
         if let Some(rmap) = rmap {
             rmap.insert(
@@ -321,6 +327,8 @@ impl VmarInner {
                 },
             );
         }
+        #[cfg(target_arch = "aarch64")]
+        ostd::arch::serial::marker(b'q'); // rmap insert done
         self.vm_mappings.insert(vm_mapping);
     }
 

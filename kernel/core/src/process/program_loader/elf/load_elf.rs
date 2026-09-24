@@ -68,6 +68,8 @@ pub(crate) fn load_elf_to_vmar(
     )]
     let (elf_mapped_info, entry_point, mut aux_vec) =
         map_vmos_and_build_aux_vec(vmar, ldso, &elf_headers, &elf_file)?;
+    #[cfg(target_arch = "aarch64")]
+    ostd::arch::serial::marker(b'4'); // post-segment-mapping + EXEC icache flush + auxvec
     vmar.process_vm()
         .set_code_range(elf_mapped_info.code_range.clone());
     vmar.process_vm()
@@ -83,13 +85,21 @@ pub(crate) fn load_elf_to_vmar(
         aux_vec.set(AuxKey::AT_SYSINFO_EHDR, vdso_text_base as u64);
     }
 
+    #[cfg(target_arch = "aarch64")]
+    ostd::arch::serial::marker(b'a'); // pre init-stack map+write
     vmar.process_vm()
         .map_and_write_init_stack(vmar, argv, envp, aux_vec)?;
+    #[cfg(target_arch = "aarch64")]
+    ostd::arch::serial::marker(b'b'); // post init-stack map+write
+    #[cfg(target_arch = "aarch64")]
+    ostd::arch::serial::marker(b'd'); // pre heap map
     vmar.process_vm().map_and_init_heap(
         vmar,
         elf_mapped_info.data_range.len(),
         elf_mapped_info.heap_base,
     )?;
+    #[cfg(target_arch = "aarch64")]
+    ostd::arch::serial::marker(b'f'); // heap done; load about to return ElfLoadInfo
 
     let user_stack_top = vmar.process_vm().init_stack().user_stack_top();
     Ok(ElfLoadInfo {

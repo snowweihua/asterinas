@@ -379,12 +379,24 @@ impl SyscallArgument {
 
 pub(crate) fn handle_syscall(ctx: &Context, user_ctx: &mut UserContext) {
     let syscall_frame = SyscallArgument::new_from_context(user_ctx);
+    #[cfg(target_arch = "aarch64")]
+    {
+        // Print the syscall number as 4 hex digits to identify which syscall
+        // triggers the stalling VmarMapOptions::build() after first user execute.
+        let sn = syscall_frame.syscall_number as usize;
+        for shift in [12usize, 8, 4, 0] {
+            let n = ((sn >> shift) & 0xf) as u8;
+            ostd::arch::serial::marker(if n < 10 { b'0' + n } else { b'a' + n - 10 });
+        }
+    }
     let syscall_return = arch::syscall_dispatch(
         syscall_frame.syscall_number,
         syscall_frame.args,
         ctx,
         user_ctx,
     );
+    #[cfg(target_arch = "aarch64")]
+    ostd::arch::serial::marker(b'A'); // syscall dispatch returned
 
     match syscall_return {
         Ok(return_value) => {

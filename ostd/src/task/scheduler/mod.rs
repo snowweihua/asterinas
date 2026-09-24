@@ -428,6 +428,9 @@ pub(crate) fn might_preempt() {
     if !cpu_local::should_preempt() {
         return;
     }
+    // TEMP-HW-DEBUG: preemption requested.
+    #[cfg(target_arch = "aarch64")]
+    crate::arch::serial::marker(b'J');
     reschedule(|local_rq| {
         let next_task_opt = local_rq.try_pick_next();
         if let Some(next_task) = next_task_opt {

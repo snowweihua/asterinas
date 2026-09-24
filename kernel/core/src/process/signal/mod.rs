@@ -236,7 +236,11 @@ fn dequeue_pending_signal(ctx: &Context) -> Option<(DequeuedSignal, SigAction)> 
     let posix_thread = ctx.posix_thread;
 
     let sig_dispositions = ctx.process.sig_dispositions().lock();
+    #[cfg(target_arch = "aarch64")]
+    ostd::arch::serial::marker(b'T'); // sig_dispositions outer lock acquired
     let sig_dispositions = sig_dispositions.lock();
+    #[cfg(target_arch = "aarch64")]
+    ostd::arch::serial::marker(b'U'); // sig_dispositions inner lock acquired
 
     let sig_mask = posix_thread.sig_mask();
     let (signal, sig_num, sig_action) = loop {
