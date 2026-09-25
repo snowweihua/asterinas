@@ -111,13 +111,17 @@ pub(super) fn init_in_first_process() -> Result<()> {
                 // must not spin here forever and monopolize the BSP, starving
                 // the init task (this was the R92-R94 boot stall).
                 loop {
-                    let mut drained = 0;
-                    while drained < 64 && ostd::arch::serial::has_data() {
+                    let mut input = [0u8; 64];
+                    let mut len = 0;
+                    while len < input.len() && ostd::arch::serial::has_data() {
                         let ch = ostd::arch::serial::receive();
                         if ch.is_ascii_graphic() || ch == b'\r' || ch == b'\n' || ch == b'\t' {
-                            let _ = serial0.push_input(&[ch]);
+                            input[len] = ch;
+                            len += 1;
                         }
-                        drained += 1;
+                    }
+                    if len > 0 {
+                        let _ = serial0.push_input(&input[..len]);
                     }
                     ostd::task::Task::yield_now();
                 }
