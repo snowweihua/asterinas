@@ -266,7 +266,12 @@ hardening locally and keep the tree MR-ready, but do not open a PR yet.
 - **L2.2 syscall 293 (`rseq`): no code needed.** Asm-generic 293 = `rseq`;
   `ENOSYS` is correct (libc disables rseq). The "Unimplemented syscall number
   293" line is informational.
-- **L2.3 RX-input robustness:** lower priority, still open.
+- **L2.3 RX-input robustness: PARTIAL** (`97a4f5d94`). The RPi3 RX poller now
+  batches its TTY push (one push per ≤64-byte drain instead of per byte); the
+  yield bound is unchanged, so the R95 starvation fix is intact. Boots +
+  AUTO-TEST verified. The residual input loss is dominated by the external
+  USB-serial relay; a stuck-RX repeat/noise stream was also observed and needs
+  dedicated follow-up (the poller must suppress a persistently-stuck RX byte).
 
 ### L3 status: PASS (2026-09-25)
 - 3/3 consecutive RPi3 hardware power-cycle boots reached the interactive `/ #`
