@@ -4,12 +4,6 @@ use crate::{prelude::*, syscall::SyscallReturn};
 
 /// expand the user heap to new heap end, returns the new heap end if expansion succeeds.
 pub(super) fn sys_brk(heap_end: u64, ctx: &Context) -> Result<SyscallReturn> {
-    #[cfg(target_arch = "aarch64")]
-    {
-        for shift in [28usize, 24, 20, 16, 12, 8, 4, 0] {
-            let n = ((heap_end >> shift) & 0xf) as u8;
-        }
-    }
     let new_heap_end = if heap_end == 0 {
         None
     } else {

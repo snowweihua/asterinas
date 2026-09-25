@@ -55,6 +55,8 @@ mod prelude;
 mod process;
 mod sched;
 mod security;
+#[cfg(target_arch = "aarch64")]
+mod sigreturn;
 mod syscall;
 mod thread;
 mod time;

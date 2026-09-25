@@ -441,6 +441,12 @@ pub(crate) fn handle_user_signal(
                 ctx.user_space().vmar().process_vm().vdso_base()
                     + crate::vdso::__VDSO_RT_SIGRETURN_OFFSET
             }
+            target_arch = "aarch64" => {
+                ctx.user_space()
+                    .vmar()
+                    .process_vm()
+                    .sigreturn_trampoline_base()
+            }
             _ => {
                 // Note that this should already be rejected at the `rt_sigaction` system call.
                 return_errno_with_message!(

@@ -83,6 +83,14 @@ pub(crate) fn load_elf_to_vmar(
         aux_vec.set(AuxKey::AT_SYSINFO_EHDR, vdso_text_base as u64);
     }
 
+    // AArch64 libc does not use `SA_RESTORER`; map a minimal `rt_sigreturn`
+    // trampoline page (Linux supplies this via the vDSO).
+    #[cfg(target_arch = "aarch64")]
+    if let Some(trampoline_base) = map_sigreturn_trampoline(vmar) {
+        vmar.process_vm()
+            .set_sigreturn_trampoline_base(trampoline_base);
+    }
+
     vmar.process_vm()
         .map_and_write_init_stack(vmar, argv, envp, aux_vec)?;
     vmar.process_vm().map_and_init_heap(
@@ -525,4 +533,17 @@ fn map_vdso_to_vmar(vmar: &Vmar) -> Option<Vaddr> {
     )
     .unwrap();
     Some(vdso_text_base)
+}
+
+/// Maps the AArch64 `rt_sigreturn` trampoline page into the vmar.
+#[cfg(target_arch = "aarch64")]
+fn map_sigreturn_trampoline(vmar: &Vmar) -> Option<Vaddr> {
+    use crate::sigreturn::trampoline_vmo;
+
+    let trampoline_vmo = trampoline_vmo();
+    let options = vmar
+        .new_map(PAGE_SIZE, VmPerms::READ | VmPerms::EXEC)
+        .vmo(trampoline_vmo);
+    let trampoline_base = options.build().ok()?;
+    Some(trampoline_base)
 }

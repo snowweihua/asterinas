@@ -4,8 +4,6 @@ use alloc::format;
 
 use aster_console::AnyConsoleDevice;
 use ostd::mm::Infallible;
-#[cfg(target_arch = "aarch64")]
-use ostd::task::Task;
 use spin::Once;
 
 use super::{Tty, TtyDriver};

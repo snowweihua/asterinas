@@ -103,6 +103,11 @@ fn check_sigaction(sig_action: &SigAction) -> Result<()> {
             // On RISC-V, if `SA_RESTORER` is not specified, `__vdso_rt_sigreturn` will be used as a fallback.
             Ok(())
         }
+        target_arch = "aarch64" => {
+            // AArch64 libc does not set `SA_RESTORER`; the kernel supplies the
+            // `rt_sigreturn` trampoline.
+            Ok(())
+        }
         _ => {
             // FIXME: The support for user-provided signal handlers
             // without `SA_RESTORER` is arch-dependent.

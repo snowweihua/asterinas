@@ -13,7 +13,6 @@ mod heap;
 mod init_stack;
 
 use core::ops::Range;
-#[cfg(target_arch = "riscv64")]
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use ostd::task::disable_preempt;
@@ -80,6 +79,9 @@ pub(crate) struct ProcessVm {
     /// The base address for vDSO segment
     #[cfg(target_arch = "riscv64")]
     vdso_base: AtomicUsize,
+    /// The base address of the AArch64 `rt_sigreturn` trampoline page.
+    #[cfg(target_arch = "aarch64")]
+    sigreturn_trampoline_base: AtomicUsize,
 }
 
 impl ProcessVm {
@@ -93,6 +95,8 @@ impl ProcessVm {
             executable_path,
             #[cfg(target_arch = "riscv64")]
             vdso_base: AtomicUsize::new(0),
+            #[cfg(target_arch = "aarch64")]
+            sigreturn_trampoline_base: AtomicUsize::new(0),
         }
     }
 
@@ -106,6 +110,10 @@ impl ProcessVm {
             executable_path: process_vm.executable_path.clone(),
             #[cfg(target_arch = "riscv64")]
             vdso_base: AtomicUsize::new(process_vm.vdso_base.load(Ordering::Relaxed)),
+            #[cfg(target_arch = "aarch64")]
+            sigreturn_trampoline_base: AtomicUsize::new(
+                process_vm.sigreturn_trampoline_base.load(Ordering::Relaxed),
+            ),
         }
     }
 
@@ -176,6 +184,18 @@ impl ProcessVm {
     #[cfg(target_arch = "riscv64")]
     pub(super) fn set_vdso_base(&self, addr: Vaddr) {
         self.vdso_base.store(addr, Ordering::Relaxed);
+    }
+
+    /// Returns the base address of the AArch64 `rt_sigreturn` trampoline page.
+    #[cfg(target_arch = "aarch64")]
+    pub(super) fn sigreturn_trampoline_base(&self) -> Vaddr {
+        self.sigreturn_trampoline_base.load(Ordering::Relaxed)
+    }
+
+    /// Sets the base address of the AArch64 `rt_sigreturn` trampoline page.
+    #[cfg(target_arch = "aarch64")]
+    pub(super) fn set_sigreturn_trampoline_base(&self, addr: Vaddr) {
+        self.sigreturn_trampoline_base.store(addr, Ordering::Relaxed);
     }
 }
 

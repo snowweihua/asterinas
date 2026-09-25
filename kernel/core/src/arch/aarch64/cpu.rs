@@ -3,7 +3,7 @@
 use core::fmt;
 
 use ostd::{
-    arch::cpu::context::{CpuException, CpuExceptionInfo, UserContext},
+    arch::cpu::context::{CpuException, UserContext},
     cpu::PinCurrentCpu,
     task::DisabledPreemptGuard,
     user::UserContextApi,

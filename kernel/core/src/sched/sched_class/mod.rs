@@ -294,7 +294,7 @@ impl ClassScheduler {
         // TODO(merge): fix reliable AP tick delivery and drop this pin.
         #[cfg(target_arch = "aarch64")]
         if ostd::arch::is_rpi3() {
-            return ostd::cpu::CpuId::current_racy();
+            return CpuId::current_racy();
         }
 
         let guard = disable_local();
