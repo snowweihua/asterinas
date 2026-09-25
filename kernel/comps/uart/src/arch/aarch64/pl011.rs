@@ -56,7 +56,12 @@ impl Uart for SpinLock<Pl011, ostd::sync::LocalIrqDisabled> {
             if uart.read_reg(OFFSET_UARTFR) & FR_RXFE != 0 {
                 break;
             }
-            *slot = uart.read_reg(OFFSET_UARTDR) as u8;
+            let dr = uart.read_reg(OFFSET_UARTDR);
+            // Drop bytes received with an RX error (framing/parity/break/overrun).
+            if dr & 0xF00 != 0 {
+                continue;
+            }
+            *slot = dr as u8;
             count += 1;
         }
         count
@@ -180,8 +185,13 @@ pub(super) fn init(node: FdtNode) {
         uart_console.clone(),
     );
 
-    let cloned_uart_console = uart_console.clone();
-    irq_line.on_active(move |_| cloned_uart_console.trigger_input_callbacks());
+    // On RPi3, RX is polled (see ostd `pl011_init`). Do not also register the
+    // IRQ-driven input callback there: it would be a second, unchecked input
+    // path that can feed garbage to the shell.
+    if !ostd::arch::is_rpi3() {
+        let cloned_uart_console = uart_console.clone();
+        irq_line.on_active(move |_| cloned_uart_console.trigger_input_callbacks());
+    }
     IRQ_LINE.call_once(move || irq_line);
     uart_console.uart().flush();
 
