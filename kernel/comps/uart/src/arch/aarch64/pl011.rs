@@ -44,7 +44,7 @@ impl Uart for SpinLock<Pl011, ostd::sync::LocalIrqDisabled> {
             // output survives).
             #[cfg(target_arch = "aarch64")]
             if ostd::arch::is_rpi3() {
-                ostd::arch::serial::spin_delay_ms(2);
+                ostd::arch::serial::spin_delay_us(200);
             }
         }
     }

@@ -113,8 +113,12 @@ pub(super) fn init_in_first_process() -> Result<()> {
                 loop {
                     let mut input = [0u8; 64];
                     let mut len = 0;
-                    while len < input.len() && ostd::arch::serial::has_data() {
-                        let ch = ostd::arch::serial::receive();
+                    let mut drained = 0;
+                    while drained < input.len() && ostd::arch::serial::has_data() {
+                        drained += 1;
+                        let Some(ch) = ostd::arch::serial::receive() else {
+                            continue;
+                        };
                         if ch.is_ascii_graphic() || ch == b'\r' || ch == b'\n' || ch == b'\t' {
                             input[len] = ch;
                             len += 1;

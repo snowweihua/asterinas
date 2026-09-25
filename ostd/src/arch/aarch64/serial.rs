@@ -360,9 +360,19 @@ pub fn has_data() -> bool {
     (read_fr() & FR_RXFE) == 0
 }
 
-pub fn receive() -> u8 {
+/// Receives one byte, or `None` if it arrived with an RX error.
+///
+/// The PL011 data register carries the RX error flags in bits 8..=11
+/// (framing / parity / break / overrun). A byte with any error flag set is not
+/// valid data; reading the data register clears the flags, so the byte is
+/// dropped here instead of being forwarded as garbage input.
+pub fn receive() -> Option<u8> {
     while read_fr() & FR_RXFE != 0 {}
-    (read_dr() & 0xff) as u8
+    let dr = read_dr();
+    if dr & (0xf << 8) != 0 {
+        return None;
+    }
+    Some(dr as u8)
 }
 
 /// Spins for approximately `ms` milliseconds using the generic counter.
@@ -370,15 +380,19 @@ pub fn receive() -> u8 {
 /// The RPi3 USB-serial path drops output bursts; pacing the console output
 /// keeps it intact. Uses CNTFRQ (firmware-set), so it works on both hardware
 /// and QEMU.
-#[inline(always)]
-pub fn spin_delay_ms(ms: u64) {
+fn cntfrq() -> u64 {
     let frq: u64;
-    let start: u64;
     unsafe {
         core::arch::asm!("mrs {0}, cntfrq_el0", out(reg) frq, options(nostack, nomem, preserves_flags));
+    }
+    frq
+}
+
+fn spin_delay_ticks(delta: u64) {
+    let start: u64;
+    unsafe {
         core::arch::asm!("mrs {0}, cntvct_el0", out(reg) start, options(nostack, nomem, preserves_flags));
     }
-    let delta = frq.saturating_mul(ms).saturating_div(1000).max(1);
     loop {
         let now: u64;
         unsafe {
@@ -388,6 +402,17 @@ pub fn spin_delay_ms(ms: u64) {
             break;
         }
     }
+}
+
+#[inline(always)]
+pub fn spin_delay_ms(ms: u64) {
+    spin_delay_ticks(cntfrq().saturating_mul(ms).saturating_div(1000).max(1));
+}
+
+/// Spins for approximately `us` microseconds using the generic counter.
+#[inline(always)]
+pub fn spin_delay_us(us: u64) {
+    spin_delay_ticks(cntfrq().saturating_mul(us).saturating_div(1_000_000).max(1));
 }
 
 /// Upper bound for spinning on the PL011 flag register.
