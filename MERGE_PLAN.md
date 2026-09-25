@@ -280,6 +280,29 @@ hardening locally and keep the tree MR-ready, but do not open a PR yet.
 - 1/1 QEMU `raspi3b` boot likewise reached the shell and passed the AUTO-TEST.
 - The intermittent boot stall is gone across repeated boots.
 - Next: L2.3 (RX-input robustness), then L4 (MR-2 generic bundle).
+
+### L4 status (2026-09-25) — MR-2 generic bundle (local-first; x86 gate deferred)
+- **MR-2 item 1 — entropy/vsock registry leniency** (`ENTROPY_DEVICE_TABLE.get()?`
+  / `COMPONENT.get()?` instead of `unwrap()`): verified sound — every caller
+  handles `None` (`hwrng.rs` `if let Some`, vsock `let Some … else`).
+  Arch-neutral.
+- **MR-2 item 2 — fault-path TLB flush after a fresh mapping**
+  (`vm/vmar/vm_mapping.rs`): the generic
+  `TlbFlushOp::for_range(..).perform_on_current()` is a generic correctness fix;
+  the icache flush beside it is aarch64-specific. Cleaned (`e21e6dd97`): removed a
+  dead aarch64 `FAULT_COUNT/LAST_VA/REPEAT` debug block (R47-R50 leftover), made
+  the `va_start/va_end` binding aarch64-only (no unused locals on x86), fixed a
+  misplaced comment. aarch64 build OK.
+- **Other-arch stubs**: the plan §3 stubs (`kernel_physical_base`,
+  `frame_paddr_base`, `current_user_page_table_paddr`) are aarch64-only and are
+  currently **uncalled** in this tree, so no x86/riscv/loongarch stubs are needed
+  here; if generic callers are introduced, the stubs travel with MR-2 instead
+  (i.e. the generic fn should move to `ostd/src/mm` with per-arch stubs).
+- **x86-first validation is not runnable in the aarch64 dev Docker** — the
+  generic-ness gate (x86/riscv/loongarch build + boot) must run in the x86 env
+  or CI.
+- The plan's wider MR-2 list (slab IDs, kill EPERM, shebang, getdents64, msix,
+  virtio leniency, goldfish) was already DROPPED in P0 (fixed upstream).
 - **DROP verified absent/untouched**: `device/mod.rs` heap test;
   `ramfs/fs.rs` HashMap test; `time/softirq.rs` empty-`if`s; `waitid.rs`
   `info!`s; logger untouched by the port.
