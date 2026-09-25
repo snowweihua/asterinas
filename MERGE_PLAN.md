@@ -251,7 +251,22 @@ hardening locally and keep the tree MR-ready, but do not open a PR yet.
 - Verified: aarch64 build OK; RPi3 HW prints the banner, runs the AUTO-TEST,
   and reaches the shell. x86/riscv/loongarch unaffected (target/config +
   arch-independent dead-code only). Commits 512c1fdbd, cdcf231fe.
-- Next: L2 (userspace gaps — `SA_RESTORER` fallback, syscall 293).
+
+### L2 status (2026-09-25)
+- **L2.1 `SA_RESTORER` fallback: DONE** (`531d80745`). AArch64 libc omits
+  `SA_RESTORER`, so the kernel now supplies the return path: a minimal
+  `rt_sigreturn` trampoline page (`mov x8,#139; svc #0; brk #0`) is mapped per
+  process (new `sigreturn` module + `load_elf::map_sigreturn_trampoline`; there
+  is no AArch64 vDSO), its base is stored in `ProcessVm`, and the signal
+  frame's LR points at it; `check_sigaction` accepts the omission on aarch64.
+  Verified on RPi3 HW: the "SA_RESTORER fallback mechanism not implemented"
+  warning is gone and the AUTO-TEST still passes.
+  - Implementation note: map the trampoline with DIRECT RX perms. The
+    vDSO-style `empty`-perms + `protect()` path HANGS on aarch64.
+- **L2.2 syscall 293 (`rseq`): no code needed.** Asm-generic 293 = `rseq`;
+  `ENOSYS` is correct (libc disables rseq). The "Unimplemented syscall number
+  293" line is informational.
+- **L2.3 RX-input robustness:** lower priority, still open.
 - **DROP verified absent/untouched**: `device/mod.rs` heap test;
   `ramfs/fs.rs` HashMap test; `time/softirq.rs` empty-`if`s; `waitid.rs`
   `info!`s; logger untouched by the port.
