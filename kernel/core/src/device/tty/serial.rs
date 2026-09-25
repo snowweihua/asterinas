@@ -105,10 +105,9 @@ pub(super) fn init_in_first_process() -> Result<()> {
             // AP where it may starve (the R29 devtmpfsd stall class), and the
             // BSP is guaranteed to tick.
             let _ = ThreadOptions::new(move || {
-                // TEMP-HW-DEBUG: filter RX noise — only push printable/CR/LF
-                // bytes so power-on line noise cannot flood the TTY echo
-                // (which would hold the paced UART lock with IRQs off and
-                // starve the BSP's exec path).
+                // RPi3: only push printable/CR/LF bytes so power-on line
+                // noise cannot flood the TTY echo (which would hold the paced
+                // UART lock with IRQs off and starve the BSP's exec path).
                 // Drain at most 64 bytes per iteration and ALWAYS yield: a
                 // stuck RX (an overrun/error bit can keep `has_data()` true)
                 // must not spin here forever and monopolize the BSP, starving

@@ -248,14 +248,6 @@ impl<'a> VmarMapOptions<'a> {
     ///
     /// On success, the virtual address of the new mapping is returned.
     pub(crate) fn build(self) -> Result<Vaddr> {
-        #[cfg(target_arch = "aarch64")]
-        {
-            // Linear-window health probe: if the AT walk of the linear base
-            // fails, the active TTBR1 root has lost its linear window (the
-            // R47-50 corruption) — the likely cause of the lock spin / fault.
-            if !ostd::arch::mm::linear_window_ok() {
-            }
-        }
         self.check_options()?;
         let Self {
             parent,

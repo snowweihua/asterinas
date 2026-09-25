@@ -46,10 +46,7 @@ pub(super) fn is_early_param(key: &str) -> bool {
 #[ostd::early_cmdline_parser]
 const fn early_cmdline_parser(cmdline: &str) -> EarlyCmdline {
     let mut has_early_console = false;
-    // TEMP-HW-DEBUG: Info level so per-component progress shows on HW;
-    // the last "Component initializing: X" before the panic names it.
-    // Revert before MR-1.
-    let mut log_level = LevelFilter::Info;
+    let mut log_level = LevelFilter::Debug;
 
     let bytes: &[u8] = cmdline.as_bytes();
     let mut index = 0;

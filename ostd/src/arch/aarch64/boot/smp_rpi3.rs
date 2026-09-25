@@ -231,8 +231,8 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
         __ap_boot_info_array_pointer = super::smp::AP_INFO_SCRATCH_PA as *const PerApRawInfo;
         __boot_page_table_pointer = boot_root as u64;
         super::smp::flush_ap_boot_globals();
-        // TEMP-HW-DEBUG: coerce the KPT singleton (read by APs during their
-        // page-table switch) to PoC before release. See flush_kpt_for_ap.
+        // Coerce the KPT singleton (read by APs during their page-table switch)
+        // to PoC before release. See flush_kpt_for_ap.
         crate::mm::kspace::flush_kpt_for_ap();
     }
 
@@ -271,12 +271,10 @@ pub(crate) unsafe fn bringup_all_aps_rpi3(
     }
 
 
-    // Try PSCI via SMC first
-    #[cfg(target_arch = "aarch64")]
-    // TEMP-HW-DEBUG: when PSCI is available, use it exclusively. The extra
-    // mailbox/spin-table writes below can release TF-A-held secondaries
-    // WITHOUT PSCI context (garbage x0), which then fault on garbage
-    // stack/TPIDR. Revert before MR-1.
+    // Try PSCI via SMC first.
+    // When PSCI is available, use it exclusively: the extra mailbox/spin-table
+    // writes below can release TF-A-held secondaries WITHOUT PSCI context
+    // (garbage x0), which then fault on garbage stack/TPIDR.
     #[cfg(target_arch = "aarch64")]
     if is_psci_available() {
         for cpu_id in 1..num_cpus {

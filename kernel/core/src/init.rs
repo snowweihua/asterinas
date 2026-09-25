@@ -278,8 +278,8 @@ fn init_in_first_kthread(path_resolver: &PathResolver) {
 }
 
 fn print_banner() {
-    // TEMP-HW-DEBUG: skip the ~10KB ANSI gradient banner; it saturates the
-    // lossy HW serial channel and buries markers/panics. Revert before MR-1.
+    println!("");
+    println!("{}", logo_ascii_art::get_gradient_color_version());
 }
 
 static BOOT_SOURCE: AtomicU8 = AtomicU8::new(BootSource::Initramfs as u8);

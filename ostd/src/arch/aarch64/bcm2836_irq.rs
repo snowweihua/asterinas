@@ -161,7 +161,6 @@ pub unsafe fn init_on_bsp() {
 
     // Disable ARM-local timer IRQ on Core 0 (re-enabled later by enable_timer_irq).
     unsafe { write_reg(CORE0_TIMER_INT_CONTROL, 0) };
-    // TEMP-HW-DEBUG bisect: local-IC (linear-map) writes completed.
 
     // Disable ALL BCM2835 peripheral interrupts AND FIQ.
     // Use the high-half mapping (Device memory) so the writes actually reach the
@@ -177,7 +176,6 @@ pub unsafe fn init_on_bsp() {
         // starves all kernel threads.
         mmio_write(ic_va + BCM2835_FIQ_CONTROL, 0);
     }
-    // TEMP-HW-DEBUG bisect: peri-IC (high-half Device) writes completed.
 }
 
 pub fn enable_cntpns_irq() {

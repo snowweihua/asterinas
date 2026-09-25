@@ -83,11 +83,10 @@ pub(crate) unsafe fn bringup_all_aps(info_ptr: *const PerApRawInfo, pt_ptr: Padd
 /// MMU off and through the TTBR0 identity map.
 pub(crate) const AP_INFO_SCRATCH_PA: usize = 0x5_0020;
 
-/// TEMP-HW-DEBUG: scratch slot carrying the runtime KPT root PA from the BSP
-/// to APs. The AP-side `Once` read faults with `ldxr` on HW, so the BSP
-/// publishes the root explicitly through the proven scratch channel
-/// (same linear-alias + `dc cvac` pattern as the working SP/TPIDR path).
-/// Revert-or-promote after validation.
+/// Scratch slot carrying the runtime KPT root PA from the BSP to APs. The
+/// AP-side `Once` read faults with `ldxr` on HW, so the BSP publishes the root
+/// explicitly through the proven scratch channel (same linear-alias + `dc cvac`
+/// pattern as the working SP/TPIDR path).
 pub(crate) const KPT_ROOT_SCRATCH_PA: usize = 0x5_0060;
 
 /// Pushes the AP boot globals to the point of coherency.

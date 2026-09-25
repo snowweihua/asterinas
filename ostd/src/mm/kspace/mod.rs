@@ -298,12 +298,10 @@ pub fn init_kernel_page_table(meta_pages: Segment<MetaPageMeta>) {
     KERNEL_PAGE_TABLE.call_once(|| kpt);
 }
 
-/// TEMP-HW-DEBUG experiment: push the kernel-page-table singleton to the
-/// point of coherency before APs are released. The AP reads this static
-/// through the boot tables while the BSP last touched it long before; if
-/// the line is invisible to the AP (stale view), the AP faults on garbage.
-/// A pre-release clean distinguishes visibility failure (fixed) from a
-/// mapping problem (persists). Revert-or-promote after validation.
+/// Pushes the kernel-page-table singleton to the point of coherency before APs
+/// are released. The AP reads this static through the boot tables while the BSP
+/// last touched it long before; without this the AP may see a stale (invisible)
+/// line and fault on garbage.
 pub(crate) unsafe fn flush_kpt_for_ap() {
     let base = core::ptr::addr_of!(KERNEL_PAGE_TABLE) as usize;
     let len = core::mem::size_of_val(&KERNEL_PAGE_TABLE);
@@ -318,9 +316,9 @@ pub(crate) unsafe fn flush_kpt_for_ap() {
     }
 }
 
-/// TEMP-HW-DEBUG: BSP-side read of the runtime kernel-page-table root for
-/// explicit publication to APs via scratch (bypasses the AP-side `Once`
-/// read that faults with `ldxr` on HW). Revert-or-promote after validation.
+/// BSP-side read of the runtime kernel-page-table root, for explicit
+/// publication to APs via scratch (bypasses the AP-side `Once` read that
+/// faults with `ldxr` on HW).
 pub(crate) fn kernel_page_table_root_paddr() -> Option<super::Paddr> {
     let result = KERNEL_PAGE_TABLE.get().map(|kpt| kpt.root_paddr());
     result
