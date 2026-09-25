@@ -360,19 +360,9 @@ pub fn has_data() -> bool {
     (read_fr() & FR_RXFE) == 0
 }
 
-/// Receives one byte, or `None` if it arrived with an RX error.
-///
-/// The PL011 data register carries the RX error flags in bits 8..=11
-/// (framing / parity / break / overrun). A byte with any error flag set is not
-/// valid data; reading the data register clears the flags, so the byte is
-/// dropped here instead of being forwarded as garbage input.
-pub fn receive() -> Option<u8> {
+pub fn receive() -> u8 {
     while read_fr() & FR_RXFE != 0 {}
-    let dr = read_dr();
-    if dr & (0xf << 8) != 0 {
-        return None;
-    }
-    Some(dr as u8)
+    (read_dr() & 0xff) as u8
 }
 
 /// Spins for approximately `ms` milliseconds using the generic counter.

@@ -56,12 +56,7 @@ impl Uart for SpinLock<Pl011, ostd::sync::LocalIrqDisabled> {
             if uart.read_reg(OFFSET_UARTFR) & FR_RXFE != 0 {
                 break;
             }
-            let dr = uart.read_reg(OFFSET_UARTDR);
-            // Drop bytes received with an RX error (framing/parity/break/overrun).
-            if dr & 0xF00 != 0 {
-                continue;
-            }
-            *slot = dr as u8;
+            *slot = uart.read_reg(OFFSET_UARTDR) as u8;
             count += 1;
         }
         count
