@@ -240,6 +240,18 @@ hardening locally and keep the tree MR-ready, but do not open a PR yet.
   `osdk/src/base_crate/aarch64.ld.template`.
 - Reworked the stale `TEMP-HW-DEBUG` workaround comments
   (`sched_class/mod.rs`, `uart/.../pl011.rs`) into plain rationale + TODOs.
+
+### L1 status: COMPLETE (2026-09-25)
+- `rust-toolchain.toml` has the aarch64 target; `OSDK.toml` keeps only the
+  `aarch64-rpi3` scheme; newline noise normalized.
+- Restored upstream behavior that the port had changed: the `print_banner`
+  gradient and the documented default `log_level` (Debug).
+- Dead debug code removed (`linear_window_ok` + empty caller, orphaned
+  component boot-marker hook); **0 `TEMP-HW-DEBUG` tags remain in code**.
+- Verified: aarch64 build OK; RPi3 HW prints the banner, runs the AUTO-TEST,
+  and reaches the shell. x86/riscv/loongarch unaffected (target/config +
+  arch-independent dead-code only). Commits 512c1fdbd, cdcf231fe.
+- Next: L2 (userspace gaps — `SA_RESTORER` fallback, syscall 293).
 - **DROP verified absent/untouched**: `device/mod.rs` heap test;
   `ramfs/fs.rs` HashMap test; `time/softirq.rs` empty-`if`s; `waitid.rs`
   `info!`s; logger untouched by the port.
