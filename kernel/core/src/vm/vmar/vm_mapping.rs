@@ -473,14 +473,6 @@ impl VmMapping {
         required_perms: VmPerms,
         rss_delta: &mut RssDelta,
     ) -> Result<()> {
-        #[cfg(target_arch = "aarch64")]
-        {
-            use core::sync::atomic::{AtomicU64, Ordering};
-            static FAULT_COUNT: AtomicU64 = AtomicU64::new(0);
-            static LAST_VA: AtomicU64 = AtomicU64::new(0);
-            static REPEAT: AtomicU64 = AtomicU64::new(0);
-            let _ = FAULT_COUNT.fetch_add(1, Ordering::Relaxed);
-        }
         'retry: loop {
             let preempt_guard = disable_preempt();
             let mut cursor = vm_space.cursor_mut(
@@ -493,14 +485,12 @@ impl VmMapping {
             match item {
                 Some(VmQueriedItem::MappedRam { frame, mut prop }) => {
                     if VmPerms::from(prop.flags).contains(required_perms) {
+                        #[cfg(target_arch = "aarch64")]
                         let (va_start, va_end) = (va.start, va.end);
                         TlbFlushOp::for_range(va).perform_on_current();
                         #[cfg(target_arch = "aarch64")]
                         if required_perms.contains(VmPerms::EXEC) {
-                            ostd::arch::mm::flush_icache_range(
-                                va_start,
-                                va_end - va_start,
-                            );
+                            ostd::arch::mm::flush_icache_range(va_start, va_end - va_start);
                         }
                         return Ok(());
                     }
@@ -542,10 +532,10 @@ impl VmMapping {
                         cursor.jump(va.start).unwrap();
                         cursor.map(new_frame.into(), prop);
                         TlbFlushOp::for_range(va).perform_on_current();
-                    // FIXME: Linux re-classifies the page from `File` to `Anon` in RSS,
-                    // when a COW on a file-backed mapping happens.
-                    // We currently do not support this re-classification,
-                    // since it will introduce some complexity when unmapping this page.
+                        // FIXME: Linux re-classifies the page from `File` to `Anon` in RSS,
+                        // when a COW on a file-backed mapping happens.
+                        // We currently do not support this re-classification,
+                        // since it will introduce some complexity when unmapping this page.
                     }
                     cursor.flusher().sync_tlb_flush();
                 }
