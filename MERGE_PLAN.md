@@ -267,6 +267,14 @@ hardening locally and keep the tree MR-ready, but do not open a PR yet.
   `ENOSYS` is correct (libc disables rseq). The "Unimplemented syscall number
   293" line is informational.
 - **L2.3 RX-input robustness:** lower priority, still open.
+
+### L3 status: PASS (2026-09-25)
+- 3/3 consecutive RPi3 hardware power-cycle boots reached the interactive `/ #`
+  shell and passed the AUTO-TEST (`hello-from-init`, `ls /`, `ls /bin`), with no
+  `SA_RESTORER` warning and no stall — the R95 poller fix holds.
+- 1/1 QEMU `raspi3b` boot likewise reached the shell and passed the AUTO-TEST.
+- The intermittent boot stall is gone across repeated boots.
+- Next: L2.3 (RX-input robustness), then L4 (MR-2 generic bundle).
 - **DROP verified absent/untouched**: `device/mod.rs` heap test;
   `ramfs/fs.rs` HashMap test; `time/softirq.rs` empty-`if`s; `waitid.rs`
   `info!`s; logger untouched by the port.
