@@ -175,6 +175,18 @@ squash-merge would hide the 482-commit history either way.
   - Serial RX (PL011 input) unproven on both QEMU and HW.
   These must be resolved before P2 (HW boot to prompt + auto-test on the
   ported tree) can pass on the RPi3.
+- 2026-09-29 RPi3 PL011 RX resolved via the IRQ-driven path (commit
+  `7eaa5d3cf`, branch `aarch64_support_pure`): the console UART registers
+  the `on_active` callback on every target, unmask `RXIM|RTIM` in `flush()`,
+  and after each drain clears ICR and re-asserts `ENABLE_IRQS_2` (new
+  `reenable_uart_irq` with a DSB/ISB). The RPi3 poller thread is removed;
+  the input callback filters to printable/space/CR/LF/TAB. Verified: QEMU
+  `raspi3b` echoes typed commands (space preserved); RPi3 HW boots cleanly
+  to `/ #` with no NUL flood. Note: physical relay→RPi3 RX is dead on the
+  bench (relay host is a Pi 3B+ whose ttyAMA0 also hosts Bluetooth HCI; the
+  CP2102 USB-serial adapter is disconnected), so HW RX-echo could not be
+  exercised — the U-Boot autoboot countdown is never interrupted, a bench
+  wiring issue, not a kernel defect. MR-1 arch-scoped candidate.
 
 ## 9. R47-R96 outcomes (2026-09-24) — hardware bring-up COMPLETE
 
