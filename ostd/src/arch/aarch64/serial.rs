@@ -96,6 +96,9 @@ const GPIO_PIN_15: u32 = 1 << 15;
 const FR_TXFF: u32 = 1 << 5;
 const FR_RXFE: u32 = 1 << 4;
 const IM_RXIM: u32 = 1 << 4;
+/// PL011 IMSC bit 6: RX timeout interrupt mask (fires when the RX FIFO is
+/// non-empty but below the trigger level, e.g. a single keystroke).
+const IM_RTIM: u32 = 1 << 6;
 /// PL011 IMSC (Interrupt Mask Set/Clear) is at offset 0x038, not 0x004 (which is RSR/ECR).
 const PL011_IMSC_OFFSET: usize = 0x038;
 /// PL011 ICR (Interrupt Clear Register) is at offset 0x044.
@@ -271,9 +274,11 @@ fn pl011_ensure_init() {
 
 #[inline(always)]
 fn set_im(value: u32) {
+    let va = pl011_base_va() + PL011_IMSC_OFFSET;
     unsafe {
-        core::ptr::write_volatile((pl011_base_va() + PL011_IMSC_OFFSET) as *mut u32, value)
+        core::ptr::write_volatile(va as *mut u32, value);
     }
+    cache_clean_va(va);
 }
 
 /// RPi3 mini-UART I/O register (data) virtual address.
@@ -353,7 +358,13 @@ pub fn init_rx_irq() {
 }
 
 pub fn reenable_rx_irq() {
-    // RPi3 polls RX instead (see `pl011_init`); no peripheral IRQ routing.
+    // The VideoCore firmware can clear ENABLE_IRQS_2 while managing other
+    // peripherals; re-assert the PL011 routing and RX mask so input keeps
+    // arriving. Harmless on QEMU (no BCM2835 controller).
+    if is_rpi3() {
+        crate::arch::bcm2836_irq::reenable_uart_irq();
+    }
+    set_im(IM_RXIM | IM_RTIM);
 }
 
 pub fn has_data() -> bool {

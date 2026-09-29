@@ -261,6 +261,23 @@ pub fn enable_uart_irq() {
     mmio_write(ic_va + BCM2835_ENABLE_IRQS_2, UART_PERI_IRQ_BIT);
 }
 
+/// Re-enable the BCM2835 PL011 UART IRQ (GPU IRQ 57).
+///
+/// The VideoCore firmware can clobber the PL011 enable bit in ENABLE_IRQS_2
+/// while managing other peripherals, so this may be called periodically (e.g.
+/// from the UART interrupt handler) to ensure the RX interrupt stays routed.
+/// No-op on non-RPi3 boards.
+pub fn reenable_uart_irq() {
+    if crate::arch::board::BoardType::cached() != 2 {
+        return;
+    }
+    let ic_va = peri_ic_base_va();
+    mmio_write(ic_va + BCM2835_ENABLE_IRQS_2, UART_PERI_IRQ_BIT);
+    unsafe {
+        core::arch::asm!("dsb sy", "isb", options(nostack, preserves_flags));
+    }
+}
+
 pub fn acknowledge_interrupt() -> usize {
     let core = core_id();
     let offset = CORE0_IRQ_SOURCE + (core * CORE_REG_STRIDE);

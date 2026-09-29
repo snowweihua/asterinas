@@ -16,6 +16,7 @@ const OFFSET_UARTICR: usize = 0x044;
 const FR_TXFF: u32 = 1 << 5;
 const FR_RXFE: u32 = 1 << 4;
 const INT_RXIM: u32 = 1 << 4;
+const INT_RTIM: u32 = 1 << 6;
 
 struct Pl011 {
     io_mem: IoMem,
@@ -64,11 +65,10 @@ impl Uart for SpinLock<Pl011, ostd::sync::LocalIrqDisabled> {
 
     fn flush(&self) {
         let uart = self.lock();
-        // RPi3 polls RX (no IRQ): keep the mask clear so error bits cannot
-        // raise a GPU IRQ storm; QEMU keeps the IRQ path.
-        if !ostd::arch::is_rpi3() {
-            uart.write_reg(OFFSET_UARTIMSC, INT_RXIM);
-        }
+        // Unmask the RX FIFO and RX timeout interrupts so the console IRQ
+        // handler wakes on both single bytes and bursts, then clear any
+        // latched interrupt/error bits so a stale level cannot re-assert.
+        uart.write_reg(OFFSET_UARTIMSC, INT_RXIM | INT_RTIM);
         uart.write_reg(OFFSET_UARTICR, 0x7FF);
     }
 }
@@ -180,13 +180,17 @@ pub(super) fn init(node: FdtNode) {
         uart_console.clone(),
     );
 
-    // On RPi3, RX is polled (see ostd `pl011_init`). Do not also register the
-    // IRQ-driven input callback there: it would be a second, unchecked input
-    // path that can feed garbage to the shell.
-    if !ostd::arch::is_rpi3() {
-        let cloned_uart_console = uart_console.clone();
-        irq_line.on_active(move |_| cloned_uart_console.trigger_input_callbacks());
-    }
+    // The PL011 RX interrupt drives console input on every target (IRQ 57 on
+    // RPi3 via the BCM2835 controller, IRQ 33 on QEMU `virt`).  Drain the
+    // FIFO, hand the bytes to the registered callbacks, then re-assert the
+    // RX mask and clear any latched error bits so the level-triggered line
+    // cannot re-assert into a storm.
+    let cloned_uart_console = uart_console.clone();
+    irq_line.on_active(move |_| {
+        cloned_uart_console.trigger_input_callbacks();
+        cloned_uart_console.uart().flush();
+        ostd::arch::serial::reenable_rx_irq();
+    });
     IRQ_LINE.call_once(move || irq_line);
     uart_console.uart().flush();
 

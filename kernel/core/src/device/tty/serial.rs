@@ -14,7 +14,6 @@ use crate::{
     },
     fs::{devtmpfs::DevtmpfsNodeMeta, file::PerOpenFileOps},
     prelude::*,
-    thread::kernel_thread::ThreadOptions,
 };
 
 /// The driver for serial devices.
@@ -85,66 +84,26 @@ pub(super) fn init_in_first_process() -> Result<()> {
         SERIAL0.call_once(|| serial0.clone());
         char::register(serial0.clone())?;
 
-        // On RPi3 the PL011 RX IRQ is not routed (see ostd
-        // `pl011_init`); poll the FIFO instead so serial input works.
-        // QEMU keeps the IRQ-callback path below.
+        // Input arrives via the PL011 RX interrupt on every target: the console
+        // IRQ callback drains the FIFO and hands the bytes here.  Only
+        // printable/CR/LF/TAB bytes are pushed so power-on line noise cannot
+        // flood the TTY echo.
         let callback_serial0 = serial0.clone();
         serial_console.register_callback(Box::leak(Box::new(
             move |mut reader: VmReader<Infallible>| {
                 let mut chs = vec![0u8; reader.remain()];
                 reader.read(&mut VmWriter::from(chs.as_mut_slice()));
-                let _ = callback_serial0.push_input(chs.as_slice());
+                let input: alloc::vec::Vec<u8> = chs
+                    .into_iter()
+                    .filter(|c| {
+                        c.is_ascii_graphic() || *c == b' ' || *c == b'\r' || *c == b'\n' || *c == b'\t'
+                    })
+                    .collect();
+                if !input.is_empty() {
+                    let _ = callback_serial0.push_input(input.as_slice());
+                }
             },
         )));
-
-        #[cfg(target_arch = "aarch64")]
-        if ostd::arch::is_rpi3() {
-            // Pin to the BSP: `select_cpu` would otherwise put this task on an
-            // AP where it may starve (the R29 devtmpfsd stall class), and the
-            // BSP is guaranteed to tick.
-            let _ = ThreadOptions::new(move || {
-                // RPi3: only push printable/CR/LF bytes so power-on line
-                // noise cannot flood the TTY echo (which would hold the paced
-                // UART lock with IRQs off and starve the BSP's exec path).
-                // Drain at most 64 bytes per iteration and ALWAYS yield: a
-                // stuck RX (an overrun/error bit can keep `has_data()` true)
-                // must not spin here forever and monopolize the BSP, starving
-                // the init task (this was the R92-R94 boot stall).
-                let mut busy_batches = 0u32;
-                loop {
-                    let mut input = [0u8; 64];
-                    let mut len = 0;
-                    let mut drained = 0;
-                    while drained < input.len() && ostd::arch::serial::has_data() {
-                        drained += 1;
-                        let ch = ostd::arch::serial::receive();
-                        if ch.is_ascii_graphic() || ch == b'\r' || ch == b'\n' || ch == b'\t' {
-                            input[len] = ch;
-                            len += 1;
-                        }
-                    }
-                    if len > 0 {
-                        let _ = serial0.push_input(&input[..len]);
-                    }
-                    // Drain promptly while input flows (a yielded poller lets the
-                    // 16-byte RX FIFO overrun), but never monopolize the BSP: yield
-                    // when idle, and also after a bounded number of busy batches so
-                    // a stuck RX still cannot starve other tasks.
-                    if drained == 0 {
-                        busy_batches = 0;
-                        ostd::task::Task::yield_now();
-                    } else {
-                        busy_batches += 1;
-                        if busy_batches >= 64 {
-                            busy_batches = 0;
-                            ostd::task::Task::yield_now();
-                        }
-                    }
-                }
-            })
-            .cpu_affinity(ostd::cpu::CpuId::bsp().into())
-            .spawn();
-        }
     }
 
     Ok(())
