@@ -68,16 +68,10 @@ impl Uart for SpinLock<Pl011, ostd::sync::LocalIrqDisabled> {
         // Unmask the RX FIFO and RX timeout interrupts so the console IRQ
         // handler wakes on both single bytes and bursts, then clear any
         // latched interrupt/error bits so a stale level cannot re-assert.
-        // On RPi3 only unmask when the RX line reads high (marking): a low
-        // line feeds the FIFO break frames endlessly and the level-triggered
-        // IRQ storms, starving the boot in the bottom half.
-        #[cfg(target_arch = "aarch64")]
-        let rx_sane = !ostd::arch::is_rpi3() || ostd::arch::serial::rx_line_sane();
-        #[cfg(not(target_arch = "aarch64"))]
-        let rx_sane = true;
-        if rx_sane {
-            uart.write_reg(OFFSET_UARTIMSC, INT_RXIM | INT_RTIM);
-        }
+        // Always unmask: the wire is healthy (U-Boot receives keystrokes on
+        // the same GPIO 14/15 pins), and flush() only runs after the RX
+        // handler is registered, so no unhandled IRQ can storm the boot.
+        uart.write_reg(OFFSET_UARTIMSC, INT_RXIM | INT_RTIM);
         uart.write_reg(OFFSET_UARTICR, 0x7FF);
     }
 }
