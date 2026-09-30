@@ -184,11 +184,11 @@ fn pl011_init() {
             (base + PL011_ICR_OFFSET) as *mut u32,
             0x7FF,
         );
-        // On RPi3, the PL011 RX IRQ is NOT enabled: the lossy USB-serial link
-        // and the BCM2836 GPU IRQ routing make the RX interrupt path
-        // unreliable (silent IRQ storms from RX error bits that nothing
-        // clears). Input is polled instead (see `has_data`/`receive`). QEMU
-        // keeps the IRQ path (exercised by `tty/serial.rs` callbacks).
+        // On RPi3, the kernel's PL011 driver owns IMSC: it unmasks the RX
+        // interrupts from `Pl011::flush()`, which runs only after the RX
+        // handler has been registered. Unmasking here would arm them before
+        // any handler exists and turn a noisy line into an IRQ storm. QEMU
+        // has no such constraint, so it keeps the IRQ path enabled here.
         if !is_rpi3() {
             set_im(IM_RXIM);
             crate::arch::bcm2836_irq::enable_uart_irq();
