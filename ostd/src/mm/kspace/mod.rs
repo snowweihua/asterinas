@@ -237,15 +237,74 @@ pub fn init_kernel_page_table(meta_pages: Segment<MetaPageMeta>) {
     {
         let max_paddr = crate::mm::frame::max_paddr();
         let from = LINEAR_MAPPING_BASE_VADDR..LINEAR_MAPPING_BASE_VADDR + max_paddr;
-        let prop = PageProperty {
-            flags: PageFlags::RW,
-            cache: CachePolicy::Writeback,
-            priv_flags: PrivilegedPageFlags::GLOBAL,
-        };
         let mut cursor = kpt.cursor_mut(&preempt_guard, &from).unwrap();
-        for (pa, level) in largest_pages::<KernelPtConfig>(from.start, 0, max_paddr) {
-            // SAFETY: we are doing the linear mapping for the kernel.
-            unsafe { cursor.map(MappedItem::Untracked(pa, level, prop)) };
+
+        // On AArch64 the NonVolatileSleep regions are MMIO windows (SoC
+        // peripherals, ARM-local controller, QEMU GIC/UART) that must stay
+        // linearly mapped. Map them Uncacheable instead of Writeback: a WB
+        // linear mapping aliased with a driver's uncacheable IoMem mapping of
+        // the same device lets whole cache lines (one 64-byte line covers all
+        // PL011 registers) be written back over the device, zeroing CR/IBRD
+        // and holding TXD low (observed as a serial NUL flood on RPi3).
+        #[cfg(target_arch = "aarch64")]
+        let mmio_ranges: alloc::vec::Vec<(usize, usize)> = crate::boot::EARLY_INFO
+            .get()
+            .unwrap()
+            .memory_regions
+            .iter()
+            .filter(|r| r.typ() == MemoryRegionType::NonVolatileSleep)
+            .flat_map(|r| {
+                let base = r.base();
+                let end = r.base() + r.len();
+                // The BCM2836 ARM-local controller (mailbox doorbells for SMP
+                // IPIs) keeps the Writeback mapping: its level-triggered
+                // doorbell depends on the write-back + clean sequence the
+                // bcm2836_irq driver performs, and an Uncacheable mapping
+                // leaves the TLB-flush IPI unacknowledged (the BSP then waits
+                // forever in IoMem::acquire during the UART console init).
+                if end > 0x4000_0000 && base < 0x4010_0000 {
+                    alloc::vec![
+                        (base, 0x4000_0000.min(end)),
+                        (0x4010_0000.max(base), end),
+                    ]
+                } else {
+                    alloc::vec![(base, end)]
+                }
+            })
+            .filter(|(base, end)| end > base)
+            .map(|(base, end)| {
+                (
+                    LINEAR_MAPPING_BASE_VADDR + base,
+                    LINEAR_MAPPING_BASE_VADDR + end,
+                )
+            })
+            .collect();
+        #[cfg(not(target_arch = "aarch64"))]
+        let mmio_ranges: alloc::vec::Vec<(usize, usize)> = alloc::vec::Vec::new();
+
+        let mut pos = from.start;
+        let mut mmio_idx = 0;
+        while pos < from.end {
+            let (seg_end, cache) = match mmio_ranges.get(mmio_idx).copied() {
+                Some((base, end)) if base <= pos => {
+                    mmio_idx += 1;
+                    (end.min(from.end), CachePolicy::Uncacheable)
+                }
+                Some((base, _)) if base < from.end => (base, CachePolicy::Writeback),
+                _ => (from.end, CachePolicy::Writeback),
+            };
+            debug_assert!(seg_end > pos);
+            let prop = PageProperty {
+                flags: PageFlags::RW,
+                cache,
+                priv_flags: PrivilegedPageFlags::GLOBAL,
+            };
+            for (pa, level) in largest_pages::<KernelPtConfig>(pos, pos - from.start, seg_end - pos)
+            {
+                // SAFETY: we are doing the linear mapping for the kernel.
+                unsafe { cursor.map(MappedItem::Untracked(pa, level, prop)) };
+            }
+            pos = seg_end;
         }
     }
 

@@ -128,22 +128,25 @@ fn pl011_gpio_init() {
     val &= !((7 << 12) | (7 << 15));
     val |= (4 << 12) | (4 << 15);
     unsafe { core::ptr::write_volatile(gpfsel1, val) };
+    cache_clean_va(gpfsel1 as usize);
 
-    unsafe { core::ptr::write_volatile((gpio_base + GPIO_GPPUD_OFFSET) as *mut u32, 0) };
-    for _ in 0..150 {
-        unsafe { core::arch::asm!("nop", options(nomem, nostack, preserves_flags)) };
-    }
+    // Apply a pull-up to GPIO14/15 (PL011 TX/RX).  U-Boot leaves a pull-up so
+    // the idle RX line reads high (marking); without one the floating RX pin
+    // picks up noise that the IRQ-driven console echoes back as a flood.
+    let gppud = (gpio_base + GPIO_GPPUD_OFFSET) as *mut u32;
+    let gppudclk0 = (gpio_base + GPIO_GPPUDCLK0_OFFSET) as *mut u32;
+    unsafe { core::ptr::write_volatile(gppud, 2) };
+    cache_clean_va(gppud as usize);
+    spin_delay_us(150);
     unsafe {
-        core::ptr::write_volatile(
-            (gpio_base + GPIO_GPPUDCLK0_OFFSET) as *mut u32,
-            GPIO_PIN_14 | GPIO_PIN_15,
-        )
-    };
-    for _ in 0..150 {
-        unsafe { core::arch::asm!("nop", options(nomem, nostack, preserves_flags)) };
+        core::ptr::write_volatile(gppudclk0, GPIO_PIN_14 | GPIO_PIN_15);
     }
-    unsafe { core::ptr::write_volatile((gpio_base + GPIO_GPPUD_OFFSET) as *mut u32, 0) };
-    unsafe { core::ptr::write_volatile((gpio_base + GPIO_GPPUDCLK0_OFFSET) as *mut u32, 0) };
+    cache_clean_va(gppudclk0 as usize);
+    spin_delay_us(150);
+    unsafe { core::ptr::write_volatile(gppud, 0) };
+    cache_clean_va(gppud as usize);
+    unsafe { core::ptr::write_volatile(gppudclk0, 0) };
+    cache_clean_va(gppudclk0 as usize);
 }
 
 fn pl011_init() {
@@ -159,17 +162,18 @@ fn pl011_init() {
         let aux_en = core::ptr::read_volatile(
             (aux_base + MINIUART_AUX_ENABLES_OFFSET) as *const u32,
         );
+        // The mini-UART and PL011 share GPIO 14/15 on RPi3.  The PL011 owns
+        // the pins here, so keep the mini-UART disabled: an enabled mini-UART
+        // drives the shared TX line LOW when idle (break), which the remote
+        // console reads as a NUL flood between real bytes.
         core::ptr::write_volatile(
             (aux_base + MINIUART_AUX_ENABLES_OFFSET) as *mut u32,
             aux_en & !MINIUART_AUX_ENABLES_MINIUART,
         );
+        cache_clean_va(aux_base + MINIUART_AUX_ENABLES_OFFSET);
         for _ in 0..150 {
             core::arch::asm!("nop", options(nomem, nostack, preserves_flags));
         }
-        core::ptr::write_volatile(
-            (aux_base + MINIUART_AUX_ENABLES_OFFSET) as *mut u32,
-            aux_en,
-        );
     }
 
     pl011_ensure_init();
@@ -269,6 +273,46 @@ fn pl011_ensure_init() {
         // Ensure UART configuration is visible before returning.
         // Without this barrier, QEMU's PL011 may not have processed the enable.
         core::sync::atomic::fence(Ordering::SeqCst);
+
+        if is_rpi3() {
+            cache_invalidate_va(base + PL011_CR_OFFSET);
+            let cr = core::ptr::read_volatile((base + PL011_CR_OFFSET) as *const u32);
+            cache_invalidate_va(base + PL011_IBRD_OFFSET);
+            let ibrd = core::ptr::read_volatile((base + PL011_IBRD_OFFSET) as *const u32);
+            cache_invalidate_va(base + PL011_FBRD_OFFSET);
+            let fbrd = core::ptr::read_volatile((base + PL011_FBRD_OFFSET) as *const u32);
+            cache_invalidate_va(base + 0x018);
+            let fr = core::ptr::read_volatile((base + 0x018) as *const u32);
+            let aux_base = miniuart_base_va();
+            cache_invalidate_va(aux_base + MINIUART_AUX_ENABLES_OFFSET);
+            let aux = core::ptr::read_volatile(
+                (aux_base + MINIUART_AUX_ENABLES_OFFSET) as *const u32,
+            );
+            let gpio_base = pl011_gpio_base_va();
+            cache_invalidate_va(gpio_base + GPIO_GPFSEL1_OFFSET);
+            let fsel = core::ptr::read_volatile(
+                (gpio_base + GPIO_GPFSEL1_OFFSET) as *const u32,
+            );
+            cache_invalidate_va(gpio_base + GPIO_GPPUD_OFFSET);
+            let pud = core::ptr::read_volatile(
+                (gpio_base + GPIO_GPPUD_OFFSET) as *const u32,
+            );
+            cache_invalidate_va(gpio_base + GPIO_GPPUDCLK0_OFFSET);
+            let pudclk = core::ptr::read_volatile(
+                (gpio_base + GPIO_GPPUDCLK0_OFFSET) as *const u32,
+            );
+            cache_invalidate_va(gpio_base + 0x34);
+            let gplev0 = core::ptr::read_volatile((gpio_base + 0x34) as *const u32);
+            for v in [cr, ibrd, fbrd, fr, aux, fsel, pud, pudclk, gplev0] {
+                for i in 0..8 {
+                    let nib = ((v >> (i * 4)) & 0xf) as u8;
+                    send(if nib < 10 { b'0' + nib } else { b'A' + nib - 10 });
+                }
+                send(b' ');
+            }
+            send(b'\r');
+            send(b'\n');
+        }
     }
 }
 
@@ -359,12 +403,38 @@ pub fn init_rx_irq() {
 
 pub fn reenable_rx_irq() {
     // The VideoCore firmware can clear ENABLE_IRQS_2 while managing other
-    // peripherals; re-assert the PL011 routing and RX mask so input keeps
-    // arriving. Harmless on QEMU (no BCM2835 controller).
+    // peripherals; re-assert the PL011 routing so input keeps arriving.
+    // Harmless on QEMU (no BCM2835 controller).
     if is_rpi3() {
         crate::arch::bcm2836_irq::reenable_uart_irq();
     }
-    set_im(IM_RXIM | IM_RTIM);
+    // The PL011 RX interrupt mask (IMSC) is owned by the kernel console
+    // driver: its flush() sets RXIM|RTIM only after its level-triggered RX
+    // handler is registered, and re-asserts it on every RX IRQ.  Unmasking
+    // IMSC here would fire the level-triggered line as soon as local IRQs
+    // are enabled (an RX line held low fills the FIFO with garbage), but
+    // with no handler registered yet the IRQ storms and the BSP never
+    // reaches the kernel main.  On RPi3 the RX line must also read high
+    // (marking) before unmasking: a low RX line (break) feeds the FIFO
+    // garbage endlessly and the bottom half starves the boot.  QEMU keeps
+    // the unconditional mask.
+    if !is_rpi3() || rx_line_sane() {
+        set_im(IM_RXIM | IM_RTIM);
+    }
+}
+
+/// Whether the RPi3's RX line (GPIO15) currently reads high (marking).
+///
+/// A low RX line means the remote side is idle or missing; the PL011 then
+/// fills its RX FIFO with break frames and the level-triggered RX interrupt
+/// storms.  The console input must stay unmasked in that state.
+pub fn rx_line_sane() -> bool {
+    if !is_rpi3() {
+        return true;
+    }
+    cache_invalidate_va(pl011_gpio_base_va() + 0x34);
+    let gplev0 = unsafe { core::ptr::read_volatile((pl011_gpio_base_va() + 0x34) as *const u32) };
+    (gplev0 & GPIO_PIN_15) != 0
 }
 
 pub fn has_data() -> bool {
