@@ -102,6 +102,15 @@ pub fn arm_timer_on_ap() {
 fn timer_callback(trapframe: &TrapFrame) {
     crate::timer::call_timer_callback_functions(trapframe);
 
+    // The VideoCore firmware can clobber ENABLE_IRQS_2 (the PL011 routing
+    // bit) while managing other peripherals.  Re-assert the UART RX routing
+    // each tick so input is not silently lost: without this, a clobbered
+    // routing means the UART IRQ never fires and the handler-side re-assert
+    // never runs.  No-op on non-RPi3 boards.
+    if crate::arch::is_rpi3() {
+        crate::arch::serial::reenable_rx_irq();
+    }
+
     set_next_timer();
 }
 
