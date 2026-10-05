@@ -195,15 +195,18 @@ pub(super) fn init(node: FdtNode) {
     IRQ_LINE.call_once(move || irq_line);
     uart_console.uart().flush();
 
-    // The VideoCore firmware can clobber the peripheral IRQ routing, and the
-    // handler-side re-assert alone is a chicken-and-egg (no IRQ means no
-    // re-assert). Drain the FIFO from the timer tick as well; the IRQ handler
-    // and this poller share the same drain, so they cannot double-read.
-    let poller_console = uart_console.clone();
-    ostd::timer::register_callback_on_cpu(move || {
-        ostd::arch::serial::reenable_rx_irq();
-        poller_console.trigger_input_callbacks();
-    });
+    // RPi3 only: the VideoCore firmware can clobber the peripheral IRQ routing,
+    // and the handler-side re-assert alone is a chicken-and-egg (no IRQ means
+    // no re-assert). Drain the FIFO from the timer tick as well; the IRQ
+    // handler and this poller share the same drain, so they cannot double-read.
+    // QEMU's IRQ path is reliable, so it needs no tick drain.
+    if ostd::arch::is_rpi3() {
+        let poller_console = uart_console.clone();
+        ostd::timer::register_callback_on_cpu(move || {
+            ostd::arch::serial::reenable_rx_irq();
+            poller_console.trigger_input_callbacks();
+        });
+    }
 
     ostd::info!("Registered PL011 as a console");
 }
