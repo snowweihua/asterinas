@@ -32,7 +32,8 @@ appended). QEMU `raspi3b` regression PASSES (`echo QEMU-RX-OK` →
   only (RTIM storms on an idle FIFO); no GPIO gate; add a timer-tick drain
   calling `reenable_rx_irq()` + the same `trigger_input_callbacks()` as the
   IRQ handler (VideoCore can clobber `ENABLE_IRQS_2`; handler-side re-assert
-  alone is chicken-and-egg).
+  alone is chicken-and-egg). The tick drain is gated to `is_rpi3()` (QEMU's
+  IRQ path is reliable).
 - `ostd/src/arch/aarch64/serial.rs`: drop `rx_line_sane()`; RPi3 re-asserts
   the IC routing only (no IMSC write from the tick).
 - `aarch64_support` reference: `kernel/src/driver/mod.rs` — `IrqLine::alloc_
@@ -70,8 +71,8 @@ appended). QEMU `raspi3b` regression PASSES (`echo QEMU-RX-OK` →
 ## Branch / base
 - Branch: `aarch64_support_pure`; base `4d395b885` (pre-arm).
 - Pre-session HEAD: `eef289f82` (gate-restored, RX dead).
-- Session commit: `bcc973db9` — "aarch64/uart: RPi3 RX via IRQ + bounded
-  timer-tick drain — HW echo verified".
+- Session commits: `bcc973db9` — RX fix; `b8831b7af` — gate the tick drain to
+  `is_rpi3()`; `73c4b8ab3`/`011c64958` — status docs.
 
 ## Bench-side caveats (not kernel defects)
 - The shell's own TX echo can loop back into RX on this bench (double echo)

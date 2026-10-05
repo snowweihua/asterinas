@@ -343,7 +343,9 @@ is received, echoed, and **executed** (`SHELL-ALIVE-42` output) on hardware.
   only (RTIM re-asserts on an idle FIFO and storms); no GPIO gate. Also
   register a timer-tick drain that calls `reenable_rx_irq()` and the same
   `trigger_input_callbacks()` as the IRQ handler (VideoCore can clobber
-  `ENABLE_IRQS_2`; a handler-side re-assert alone is chicken-and-egg).
+  `ENABLE_IRQS_2`; a handler-side re-assert alone is chicken-and-egg). The
+  tick drain is **gated to `is_rpi3()`** — QEMU's IRQ path is reliable and
+  needs no tick drain (cfg-gate audit).
 - `ostd/src/arch/aarch64/serial.rs`: drop `rx_line_sane()`; RPi3 re-asserts
   the IC routing only (no IMSC write from the tick).
 
@@ -359,7 +361,8 @@ looked like a kernel defect.
 `serial.rs` arch file). The tick drain is the documented RPi3 workaround class
 (`is_rpi3()`/arch-gated); the bounded drain is a generic robustness fix.
 
-**Commit**: `bcc973db9` on `aarch64_support_pure`.
+**Commit**: `bcc973db9` (RX fix) + `b8831b7af` (RPi3 cfg-gate of the tick
+drain) on `aarch64_support_pure`.
 
 **L3 re-validation (2026-10-05)**: 3/3 consecutive RPi3B power-cycle boots
 reached the interactive `/ #` shell with no hang and executed the
