@@ -359,3 +359,5 @@ looked like a kernel defect.
 `serial.rs` arch file). The tick drain is the documented RPi3 workaround class
 (`is_rpi3()`/arch-gated); the bounded drain is a generic robustness fix.
 
+**Commit**: `bcc973db9` on `aarch64_support_pure`.
+

@@ -65,7 +65,7 @@ hang and no NUL flood.
 ## Branch / base
 - Branch: `aarch64_support_pure`; base `4d395b885` (pre-arm).
 - Pre-session HEAD: `eef289f82` (gate-restored, RX dead).
-- Session commit: pending — "aarch64/uart: RPi3 RX via IRQ + bounded
+- Session commit: `bcc973db9` — "aarch64/uart: RPi3 RX via IRQ + bounded
   timer-tick drain — HW echo verified".
 
 ## Bench-side caveats (not kernel defects)
