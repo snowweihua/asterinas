@@ -321,3 +321,41 @@ hardening locally and keep the tree MR-ready, but do not open a PR yet.
 - Remaining non-fatal userspace warnings seen on HW: `Unimplemented syscall
   number 293` and `SA_RESTORER fallback mechanism not implemented`
   (L2 targets).
+
+## 11. RPi3 PL011 RX — RESOLVED on hardware (2026-10-05)
+
+**Result**: RPi3B boots to `/ #`; the auto-test probe `echo SHELL-ALIVE-42`
+is received, echoed, and **executed** (`SHELL-ALIVE-42` output) on hardware.
+
+**Root cause of the long-standing failure — two bugs masking each other**:
+1. `UartConsole::trigger_input_callbacks()` (`kernel/comps/uart/src/console.rs`)
+   drained in an **unbounded `loop`**. When the PL011 RX status bit reads
+   stuck ("not empty"), `recv()` keeps returning a full 16-byte buffer, so the
+   loop spins forever in both the IRQ handler and the tick poller. This is the
+   real cause of the "RPi3B hangs without the gate" symptom (`eef289f82`).
+2. The `rx_line_sane()` GPIO gate added to stop that hang then **masked RX**,
+   so no input ever arrived (R103/R104).
+
+**Fix (aligned with the `aarch64_support` IRQ-based RX architecture)**:
+- `kernel/comps/uart/src/console.rs`: bound the drain to 4×16 B; the
+  level-triggered IRQ re-fires for remaining bytes.
+- `kernel/comps/uart/src/arch/aarch64/pl011.rs`: `flush()` unmasks `RXIM`
+  only (RTIM re-asserts on an idle FIFO and storms); no GPIO gate. Also
+  register a timer-tick drain that calls `reenable_rx_irq()` and the same
+  `trigger_input_callbacks()` as the IRQ handler (VideoCore can clobber
+  `ENABLE_IRQS_2`; a handler-side re-assert alone is chicken-and-egg).
+- `ostd/src/arch/aarch64/serial.rs`: drop `rx_line_sane()`; RPi3 re-asserts
+  the IC routing only (no IMSC write from the tick).
+
+**Why it took so long (retrospective)**: the port was debugged against
+`aarch64_support_pure` HEAD (already a broken gate state) instead of diffing
+against the known-good `aarch64_support` architecture; the two bugs above
+cancel each other's fixes; register reads via the linear map carry
+store-forwarding/cache artifacts (`CR=IMSC=RIS=0x301`, `MIS≠RIS&IMSC`,
+`FR=0x0`), and the bench's TX→RX echo loop / lossy relay added a flood that
+looked like a kernel defect.
+
+**Classification**: MR-1 (arch-scoped: `pl011.rs`, `console.rs` generic-safe,
+`serial.rs` arch file). The tick drain is the documented RPi3 workaround class
+(`is_rpi3()`/arch-gated); the bounded drain is a generic robustness fix.
+

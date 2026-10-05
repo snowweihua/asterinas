@@ -184,11 +184,11 @@ fn pl011_init() {
             (base + PL011_ICR_OFFSET) as *mut u32,
             0x7FF,
         );
-        // On RPi3, the kernel's PL011 driver owns IMSC: it unmasks the RX
-        // interrupts from `Pl011::flush()`, which runs only after the RX
-        // handler has been registered. Unmasking here would arm them before
-        // any handler exists and turn a noisy line into an IRQ storm. QEMU
-        // has no such constraint, so it keeps the IRQ path enabled here.
+        // On RPi3, the PL011 RX IRQ is NOT enabled: the lossy USB-serial link
+        // and the BCM2836 GPU IRQ routing make the RX interrupt path
+        // unreliable (silent IRQ storms from RX error bits that nothing
+        // clears). Input is polled instead (see `has_data`/`receive`). QEMU
+        // keeps the IRQ path (exercised by `tty/serial.rs` callbacks).
         if !is_rpi3() {
             set_im(IM_RXIM);
             crate::arch::bcm2836_irq::enable_uart_irq();
@@ -273,46 +273,6 @@ fn pl011_ensure_init() {
         // Ensure UART configuration is visible before returning.
         // Without this barrier, QEMU's PL011 may not have processed the enable.
         core::sync::atomic::fence(Ordering::SeqCst);
-
-        if is_rpi3() {
-            cache_invalidate_va(base + PL011_CR_OFFSET);
-            let cr = core::ptr::read_volatile((base + PL011_CR_OFFSET) as *const u32);
-            cache_invalidate_va(base + PL011_IBRD_OFFSET);
-            let ibrd = core::ptr::read_volatile((base + PL011_IBRD_OFFSET) as *const u32);
-            cache_invalidate_va(base + PL011_FBRD_OFFSET);
-            let fbrd = core::ptr::read_volatile((base + PL011_FBRD_OFFSET) as *const u32);
-            cache_invalidate_va(base + 0x018);
-            let fr = core::ptr::read_volatile((base + 0x018) as *const u32);
-            let aux_base = miniuart_base_va();
-            cache_invalidate_va(aux_base + MINIUART_AUX_ENABLES_OFFSET);
-            let aux = core::ptr::read_volatile(
-                (aux_base + MINIUART_AUX_ENABLES_OFFSET) as *const u32,
-            );
-            let gpio_base = pl011_gpio_base_va();
-            cache_invalidate_va(gpio_base + GPIO_GPFSEL1_OFFSET);
-            let fsel = core::ptr::read_volatile(
-                (gpio_base + GPIO_GPFSEL1_OFFSET) as *const u32,
-            );
-            cache_invalidate_va(gpio_base + GPIO_GPPUD_OFFSET);
-            let pud = core::ptr::read_volatile(
-                (gpio_base + GPIO_GPPUD_OFFSET) as *const u32,
-            );
-            cache_invalidate_va(gpio_base + GPIO_GPPUDCLK0_OFFSET);
-            let pudclk = core::ptr::read_volatile(
-                (gpio_base + GPIO_GPPUDCLK0_OFFSET) as *const u32,
-            );
-            cache_invalidate_va(gpio_base + 0x34);
-            let gplev0 = core::ptr::read_volatile((gpio_base + 0x34) as *const u32);
-            for v in [cr, ibrd, fbrd, fr, aux, fsel, pud, pudclk, gplev0] {
-                for i in 0..8 {
-                    let nib = ((v >> (i * 4)) & 0xf) as u8;
-                    send(if nib < 10 { b'0' + nib } else { b'A' + nib - 10 });
-                }
-                send(b' ');
-            }
-            send(b'\r');
-            send(b'\n');
-        }
     }
 }
 
@@ -412,29 +372,12 @@ pub fn reenable_rx_irq() {
     // driver: its flush() sets RXIM|RTIM only after its level-triggered RX
     // handler is registered, and re-asserts it on every RX IRQ.  Unmasking
     // IMSC here would fire the level-triggered line as soon as local IRQs
-    // are enabled (an RX line held low fills the FIFO with garbage), but
-    // with no handler registered yet the IRQ storms and the BSP never
-    // reaches the kernel main.  On RPi3 the RX line must also read high
-    // (marking) before unmasking: a low RX line (break) feeds the FIFO
-    // garbage endlessly and the bottom half starves the boot.  QEMU keeps
-    // the unconditional mask.
-    if !is_rpi3() || rx_line_sane() {
+    // are enabled (a low RX line fills the FIFO with garbage), but with no
+    // handler registered yet the IRQ storms and the BSP never reaches the
+    // kernel main.  QEMU keeps the unconditional mask.
+    if !is_rpi3() {
         set_im(IM_RXIM | IM_RTIM);
     }
-}
-
-/// Whether the RPi3's RX line (GPIO15) currently reads high (marking).
-///
-/// A low RX line means the remote side is idle or missing; the PL011 then
-/// fills its RX FIFO with break frames and the level-triggered RX interrupt
-/// storms.  The console input must stay unmasked in that state.
-pub fn rx_line_sane() -> bool {
-    if !is_rpi3() {
-        return true;
-    }
-    cache_invalidate_va(pl011_gpio_base_va() + 0x34);
-    let gplev0 = unsafe { core::ptr::read_volatile((pl011_gpio_base_va() + 0x34) as *const u32) };
-    (gplev0 & GPIO_PIN_15) != 0
 }
 
 pub fn has_data() -> bool {

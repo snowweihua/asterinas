@@ -65,19 +65,11 @@ impl Uart for SpinLock<Pl011, ostd::sync::LocalIrqDisabled> {
 
     fn flush(&self) {
         let uart = self.lock();
-        // Unmask the RX FIFO and RX timeout interrupts so the console IRQ
-        // handler wakes on both single bytes and bursts, then clear any
-        // latched interrupt/error bits so a stale level cannot re-assert.
-        // On RPi3 only unmask when the RX line reads high (marking): a low
-        // line feeds the FIFO break frames endlessly and the level-triggered
-        // IRQ storms, starving the boot in the bottom half.
-        #[cfg(target_arch = "aarch64")]
-        let rx_sane = !ostd::arch::is_rpi3() || ostd::arch::serial::rx_line_sane();
-        #[cfg(not(target_arch = "aarch64"))]
-        let rx_sane = true;
-        if rx_sane {
-            uart.write_reg(OFFSET_UARTIMSC, INT_RXIM | INT_RTIM);
-        }
+        // Unmask the RX FIFO interrupt only, then clear any latched
+        // interrupt/error bits so a stale level cannot re-assert. RTIM is
+        // deliberately not unmasked: on real PL011 hardware it re-asserts on
+        // an idle FIFO and the level-triggered line starves the boot.
+        uart.write_reg(OFFSET_UARTIMSC, INT_RXIM);
         uart.write_reg(OFFSET_UARTICR, 0x7FF);
     }
 }
@@ -202,6 +194,16 @@ pub(super) fn init(node: FdtNode) {
     });
     IRQ_LINE.call_once(move || irq_line);
     uart_console.uart().flush();
+
+    // The VideoCore firmware can clobber the peripheral IRQ routing, and the
+    // handler-side re-assert alone is a chicken-and-egg (no IRQ means no
+    // re-assert). Drain the FIFO from the timer tick as well; the IRQ handler
+    // and this poller share the same drain, so they cannot double-read.
+    let poller_console = uart_console.clone();
+    ostd::timer::register_callback_on_cpu(move || {
+        ostd::arch::serial::reenable_rx_irq();
+        poller_console.trigger_input_callbacks();
+    });
 
     ostd::info!("Registered PL011 as a console");
 }

@@ -1,60 +1,58 @@
 # SESSION_CONTEXT.md — RPi3 HW Bring-up (aarch64_support_pure)
 
 ## Objective
-Boot Asterinas RPi3B to a visible `# /` shell prefix on hardware, then send
-console input to reproduce the deterministic `[EL1-SYNC]` crash, capture a
-marker-suppressed (lossless) ESR/ELR/FAR dump, fix the root cause, then revert
-ALL TEMP-HW-DEBUG instrumentation before MR-1.
+Get the RPi3B port merge-ready per `MERGE_PLAN.md`: hardware boots to an
+interactive `/ #` shell with working console RX, then land the MR-1 arch
+payload. (Superseded objective: reproduce/fix the old `[EL1-SYNC]` crash —
+resolved in R47-R96.)
 
-## STATUS (R95, 2026-09-24): SHELL REACHED ON HARDWARE
-Root cause of the hardware-only boot stall was found and fixed:
-- The RPi3 serial RX poller thread (kernel/core/src/device/tty/serial.rs,
-  spawned only when `is_rpi3()`, pinned to the BSP) only yielded when
-  `serial::has_data()` was false. A stuck PL011 RX condition (e.g. an
-  overrun/error bit keeping `has_data()` true) made it spin forever and
-  monopolize the BSP. The init task is pinned to the same BSP (select_cpu
-  workaround), so it was starved -> the observed `[MV][MJ]` (preempt) then
-  silence. Hardware-only because the poller exists only on RPi3.
-- Fix: cap the RX drain at 64 bytes per iteration and ALWAYS call
-  `Task::yield_now()`.
-- Result: RPi3 boots to an interactive `/ #` shell, emits userspace text
-  (`/bin/sh: ... not found`, `/ #`), and processes console input. This also
-  unblocked the previously-missing console output (the poller had been holding
-  the paced UART lock). Committed `75bac8b57`.
-- TEMP-HW-DEBUG markers reverted (R96, `e9a8c77a9`): all serial marker call
-  sites and helpers removed (22 files); marker-free kernel re-verified on
-  hardware — boots to `/ #` and runs the AUTO-TEST. Kept functional RPi3
-  workarounds (poller yield bound, UART pacing, select_cpu pin, AP-bringup
-  helpers) and the raw EL1-SYNC dump.
-- Remaining (separate, non-fatal): `Unimplemented syscall number 293` and
-  `SA_RESTORER fallback mechanism not implemented` warnings; lossy RX input.
+## STATUS (2026-10-05): RPi3 PL011 RX RESOLVED ON HARDWARE
+`echo SHELL-ALIVE-42` is received, echoed, and **executed** on hardware
+(`SHELL-ALIVE-42` output), 6/6 probes. Board boots cleanly to `/ #` with no
+hang and no NUL flood.
 
-## User Directive (verbatim, still binding)
-"you should see shell prefix such as '# /' first then try to send commands.
-and one more thing, if too much storm debug message make debug too hard,
-please remove them first. please continue"
+### Root cause (two bugs masking each other)
+1. `UartConsole::trigger_input_callbacks()` (`kernel/comps/uart/src/console.rs`)
+   drained in an **unbounded `loop`**. A stuck PL011 RX status bit ("not
+   empty") makes `recv()` keep returning a full buffer, so the loop spins
+   forever in the IRQ handler and the tick poller. This is the true cause of
+   the "RPi3B hangs without the gate" symptom (`eef289f82`).
+2. The `rx_line_sane()` GPIO gate added to stop that hang then **masked RX**,
+   blocking all input (R103/R104).
 
-(Now satisfied: `# /`/`/ #` is visible on hardware and console input reaches
-userspace.)
+### Fix (aligned with the `aarch64_support` IRQ-based RX architecture)
+- `kernel/comps/uart/src/console.rs`: bound the drain to 4×16 B (IRQ re-fires
+  for the remainder).
+- `kernel/comps/uart/src/arch/aarch64/pl011.rs`: `flush()` unmasks `RXIM`
+  only (RTIM storms on an idle FIFO); no GPIO gate; add a timer-tick drain
+  calling `reenable_rx_irq()` + the same `trigger_input_callbacks()` as the
+  IRQ handler (VideoCore can clobber `ENABLE_IRQS_2`; handler-side re-assert
+  alone is chicken-and-egg).
+- `ostd/src/arch/aarch64/serial.rs`: drop `rx_line_sane()`; RPi3 re-asserts
+  the IC routing only (no IMSC write from the tick).
+- `aarch64_support` reference: `kernel/src/driver/mod.rs` — `IrqLine::alloc_
+  specific(serial::irq_num())` + `on_active(uart_irq_handler)`,
+  `init_rx_irq()` (unmask RXIM), `reenable_rx_irq()` (IC routing), plus
+  `timer::register_callback_on_cpu(poll_uart_input)` sharing the drain.
+
+### Backup (before the reference-based restore)
+- Branch `backup-session-20261005` (commit `8ba5aec69`) — pre-restore session
+  state (R105 diagnostics + IC-IoMem experiment).
+- `/tmp/opencode/backup-20261005/` — file copies.
 
 ## Environment / workflow
-- Dev in WSL2 (`/home/snow/asterinas`); TFTP root `D:/pi_sd/` = `/mnt/d/pi_sd/`
-- Build MCP runs in WSL2; serial/power MCPs on Windows (COM7 @115200 / COM3)
-- Build: `build_kernel_tool` → `target/osdk/asterinas/asterinas-osdk-bin.qemu_elf`
-  (docker `asterinas/aarch64-dev:latest` + `cargo install --path osdk --force` +
-  `cargo osdk build --release --target-arch aarch64 --scheme aarch64-rpi3`)
-- Convert via `convert_kernel_tool` with explicit
-  `{"source_elf":"/home/snow/asterinas/target/osdk/asterinas/asterinas-osdk-bin.qemu_elf"}`
-  (the MCP default points to the wrong ELF)
-- Deploy `/tmp/asterina.img` → `/mnt/d/pi_sd/asterina.img`
-- Board TFTP-boots from server 10.142.15.12; DHCP client IP 10.142.15.23
-- QEMU check: `qemu-system-aarch64 -M raspi3b -cpu cortex-a53 -smp 4 -m 1G
-  -dtb bcm2710-rpi-3-b.dtb -append "init=/init console=ttyAMA0"` with the RAW
-  image (ELF as `-kernel` leaves `x0=0` → early DTB-probe fault). For
-  interactive input: `mkfifo /tmp/qemu_in; (exec 3<>/tmp/qemu_in; exec
-  qemu-system-aarch64 ... <&3 > /tmp/qemu_rN.log 2>&1) &` then `echo cmd > fifo`.
-- QEMU MCP tmux session dies intermittently; manual
-  `qemu-system-aarch64 ... > /tmp/qemu_manual.log` works.
+- Dev in WSL2 (`/home/snow/asterinas`); SD card at `/mnt/d/pi_sd/`.
+- Relay host `snow@10.142.15.37` (Pi 3B+, BT disabled per R101) reads
+  `/dev/serial0` via `rxcap3.py` (logs `/home/snow/rx.log`, sends 6 probes).
+- Build (Docker `asterinas/aarch64-dev:latest`):
+  `cargo install --path osdk --force` + `cargo osdk build --release
+  --target-arch aarch64 --boot-method qemu-direct --scheme aarch64-rpi3`,
+  with `-e RUSTUP_TOOLCHAIN=nightly-2026-07-21-x86_64-unknown-linux-gnu`
+  (otherwise rustup re-syncs and can hang ~15 min).
+- ELF: `target/osdk/asterinas/asterinas-osdk-bin.qemu_elf`; convert with the
+  explicit `source_elf` (MCP default points at the wrong `aster-nix` path).
+- Deploy `/tmp/asterina-*.img` → `/mnt/d/pi_sd/asterina.img`, power-cycle,
+  read `rx.log` on the relay.
 
 ## Hard constraints
 - "Skipping is not fixing, just avoiding. Don't treat skipping as fixing!"
@@ -62,126 +60,34 @@ userspace.)
   `usr/`, `etc/`, agent scaffolding, `tools/*_mcp`, `pf_test/`, `reasonix.toml`
   are local-only; upstream restructure `kernel/src/*` → `kernel/core/src/*`.
 - `unsafe` confined to `ostd/`; `kernel/` stays safe Rust.
-- HW serial is lossy/fragmented (bursty drops); spaced `[M*]` markers survive,
-  raw text bursts do not (hence the 2ms/byte output pacing in the uart comp).
+- HW serial is lossy/fragmented (bursty drops); paced output survives.
 
 ## Branch / base
-- Branch: `aarch64_support_pure`
-- Base: `4d395b885` (pre-arm); last committed HEAD `f442cc2e5`
-  (session commits below).
-- Session commits (2026-09-22/24):
-  - `b947122ae` — R55-R67: local tlbi, console bootargs, RX callback +
-    BSP-pinned poller, RX-IRQ disabled on RPi3 (QEMU interactive shell verified).
-  - `18cac1b4e` — R69-R80: select_cpu pin (new tasks to the spawning CPU on
-    RPi3) + EL1-SYNC marker-channel diagnostics.
-  - `284b3c593`, `04a838499` — docs.
-  - `d1032a764` — R81-R82: marker strip + 2ms/byte HW console pacing.
-  - `d435e9f42` — build() phase markers + remote-flush census.
-  - `343a6343c` — layout correction: linear window is slot 511, fixed probes,
-    `linear_window_ok()` health probe.
-  - `f442cc2e5` — journal R87.
-- Working tree: TEMP-HW-DEBUG instrumentation only (must revert before MR-1).
+- Branch: `aarch64_support_pure`; base `4d395b885` (pre-arm).
+- Pre-session HEAD: `eef289f82` (gate-restored, RX dead).
+- Session commit: pending — "aarch64/uart: RPi3 RX via IRQ + bounded
+  timer-tick drain — HW echo verified".
 
-## Committed functional fixes (keep for MR-1/2)
-1. **Local `tlbi vmalle1` (R63, critical)**: `flush_tlb_and_walk_cache` uses a
-   LOCAL `tlbi vmalle1` + TTBR0 ASID-toggle, NOT `tlbi vmalle1is`. The
-   inner-shareable broadcast includes the VideoCore which never ACKs → the
-   trailing `dsb ish` spins forever with IRQs off → silent all-CPU stop after
-   init output. HW stays alive now. Cross-PE coherence via the IPI path.
-2. **Console bootargs**: append `console=ttyAMA0` when U-Boot's cmdline has no
-   `console=`; otherwise user-space output disappears into tty0.
-3. **RX delivery**: register the console input callback on all arches (was
-   aarch64-dropped → FIFO drained by the IRQ handler); on RPi3 spawn a poller
-   task pinned to the BSP (kernel ThreadOptions) since select_cpu would put it
-   on a starved AP. QEMU interactive shell verified (`echo`/`ls` at prompt).
-4. **RX IRQ disabled on RPi3**: no PL011 RX IRQ routing (error bits never
-   cleared by draining → echo flood / fragility); RPi3 input via the poller
-   (which also filters non-printable RX noise).
-5. **select_cpu → current CPU on RPi3 (R77+)**: `ClassScheduler::select_cpu`
-   returns the spawning CPU for new tasks on RPi3. Fixes the R29-class task
-   starvation (fork children on APs whose tick/preempt path is unreliable).
-   TEMP: the proper fix is reliable AP tick delivery.
-6. **Output pacing (R82)**: uart comp `Pl011::send` paces 2ms/byte on RPi3 so
-   the lossy USB relay does not drop user-output bursts; `spin_delay_ms` made
-   pub in ostd serial.
-7. vm_mapping EXEC-branch icache flush + AT-probe flush_icache_range (R52 era).
-
-## HW state (R87, latest)
-- Boot: firmware → U-Boot → TFTP → kernel → components → unpack → init spawn →
-  init exec → **the ENTIRE ELF mapping phase now completes** (5-6 segment
-  builds all pass the VMAR/rmap locks, no `[ML]` linear-window failures, no
-  stall inside `VmarMapOptions::build()`). Kernel text is VISIBLE through the
-  relay (paced): "[kernel] initramfs is ready", "[kernel] running /init as the
-  init process".
-- The stall has moved PAST the mapping phase: after the last segment build, no
-  user-space text, no clone marker, no response to input. Suspects: the exec's
-  post-mapping work (init-stack setup / aux-vec copy to the user stack → COW
-  faults) or the first user instruction (instruction fetch → fault → icache
-  flush of the ~500KB busybox EXEC segment).
-- Remaining blockers:
-  A. Post-exec stall (above) — the shell never starts.
-  B. Intermittent EL1-SYNC (R71-era signature): the fault was at a SLOT-256
-     address (FAR=0xffff800002b78010, per-CPU CALL_QUEUES in
-     inter_processor_call). NOTE: the earlier "P256/P448 absent = corruption"
-     interpretation is REVISED — the current build's linear window is slot 511
-     (0xffffffc000000000), so the P256/P448 probes were testing the wrong
-     slots. The crash-dump probes are fixed to the real windows.
-  C. RX line carries power-on noise (filtered by the poller; may still echo).
-
-## Serial MCP quirks
-- Frequent empty reads and truncated captures (burst drops)
-- Board power at session end: `PRESENT | CH1:ON CH2:ON`
-- Serial stays open across power cycles
-
-## What we've NEVER seen
-- A shell prompt `# /` on ANY build (clean or debug)
-- A complete boot to userspace init on hardware
-- An `[EL1-SYNC]` exception dump with the CORRECTED (slot-511) probes
-
-## Background risks
-- The R47-50 "KPT root frame corruption at PA 0x6f8000" was partly a probe
-  artifact (wrong linear slot); the real remaining root-layout question is the
-  slot-256 per-CPU region mapping.
-- QEMU debug path works again (interactive shell verified).
-- Large TEMP-HW-DEBUG tree must be fully reverted before MR-1.
+## Bench-side caveats (not kernel defects)
+- The shell's own TX echo can loop back into RX on this bench (double echo)
+  and the relay drops bytes; R101/L2.3 already document this.
+- Register reads via the linear map can show store-forwarding/cache artifacts
+  (`CR=IMSC=RIS=0x301`, `MIS≠RIS&IMSC`, `FR=0x0`); do not trust them as
+  device state.
 
 ## Next moves (priority order)
-1. Mark the post-map exec steps: `init_aux_vec`, user-stack setup, the EXEC
-   icache-flush completion (marker after `flush_icache_range`), and the first
-   user entry — to find where the init process stalls after the mapping phase.
-2. Check whether the first user instruction-fetch faults and stalls in the
-   fault handler (user faults are silent; kernel faults dump an EL1-SYNC).
-3. Only after visible `# /`: send `echo probe-ok\n` and capture for the
-   `[EL1-SYNC]` dump (`sync_exception_dump_once` sets marker suppression before
-   emitting ESR/ELR/FAR — now with the corrected slot-511 probes).
-4. On EL1-SYNC: decode ESR EC bits[31:26] (0b100101 = DataAbortCurrentEL),
-   full ELR, FAR; fix root cause; then revert ALL instrumentation before MR-1.
-5. Remove TEMP scaffolding (select_cpu pin → proper AP-tick fix, output
-   pacing, spin_delay_ms pub, build()/census markers, crash-dump probes) and
-   commit P1 MR-1. Append to `.debug-journal.md` + commit (smoke test only
-   when AArch64 files change).
+1. Commit the RX fix (docs + 3 files) on `aarch64_support_pure`.
+2. Strip any remaining local-only scaffolding; keep the tree MR-ready.
+3. L2.3 residual: RX-input robustness — the bench TX→RX loop is out of scope;
+   confirm the bounded drain + tick poller are the intended MR-1 shape.
+4. L4: MR-2 generic bundle (item-by-item, x86-first) per MERGE_PLAN §5/§10.
+5. L5 (deferred): upstream push + MR-1/MR-2 once the upstream author approves.
 
-## Relevant files (current state)
-- `ostd/src/arch/aarch64/mm/mod.rs` — TLB flush (R63 local tlbi), AT-probe
-  icache flush, `linear_window_ok()`
-- `ostd/src/arch/aarch64/serial.rs` — RX IRQ gating, cache maintenance,
-  `spin_delay_ms` (pub)
-- `ostd/src/arch/aarch64/boot/mod.rs` — console bootargs
-- `ostd/src/arch/aarch64/trap/mod.rs` — EL1-SYNC marker-channel diagnostics
-  (ESR/ELR/FAR/TT0/TT1/PAR + slot probes at the real linear/meta/kernel VAs)
-- `ostd/src/smp.rs`, `ostd/src/arch/aarch64/bcm2836_irq.rs` — IPI path
-- `ostd/src/mm/tlb.rs` — remote-flush census
-- `kernel/core/src/sched/sched_class/mod.rs` — select_cpu pin (RPi3)
-- `kernel/core/src/device/tty/serial.rs` — callback + BSP-pinned, noise-filtered
-  poller
-- `kernel/comps/uart/src/arch/aarch64/pl011.rs` — flush ICR; output pacing
-- `kernel/core/src/vm/vmar/vmar_impls/map.rs` — build() phase markers
-  (5-9), linear-window probe
-- `kernel/core/src/process/program_loader/elf/load_elf.rs` — ELF load
-- Artifacts: `target/osdk/asterinas/asterinas-osdk-bin.qemu_elf`,
-  `/tmp/asterina-rNN.img`, `/mnt/d/pi_sd/asterina.img` (currently R87)
-
-## Board state at session end
-- Board: ON but quiet after the R87 boot (exec mapping completed; init stalled
-  post-mapping; empty serial reads).
-- Power-cycled off, serial cleared, awaiting next directive
+## Relevant files
+- `kernel/comps/uart/src/console.rs` — bounded `trigger_input_callbacks`
+- `kernel/comps/uart/src/arch/aarch64/pl011.rs` — flush RXIM-only, tick drain
+- `ostd/src/arch/aarch64/serial.rs` — `reenable_rx_irq`, `has_data`/`receive`
+- `ostd/src/arch/aarch64/bcm2836_irq.rs` — `reenable_uart_irq` (DSB/ISB)
+- `ostd/src/arch/aarch64/timer/mod.rs` — tick re-assert call site
+- `MERGE_PLAN.md` §11 — RX resolution log
+- `.debug-journal.md` — R95-R105 history

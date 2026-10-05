@@ -45,7 +45,11 @@ impl<U: Uart> UartConsole<U> {
     pub(super) fn trigger_input_callbacks(&self) {
         let mut buf = [0; 16];
 
-        loop {
+        // Bound the drain: a stuck RX status bit can keep `recv()` returning a
+        // full buffer, and an unbounded loop would spin forever here (in the
+        // IRQ handler and the timer-tick poller). The level-triggered IRQ
+        // re-fires for any remaining bytes.
+        for _ in 0..4 {
             let num_rcv = self.uart.recv(&mut buf);
             if num_rcv == 0 {
                 break;
