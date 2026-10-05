@@ -11,6 +11,11 @@ resolved in R47-R96.)
 (`SHELL-ALIVE-42` output), 6/6 probes. Board boots cleanly to `/ #` with no
 hang and no NUL flood.
 
+**L3 re-validation**: 3/3 consecutive power-cycle boots reached `/ #` with no
+hang and executed the probe (boot 3 had the bench-side stuck-byte flood
+appended). QEMU `raspi3b` regression PASSES (`echo QEMU-RX-OK` →
+`QEMU-RX-OK`).
+
 ### Root cause (two bugs masking each other)
 1. `UartConsole::trigger_input_callbacks()` (`kernel/comps/uart/src/console.rs`)
    drained in an **unbounded `loop`**. A stuck PL011 RX status bit ("not

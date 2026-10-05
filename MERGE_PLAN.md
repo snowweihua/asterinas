@@ -361,3 +361,10 @@ looked like a kernel defect.
 
 **Commit**: `bcc973db9` on `aarch64_support_pure`.
 
+**L3 re-validation (2026-10-05)**: 3/3 consecutive RPi3B power-cycle boots
+reached the interactive `/ #` shell with no hang and executed the
+`echo SHELL-ALIVE-42` probe (boots 1-2 clean; boot 3's output had the known
+bench-side stuck-byte flood appended — RX still delivered and executed).
+QEMU `raspi3b` regression also PASSES with the same image
+(`echo QEMU-RX-OK` → `QEMU-RX-OK`).
+
