@@ -51,6 +51,16 @@ pub(crate) struct PerApRawInfo {
     cpu_local: *mut u8,
 }
 
+impl PerApRawInfo {
+    pub(crate) fn stack_top(&self) -> *mut u8 {
+        self.stack_top
+    }
+
+    pub(crate) fn cpu_local(&self) -> *mut u8 {
+        self.cpu_local
+    }
+}
+
 // SAFETY: This information (i.e., the pointer addresses) can be shared safely
 // among multiple threads. However, it is the responsibility of the user to
 // ensure that the contained pointers are used safely.
@@ -146,7 +156,32 @@ pub(crate) unsafe extern "C" fn ap_early_entry(cpu_id: u32) -> ! {
     unsafe { crate::arch::trap::init_on_cpu() };
 
     // SAFETY: This function is only called once on this AP.
-    unsafe { crate::mm::kspace::activate_kernel_page_table() };
+    #[cfg(not(target_arch = "aarch64"))]
+    unsafe {
+        crate::mm::kspace::activate_kernel_page_table()
+    };
+
+    // AArch64: the BSP publishes the kernel page-table root to a scratch word
+    // the AP can read before its own `Once` is usable; fall back to the kspace
+    // root when it has not been published.
+    #[cfg(target_arch = "aarch64")]
+    {
+        let kpt_root = unsafe {
+            core::ptr::read_volatile(
+                crate::mm::kspace::paddr_to_vaddr(
+                    crate::arch::boot::smp::KPT_ROOT_SCRATCH_PA,
+                ) as *const u64,
+            ) as usize
+        };
+        if kpt_root != 0 {
+            unsafe {
+                crate::arch::mm::activate_page_table(kpt_root);
+                crate::arch::mm::tlb_flush_all_including_global();
+            }
+        } else {
+            unsafe { crate::mm::kspace::activate_kernel_page_table() };
+        }
+    }
 
     // SAFETY: This function is only called once on this AP, after the BSP has
     // done the architecture-specific initialization.

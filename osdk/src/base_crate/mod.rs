@@ -16,6 +16,8 @@ const LINKER_SCRIPTS: &[(&str, &str)] = &[
     ("x86_64.ld", include_str!("x86_64.ld.template")),
     ("riscv64.ld", include_str!("riscv64.ld.template")),
     ("loongarch64.ld", include_str!("loongarch64.ld.template")),
+    ("aarch64.ld", include_str!("aarch64.ld.template")),
+    ("aarch64-rpi3.ld", include_str!("aarch64-rpi3.ld.template")),
 ];
 
 /// Compares two files byte-by-byte to check if they are identical.

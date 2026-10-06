@@ -94,10 +94,16 @@ impl SystemConsole {
                 .get()
                 .and_then(|consoles| consoles.first().map(|s| s.as_str()))
                 .unwrap_or("tty0");
+            #[cfg(target_arch = "aarch64")]
+            let console_name = console_name.split(',').next().unwrap_or(console_name);
 
             let device = match console_name {
                 "tty0" => Some(Arc::new(Tty0Device) as _),
                 "ttyS0" => serial0_device().cloned().map(|device| device as _),
+                #[cfg(target_arch = "aarch64")]
+                "ttyAMA0" | "serial0" | "serial1" => {
+                    serial0_device().cloned().map(|device| device as _)
+                }
                 "hvc0" => hvc0_device().cloned().map(|device| device as _),
                 _ => None,
             };

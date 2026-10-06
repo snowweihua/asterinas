@@ -64,6 +64,13 @@ fdt.workspace = true
 loongArch64.workspace = true
 unwinding = { workspace = true, features = ["fde-gnu-eh-frame-hdr"] }
 
+[target.aarch64-unknown-none-softfloat.dependencies]
+aarch64-cpu.workspace = true
+arm-gic.workspace = true
+fdt.workspace = true
+tock-registers.workspace = true
+unwinding = { workspace = true, features = ["fde-static"] }
+
 [features]
 default = ["cvm_guest"]
 # The guest OS support for Confidential VMs (CVMs), e.g., Intel TDX

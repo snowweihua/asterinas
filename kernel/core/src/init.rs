@@ -69,6 +69,12 @@ fn ap_init() {
     // Initialize the per-CPU states for AP.
     init_on_each_cpu();
 
+    // AArch64: arm the AP timer now that scheduler/timer per-CPU state exists.
+    // Arming any earlier (in OSTD bringup) lets a tick fire into
+    // uninitialized state and faults the AP on RPi3.
+    #[cfg(target_arch = "aarch64")]
+    ostd::arch::timer::arm_timer_on_ap();
+
     ThreadOptions::new(ap_idle_loop)
         // No races because `ap_init` runs on a certain AP.
         .cpu_affinity(CpuId::current_racy().into())

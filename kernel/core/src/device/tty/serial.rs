@@ -84,11 +84,30 @@ pub(super) fn init_in_first_process() -> Result<()> {
         SERIAL0.call_once(|| serial0.clone());
         char::register(serial0.clone())?;
 
+        // Input arrives via the PL011 RX interrupt on every target: the console
+        // IRQ callback drains the FIFO and hands the bytes here.  On RPi3 only
+        // printable/CR/LF/TAB bytes are pushed so power-on line noise cannot
+        // flood the TTY echo.
+        let callback_serial0 = serial0.clone();
         serial_console.register_callback(Box::leak(Box::new(
             move |mut reader: VmReader<Infallible>| {
                 let mut chs = vec![0u8; reader.remain()];
                 reader.read(&mut VmWriter::from(chs.as_mut_slice()));
-                let _ = serial0.push_input(chs.as_slice());
+                #[cfg(target_arch = "aarch64")]
+                let input: alloc::vec::Vec<u8> = if ostd::arch::is_rpi3() {
+                    chs.into_iter()
+                        .filter(|c| {
+                            c.is_ascii_graphic() || *c == b' ' || *c == b'\r' || *c == b'\n' || *c == b'\t'
+                        })
+                        .collect()
+                } else {
+                    chs
+                };
+                #[cfg(not(target_arch = "aarch64"))]
+                let input = chs;
+                if !input.is_empty() {
+                    let _ = callback_serial0.push_input(input.as_slice());
+                }
             },
         )));
     }

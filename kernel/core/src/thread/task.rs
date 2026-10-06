@@ -55,6 +55,17 @@ pub(crate) fn create_new_user_task(
             let _ = current_userspace!().write_val(child_tid_ptr, &current_posix_thread.tid());
         }
 
+        // AArch64: activate the user page table before entering user space.
+        // For subsequent context switches, `post_schedule_handler` handles this.
+        // But for the very first switch (`first_context_switch`), the handler
+        // is never called because `first_context_switch` does not return to
+        // `after_switching_to`. Without this, TTBR0 stays as the kernel root
+        // and any user-space access faults with a level-0 translation fault.
+        #[cfg(target_arch = "aarch64")]
+        current_thread_local.vmar().borrow().as_ref().map(|vmar| {
+            vmar.vm_space().activate();
+        });
+
         let ctx = Context {
             process: current_process,
             thread_local: current_thread_local,
